@@ -301,7 +301,7 @@ The object key in `agent/tools.mjs` is the tool name. Everything a tool returns 
 |---|---|---|
 | `look_at_camera` (optional `place`: `home` or `store`) | Reads the caller's camera, judges each food seen, remembers fridge and shelf foods | `no_camera_picture`, `vision_failed`, `unclear_picture`, `no_food_seen`, `label_unreadable` |
 | `check_food` | Judges a food the caller names | `bad_food`, `bad_amount`, `profile_unavailable`, `check_failed` |
-| `suggest_meal` | Suggests a meal from everything remembered from the kitchen | `nothing_seen`, `profile_unavailable`, `check_failed` |
+| `suggest_meal` | Suggests a meal from everything remembered from the kitchen | `nothing_seen`, `profile_unavailable`, `not_enough_food` (too little to cook a real meal; asks to see the cupboards), `check_failed` |
 | `log_meal` | Logs what was eaten | `nothing_to_log`, `tool_failed` |
 | `todays_totals` | Today's totals and what is left | `tool_failed` |
 | `start_cart` | Starts the grocery cart | `nothing_to_buy`, `cart_busy`, `tool_failed`, `cart_unconfirmed` (timeout) |

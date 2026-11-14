@@ -89,6 +89,7 @@ const FAILS = {
   bad_food: 'Tell me which food you mean, in a few words.',
   bad_amount: "I didn't catch the amount. Tell me roughly how much it is, or skip the amount.",
   nothing_seen: 'Show me your fridge or the food you have first, and then I can suggest a meal.',
+  not_enough_food: "I couldn't find a complete meal from what I've seen so far. Show me your cupboards or pantry and I'll try again.",
   nothing_to_log: 'Tell me or show me what you ate first, and then I can log it.',
   nothing_to_buy: "I don't have anything on a shopping list yet. Tell me what you need, or ask me for a meal idea first.",
   cart_busy: "A cart is already being filled. I can tell you how it's going.",
@@ -461,7 +462,9 @@ export function buildTools({
         if (!got?.ok) return fail('profile_unavailable');
         const r = await renal.suggestMeals({ foods, profile: got.profile, count: 2 });
         const meals = Array.isArray(r?.meals) ? r.meals : [];
-        if (!r?.ok || meals.length === 0) return fail('check_failed');
+        if (!r?.ok) return fail('check_failed');
+        // Not a failure: the renal module found too little to cook a real, safe meal from.
+        if (meals.length === 0) return fail('not_enough_food');
         const seen = new Map();
         for (const m of meals) for (const item of Array.isArray(m?.missing) ? m.missing : []) {
           const key = clean(item?.name, 80).toLowerCase();

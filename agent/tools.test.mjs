@@ -1310,3 +1310,26 @@ describe('display hook', () => {
     assert.equal(r.ok, true);
   });
 });
+
+describe('suggest_meal when the kitchen has too little', () => {
+  const looked = async over => {
+    const t = build(over);
+    assert.equal((await t.look_at_camera.execute({ place: 'home' })).ok, true);
+    return t;
+  };
+  it('asks to see more instead of reporting a failure', async () => {
+    const fake = makeFakeRenal();
+    const t = await looked({ phone: '+15551234567', renal: { ...fake, suggestMeals: async () => ({ ok: true, meals: [], message: 'ignored renal text' }) } });
+    const r = await t.suggest_meal.execute({});
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'not_enough_food');
+    assert.match(r.say, /cupboards or pantry/);
+    assert.ok(!JSON.stringify(r).includes('ignored renal text'));
+    assert.equal((await t.text_recipe.execute({})).error, 'no_recipe');
+  });
+  it('still reports a failure when the renal module errors', async () => {
+    const fake = makeFakeRenal();
+    const t = await looked({ renal: { ...fake, suggestMeals: async () => ({ ok: false, error: 'boom' }) } });
+    assert.equal((await t.suggest_meal.execute({})).error, 'check_failed');
+  });
+});
