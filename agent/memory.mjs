@@ -1,16 +1,20 @@
 // A small per-patient shopping list kept between calls. Each call is its own process, so the list lives in one
 // JSON file per patient. Only food and product names are stored (needed, approved, rejected, updatedAt): no phone
-// numbers, limits or transcripts. The folder is never inside the repository, and nothing here ever throws.
+// numbers, limits or transcripts. A sibling file also holds the voice, reply length, language and preferred name
+// chosen in setup (allow-listed values only, never limits). The folder is never inside the repository, and
+// nothing here ever throws.
 import { randomBytes } from 'node:crypto';
 import { chmod, lstat, mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cleanPreferences } from './prefs.mjs';
 
 export const MAX_AGE_MS = 7200000; // 2 hours
 export const MAX_ITEMS = 50;
 export const PANTRY_MAX = 40;
 const MAX_FILE_BYTES = 65536;
+const MAX_PREFS_BYTES = 4096;
 const MAX_FUTURE_MS = 60000;
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -164,8 +168,60 @@ export function createMemory({ patientId = 'demo', dir = defaultStateDir(), now 
 
   const findIndex = (list, name) => list.findIndex(x => x.toLowerCase() === name.toLowerCase());
 
+  // Preferences: a sibling file that never expires. Only allow-listed values are written or read back.
+  const prefsFile = join(folder, `${id}.prefs.json`);
+  async function readPrefs() {
+    try {
+      const st = await lstat(prefsFile);
+      if (!st.isFile() || st.size > MAX_PREFS_BYTES) return cleanPreferences(null);
+      return cleanPreferences(JSON.parse(await readFile(prefsFile, 'utf8')));
+    } catch {
+      return cleanPreferences(null);
+    }
+  }
+  async function writePrefs(prefs) {
+    const body = cleanPreferences(prefs);
+    const tmp = join(folder, `.${id}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
+    try {
+      await writeFile(tmp, JSON.stringify(body), { mode: 0o600, flag: 'wx' });
+      await rename(tmp, prefsFile);
+      return { ok: true, prefs: body };
+    } catch {
+      try { await unlink(tmp); } catch { /* nothing to remove */ }
+      return { ok: false, error: 'unavailable' };
+    }
+  }
+
   return {
     file,
+    prefsFile,
+    async loadPreferences() {
+      try {
+        if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+        return { ok: true, prefs: await readPrefs() };
+      } catch { return { ok: false, error: 'unavailable' }; }
+    },
+    savePreferences(partial) {
+      return serial(async () => {
+        try {
+          if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+          const have = await readPrefs();
+          const given = partial && typeof partial === 'object' ? partial : {};
+          const merged = { ...have };
+          for (const key of ['voice', 'replyStyle', 'language', 'name']) if (Object.hasOwn(given, key)) merged[key] = given[key];
+          return await writePrefs(merged);
+        } catch { return { ok: false, error: 'unavailable' }; }
+      });
+    },
+    resetPreferences() {
+      return serial(async () => {
+        try {
+          if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+          try { await unlink(prefsFile); return { ok: true, removed: true }; }
+          catch (error) { return error?.code === 'ENOENT' ? { ok: true, removed: false } : { ok: false, error: 'unavailable' }; }
+        } catch { return { ok: false, error: 'unavailable' }; }
+      });
+    },
     async load() {
       try {
         if (!(await checkFolder())) return { ok: false, error: 'unavailable' };

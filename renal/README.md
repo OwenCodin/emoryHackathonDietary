@@ -76,11 +76,12 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `AGENT_DEBUG_FRAME_DIR` | A | Optional | A folder outside this repo where each camera picture sent to `describeImage` is also saved. Empty saves nothing. The pictures show what the caller shows, so keep them out of git. |
 | `AGENT_FAKE_CART` | A | Optional | `1` shows a built-in magenta test frame as the cart, for the simulated proof only. Leave empty for real calls. |
 | `AGENT_ALLOW_BARGE_IN` | A | Optional | `1` lets the caller interrupt the agent mid-reply. Empty keeps replies uninterrupted. |
-| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only). Empty uses a folder in the system temp directory. |
+| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only) and the caller's chosen voice, reply length, language and preferred name. Empty uses a folder in the system temp directory. |
 | `AGENT_CALL_WARN_SECONDS` | A | Optional | Seconds after the greeting before the agent warns the call will end soon. Empty means 240. |
+| `AGENT_SKIP_ONBOARDING` | A | Optional | `1` stops first-call setup from starting by itself ("update my setup" still works). Empty means a caller with no finished setup is set up on their first call. |
 | `VIDEO_SAFE_SCALE` | A, C | Optional | Share of the frame's width and height used by everything shown on the call, centred, because FaceTime shows the agent's video zoomed and cuts off the edges. Backgrounds still fill the whole frame. 0.5 to 1; empty or invalid means 0.8; 1 is the old full-frame layout. Read once at start. |
 | `USDA_API_KEY` | B | Optional | FoodData Central key from api.data.gov. `DEMO_KEY` works but allows 10 requests an hour; a personal key allows 3600 an hour. |
-| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json`. Empty uses `renal/data`. Tests use a temp folder. |
+| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json` (empty uses `renal/data`) and the patient's saved `profiles.json` (empty uses a `renal-state` folder in the system temp directory; never inside the repo). Tests use a temp folder. |
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Required for texts and outbound calls | Project API key (`ftk_...`, from the Chert Developer page), project id and line id. |
 | `PATIENT_PHONE` | A, C | Required for texts and outbound calls | The patient's phone in international form, for example `+1XXXXXXXXXX`. If it is empty, `text_cart_link` and `text_recipe` fail with `no_phone`. |
 | `GROCERY_STORE_URL` | C | Required for the cart | HTTPS URL of a supported grocery retailer. |
@@ -100,7 +101,7 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 ### Types
 
 ```js
-// Profile: the patient's daily limits, set by their care team.
+// Profile: the patient's daily limits, from their care team (built-in demo) or as the patient read them out in first-call setup (setBy 'patient, as told by their care team', plus setOn and condition).
 { id: 'demo', name: 'Sam', limits: { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
   avoid: ['star fruit', 'salt substitute'], setBy: 'care team' }
 
@@ -144,7 +145,10 @@ Track A imports everything below and exports nothing. B and C do not import each
 
 | Function | Returns |
 |---|---|
-| `getProfile({ patientId })` | `{ ok, profile }` |
+| `getProfile({ patientId })` | `{ ok, profile }`. The patient's saved profile when first-call setup saved all four limits (`setBy: 'patient, as told by their care team'`, `setOn`, `condition`, `source: 'patient'`), otherwise the built-in one from `renal/data/patients.json` (`source: 'builtin'`). A saved profile without limits gives `{ ok: false, error, limitsNeeded: true }`, never a default. |
+| `getSavedProfile({ patientId })` | `{ ok, saved }`, where `saved` is `null` or `{ id, name, condition, limits, avoid, setBy, setOn, setupDone }` and `limits` may be `null`. Used to decide whether a caller needs setup. |
+| `saveProfile({ patientId, profile: { name, condition, limits, avoid, setupDone } })` | `{ ok, saved }` or `{ ok: false, error, field? }`. Replaces the saved profile after strict checks: `limits` is `null` or all four whole numbers within `LIMIT_BOUNDS` (sanity bounds, not medical advice), `condition` is one of `CONDITIONS` or `null`, and `avoid` holds at most 10 short names. Stored in `profiles.json` outside the repo, mode 600. |
+| `resetProfile({ patientId })` | `{ ok, removed }`. Deletes the saved profile, so the built-in profile and first-call setup come back (for demos). |
 | `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
 | `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
@@ -321,6 +325,10 @@ The original order is below. Everything in it is built.
 ```
 
 These numbers are placeholders in the range commonly given to dialysis patients. Real limits are set per patient by their nephrologist and dietitian and vary a lot. Before the pitch, check them against a published source such as the National Kidney Foundation's patient guidance, and say in the demo that the limits come from the care team.
+
+#### Saved profiles
+
+First-call setup lets a caller read out their own limits. They are stored per patient in `profiles.json`, in `RENAL_STATE_DIR` when it is set, otherwise in a `renal-state` folder in the system temp directory, never in `renal/data` and never inside the repo (a folder inside the repo, a symlink or a folder owned by someone else is refused). The folder is mode 700 and the file mode 600, written atomically one save at a time. `saveProfile` checks everything strictly: `limits` is `null` or all four whole numbers inside `LIMIT_BOUNDS` (sodium 500 to 4000, potassium 1000 to 4700, phosphorus 500 to 1500, fluid 500 to 4000; these catch misheard numbers, they are sanity bounds and not medical advice), `condition` is one of `CONDITIONS`, `avoid` has at most 10 short names. `getProfile` returns the saved profile when it has limits (`source: 'patient'`), `{ ok: false, limitsNeeded: true }` when the saved profile has none (no default is ever applied), `{ ok: false, error: 'profile store unreadable' }` when the file is corrupt (never the built-in limits), and the built-in profile only when nothing is saved. `getToday` now reads limits through `getProfile`. Nothing here logs.
 
 ### `checkFood`
 

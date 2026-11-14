@@ -204,3 +204,42 @@ describe('pantry', () => {
     assert.deepEqual(matchPantry(['Brown rice', 'egg'], 'eg'), []);
   });
 });
+
+describe('preferences', () => {
+  it('saves, loads, merges and does not expire', async () => {
+    const c = clock(1000000);
+    const dir = fresh();
+    const m = createMemory({ dir, now: c.now });
+    assert.deepEqual((await m.loadPreferences()).prefs, { voice: 'Puck', replyStyle: 'brief', language: 'en', name: null });
+    assert.equal((await m.savePreferences({ voice: 'Sulafat', replyStyle: 'detailed', language: 'es', name: 'Ana' })).ok, true);
+    await m.savePreferences({ voice: 'Kore' });
+    c.t += MAX_AGE_MS * 5;
+    assert.deepEqual((await m.loadPreferences()).prefs, { voice: 'Kore', replyStyle: 'detailed', language: 'es', name: 'Ana' });
+    assert.equal((await stat(m.prefsFile)).mode & 0o777, 0o600);
+  });
+  it('a tampered file loads as defaults', async () => {
+    const dir = fresh();
+    const m = createMemory({ dir });
+    await m.savePreferences({ voice: 'Kore' });
+    await writeFile(m.prefsFile, JSON.stringify({ voice: 'Evil', replyStyle: 'loud', language: 'fr', name: 'x'.repeat(200) }));
+    assert.deepEqual((await m.loadPreferences()).prefs, { voice: 'Puck', replyStyle: 'brief', language: 'en', name: null });
+  });
+  it('reset deletes only the preferences file', async () => {
+    const dir = fresh();
+    const m = createMemory({ dir });
+    await m.add(['rice']);
+    await m.savePreferences({ voice: 'Kore' });
+    assert.deepEqual(await m.resetPreferences(), { ok: true, removed: true });
+    assert.deepEqual(await m.resetPreferences(), { ok: true, removed: false });
+    assert.deepEqual((await m.load()).state.needed, ['rice']);
+    assert.equal((await m.loadPreferences()).prefs.voice, 'Puck');
+  });
+  it('preference writes leave the shopping state untouched', async () => {
+    const dir = fresh();
+    const m = createMemory({ dir });
+    await m.add(['rice']);
+    const before = await readFile(m.file, 'utf8');
+    await m.savePreferences({ voice: 'Kore' });
+    assert.equal(await readFile(m.file, 'utf8'), before);
+  });
+});

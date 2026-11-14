@@ -76,11 +76,12 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `AGENT_DEBUG_FRAME_DIR` | A | Optional | A folder outside this repo where each camera picture sent to `describeImage` is also saved. Empty saves nothing. The pictures show what the caller shows, so keep them out of git. |
 | `AGENT_FAKE_CART` | A | Optional | `1` shows a built-in magenta test frame as the cart, for the simulated proof only. Leave empty for real calls. |
 | `AGENT_ALLOW_BARGE_IN` | A | Optional | `1` lets the caller interrupt the agent mid-reply. Empty keeps replies uninterrupted. |
-| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only). Empty uses a folder in the system temp directory. |
+| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only) and the caller's chosen voice, reply length, language and preferred name. Empty uses a folder in the system temp directory. |
 | `AGENT_CALL_WARN_SECONDS` | A | Optional | Seconds after the greeting before the agent warns the call will end soon. Empty means 240. |
+| `AGENT_SKIP_ONBOARDING` | A | Optional | `1` stops first-call setup from starting by itself ("update my setup" still works). Empty means a caller with no finished setup is set up on their first call. |
 | `VIDEO_SAFE_SCALE` | A, C | Optional | Share of the frame's width and height used by everything shown on the call, centred, because FaceTime shows the agent's video zoomed and cuts off the edges. Backgrounds still fill the whole frame. 0.5 to 1; empty or invalid means 0.8; 1 is the old full-frame layout. Read once at start. |
 | `USDA_API_KEY` | B | Optional | FoodData Central key from api.data.gov. `DEMO_KEY` works but allows 10 requests an hour; a personal key allows 3600 an hour. |
-| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json`. Empty uses `renal/data`. Tests use a temp folder. |
+| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json` (empty uses `renal/data`) and the patient's saved `profiles.json` (empty uses a `renal-state` folder in the system temp directory; never inside the repo). Tests use a temp folder. |
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Required for texts and outbound calls | Project API key (`ftk_...`, from the Chert Developer page), project id and line id. |
 | `PATIENT_PHONE` | A, C | Required for texts and outbound calls | The patient's phone in international form, for example `+1XXXXXXXXXX`. If it is empty, `text_cart_link` and `text_recipe` fail with `no_phone`. |
 | `GROCERY_STORE_URL` | C | Required for the cart | HTTPS URL of a supported grocery retailer. |
@@ -100,7 +101,7 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 ### Types
 
 ```js
-// Profile: the patient's daily limits, set by their care team.
+// Profile: the patient's daily limits, from their care team (built-in demo) or as the patient read them out in first-call setup (setBy 'patient, as told by their care team', plus setOn and condition).
 { id: 'demo', name: 'Sam', limits: { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
   avoid: ['star fruit', 'salt substitute'], setBy: 'care team' }
 
@@ -144,7 +145,10 @@ Track A imports everything below and exports nothing. B and C do not import each
 
 | Function | Returns |
 |---|---|
-| `getProfile({ patientId })` | `{ ok, profile }` |
+| `getProfile({ patientId })` | `{ ok, profile }`. The patient's saved profile when first-call setup saved all four limits (`setBy: 'patient, as told by their care team'`, `setOn`, `condition`, `source: 'patient'`), otherwise the built-in one from `renal/data/patients.json` (`source: 'builtin'`). A saved profile without limits gives `{ ok: false, error, limitsNeeded: true }`, never a default. |
+| `getSavedProfile({ patientId })` | `{ ok, saved }`, where `saved` is `null` or `{ id, name, condition, limits, avoid, setBy, setOn, setupDone }` and `limits` may be `null`. Used to decide whether a caller needs setup. |
+| `saveProfile({ patientId, profile: { name, condition, limits, avoid, setupDone } })` | `{ ok, saved }` or `{ ok: false, error, field? }`. Replaces the saved profile after strict checks: `limits` is `null` or all four whole numbers within `LIMIT_BOUNDS` (sanity bounds, not medical advice), `condition` is one of `CONDITIONS` or `null`, and `avoid` holds at most 10 short names. Stored in `profiles.json` outside the repo, mode 600. |
+| `resetProfile({ patientId })` | `{ ok, removed }`. Deletes the saved profile, so the built-in profile and first-call setup come back (for demos). |
 | `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
 | `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
@@ -290,7 +294,7 @@ Both terminals stay running. Call the line with FaceTime Video. After any code c
 
 ### Voice model
 
-`agent/agent.mjs` uses `google.realtime.RealtimeModel` with the model from `GEMINI_LIVE_MODEL`, or `gemini-3.8-live` when it is empty, and the voice `Puck`. The plugin reads `GOOGLE_API_KEY`.
+`agent/agent.mjs` uses `google.realtime.RealtimeModel` with the model from `GEMINI_LIVE_MODEL`, or `gemini-3.8-live` when it is empty, and the voice the caller chose in setup (`Puck` by default). The voice is read when a call starts and does not change mid-call: changing it mid-call would restart the Gemini session. The plugin reads `GOOGLE_API_KEY`.
 
 The older notes below are still true as background. Plugin 1.8.0 predates `gemini-3.8-live`. For any model whose name contains `3.1` the plugin throws on `session.generateReply(...)`, so with such a model the greeting would need to come from the instructions instead. I have not checked from the repo which model ran on the live calls; do not assume one.
 
@@ -305,18 +309,36 @@ The object key in `agent/tools.mjs` is the tool name. Everything a tool returns 
 | Tool | What it does | Failure codes |
 |---|---|---|
 | `look_at_camera` (optional `place`: `home` or `store`) | Reads the caller's camera, judges each food seen, remembers fridge and shelf foods | `no_camera_picture`, `vision_failed`, `unclear_picture`, `no_food_seen`, `label_unreadable` |
-| `check_food` | Judges a food the caller names | `bad_food`, `bad_amount`, `profile_unavailable`, `check_failed` |
-| `suggest_meal` (optional `from_scratch`) | Suggests a meal from everything remembered from the kitchen; with `from_scratch` true, a meal built only from the built-in food list, with every ingredient on the shopping list and per-serving sodium, potassium and phosphorus totals | `nothing_seen`, `profile_unavailable`, `not_enough_food` (too little to cook a real meal; asks to see the cupboards), `no_safe_meal` (from scratch: no meal could be fully checked within the limits), `check_failed` |
+| `check_food` | Judges a food the caller names | `bad_food`, `bad_amount`, `profile_unavailable`, `limits_needed`, `check_failed` |
+| `suggest_meal` (optional `from_scratch`) | Suggests a meal from everything remembered from the kitchen; with `from_scratch` true, a meal built only from the built-in food list, with every ingredient on the shopping list and per-serving sodium, potassium and phosphorus totals | `nothing_seen`, `profile_unavailable`, `limits_needed`, `not_enough_food` (too little to cook a real meal; asks to see the cupboards), `no_safe_meal` (from scratch: no meal could be fully checked within the limits), `check_failed` |
 | `log_meal` | Logs what was eaten | `nothing_to_log`, `tool_failed` |
-| `todays_totals` | Today's totals and what is left | `tool_failed` |
+| `todays_totals` | Today's totals and what is left | `limits_needed`, `tool_failed` |
 | `start_cart` | Starts the grocery cart | `nothing_to_buy`, `cart_busy`, `tool_failed`, `cart_unconfirmed` (timeout) |
 | `cart_status` | Reports the cart | `cart_failed`, `tool_failed` |
 | `text_cart_link` | Texts the cart link to the patient phone | `no_phone`, `no_cart_link`, `link_already_sent`, `tool_failed` |
 | `add_to_shopping_list`, `shopping_list`, `mark_item` | The shopping list kept between calls | `bad_items`, `bad_item`, `memory_unavailable` |
 | `pantry_list`, `remove_from_pantry`, `clear_pantry` | What the agent remembers from the kitchen | `bad_items`, `not_in_pantry`, `timeout` |
 | `text_recipe` | Texts one suggested recipe | `no_phone`, `no_recipe`, `which_recipe`, `recipe_already_sent`, `text_failed`, `text_unconfirmed` |
+| `start_setup` | Opens setup ("update my setup"); the setup tools below refuse until it runs (or setup started on a first call) | |
+| `save_profile_basics` (setup only) | Saves the preferred name and condition | `setup_not_started`, `bad_name`, `bad_condition`, `profile_unsaved` |
+| `propose_limits` (setup only) | Step 1: checks the four numbers and returns the sentence to read back; saves nothing | `setup_not_started`, `limit_missing`, `bad_sodium`, `bad_potassium`, `bad_phosphorus`, `bad_fluid` |
+| `confirm_limits` (setup only) | Step 2: saves the limits after the caller said yes | `setup_not_started`, `no_proposal`, `limits_changed`, `limits_not_confirmed`, `profile_unsaved` |
+| `set_avoid_foods` (setup only) | Saves foods to avoid (at most 10) | `setup_not_started`, `bad_foods`, `profile_unsaved` |
+| `set_preferences` | Saves voice, reply style and language; a new voice starts on the next call | `bad_preference`, `prefs_unsaved` |
+| `finish_onboarding` (setup only) | Marks setup done and says whether limits were saved | `setup_not_started`, `profile_unsaved` |
 
 Any tool can also return `timeout` or `tool_failed` from the guard. Whether Gemini Live calls tools reliably through plugin 1.8.0 was untested on 13 November; on 14 November live calls the agent called `check_food` and `look_at_camera`.
+
+### Onboarding (first-call setup)
+
+- When it runs. An inbound call from a caller whose saved profile is missing or has `setupDone` false starts with the setup greeting. `AGENT_SKIP_ONBOARDING=1` stops that (it also spares the first 3 minutes of a scarce 5-minute call). Saying "update my setup" at any time calls `start_setup` and runs the same steps. A first call that drops before `finish_onboarding` gets setup again next time; whatever was confirmed is already saved. Outbound calls never start setup.
+- The script (`SETUP_STEPS` in `agent/prompt.mjs`, always in the instructions, gated in words to "only while setup is running"): welcome, name, condition, limits (read back and confirmed), foods to avoid, voice (upbeat, firm, warm or mature), brief or detailed and English or Spanish, what I can do, finish. About 200 spoken words by the agent; `node agent/sim/onboarding-run.mjs` estimates the whole setup at about 165 s, shorter than the 3 minute aim and well inside the 240 s warning. The time warning first calls `finish_onboarding` so what was confirmed is saved.
+- Two-step limits, enforced in code. `propose_limits` validates four whole numbers against `LIMIT_BOUNDS` and returns a read-back sentence; `confirm_limits` saves only when it carries exactly the same four numbers, at least `CONFIRM_MIN_MS` (2500 ms) after the proposal, and (when the call's transcription has produced any event) after the caller spoke again more than 1 s after the proposal. If transcription has produced nothing at all, only the time check applies, so a line without transcription is not a dead end. A changed number clears the proposal. The code cannot prove the word "yes"; the prompt requires it. Outside setup the setup tools refuse with `setup_not_started`, so no limit can be accepted or changed.
+- No limits means no judging. A caller who does not have their limits finishes setup with `limits: null`; the food tools then answer `limits_needed` ("I don't have your care team's limits yet...") and never use the built-in demo profile. Without any saved profile the built-in demo profile is used, as before.
+- Safety and privacy. Saved limits are labelled as told by the patient, not by a care team record. Name, condition, limits and foods are never logged (the log shows tool name, ok, an error code and `setup due=true|false`), never texted, and reach only the Gemini calls that already receive limits. `profiles.json` (renal) and `<patient>.prefs.json` (agent) are mode 600 in user-owned 700 folders outside the repo (`RENAL_STATE_DIR`, `AGENT_STATE_DIR`, or folders in the system temp directory).
+- The voice is applied at the start of the next call (`realtimeOptions` in `agent/prefs.mjs`); language and reply length ride in the instructions. Language is by instruction only; Spanish is unproven live.
+- Demo reset: `node --env-file-if-exists=.env.local agent/sim/reset-setup.mjs [patientId]` deletes the saved profile and preferences.
+- Run-through with no keys: `node agent/sim/onboarding-run.mjs`.
 
 ### Video out
 
