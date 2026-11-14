@@ -140,13 +140,16 @@ describe('actions stub', () => {
 });
 
 describe('agent/tools.mjs', () => {
-  it('exposes one anonymous check_food tool that runs offline', async () => {
+  it('exposes anonymous look_at_camera and check_food tools that run offline', async () => {
     const t = tools.buildTools({ patientId: 'demo' });
-    assert.deepEqual(Object.keys(t), ['check_food']);
-    assert.ok(!Object.hasOwn(t.check_food, 'name'));
-    const v = await t.check_food.execute({ name: 'banana', grams: 118 });
-    assert.ok(isVerdict(v));
-    assert.equal(v.food, 'banana');
+    assert.ok(Object.keys(t).includes('check_food'));
+    assert.ok(Object.keys(t).includes('look_at_camera'));
+    for (const tool of Object.values(t)) assert.ok(!Object.hasOwn(tool, 'name'));
+    const r = await t.check_food.execute({ name: 'banana', grams: 118 });
+    assert.equal(r.ok, true);
+    assert.equal(r.food, 'banana');
+    assert.ok(['ok', 'limit', 'avoid', 'unknown'].includes(r.verdict));
+    assert.ok(isStr(r.spoken));
   });
 });
 
