@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-ej7: renal fixes, Gemini fallback and stub-era test repairs on merge/all-tracks
+Last activity: 2026-11-14 - Completed quick task 261114-eyk: fridge and pantry memory with texted recipes
 
 Progress: [██████████] 100%
 
@@ -91,6 +91,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 261114-ecm | Merge all three tracks into integration branch merge/all-tracks (origin/main + origin/track-b/renal); 248 tests, 12 stub-era failures, not pushed | 2026-11-14 | 4791f8a | [261114-ecm-merge-all-tracks](./quick/261114-ecm-merge-all-tracks/) |
 | 261114-ej7 | Fix renal food-check crash, cola brand resolution and USDA match guard, numberless-label fallback, Gemini fallback model, test isolation; repair 12 stub-era agent tests (270/270 pass) | 2026-11-14 | 618fd3e | [261114-ej7-fix-renal-and-tests](./quick/261114-ej7-fix-renal-and-tests/) |
+| 261114-eyk | Fridge and pantry memory across shots and calls, suggest_meal from the whole pantry, pantry tools, text_recipe by iMessage, prompt rules (298/298 pass) | 2026-11-14 | a42f907 | [261114-eyk-pantry-and-texted-recipes](./quick/261114-eyk-pantry-and-texted-recipes/) |
 
 ## Session Continuity
 
