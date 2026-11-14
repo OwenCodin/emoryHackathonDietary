@@ -118,7 +118,12 @@ export function createRelay({ store, env = process.env, now = Date.now }) {
     } catch {
       // a failed sweep never changes the page
     }
-    return page(200, ['Kroger is connected. You can go back to your call.', 'You can close this page.']);
+    return page(200, [
+      "Thanks, you're signed in to Kroger.",
+      "If you're still on your call, go back to it. If your call has ended, call your dietitian back within a few minutes to finish connecting.",
+      'After ten minutes this sign-in is dropped, and you can ask for a new link on any call.',
+      'You can close this page.',
+    ]);
   });
 
   const claim = asJson(async (request) => {

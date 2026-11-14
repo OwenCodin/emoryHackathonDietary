@@ -55,7 +55,6 @@ try {
   await step('set_preferences', { voice: 'warm', reply_style: 'brief', language: 'english' });
   await step('kroger_status', {});
   await step('text_kroger_sign_in', {});
-  await step('kroger_status', {});
   if (texts.length !== 1 || texts[0].phone !== PHONE || !texts[0].text.includes('https://relay.example/k/')) { failed = true; console.log('  ^ the sign-in text was not sent once to the patient phone with the link'); }
   await step('finish_onboarding', {});
 
@@ -78,7 +77,7 @@ try {
     'Please call me Ana', 'I am on hemodialysis three times a week',
     'My sodium is two thousand milligrams, potassium two thousand, phosphorus one thousand, and fluid one thousand milliliters',
     'Yes that is right', 'Sorry, my potassium is two thousand, not nine thousand', 'Yes that is right',
-    'Yes, my care team said to avoid grapefruit', 'The warm voice please', 'Brief answers in English please', 'Okay', 'I signed in', 'Okay, can I check a banana',
+    'Yes, my care team said to avoid grapefruit', 'The warm voice please', 'Brief answers in English please', 'Okay', 'Okay, can I check a banana',
   ];
   const callerWords = callerAnswers.reduce((n, s) => n + count(s), 0);
   const seconds = Math.round(((agentWords + callerWords) / 150) * 60 + 15 * 1.5);

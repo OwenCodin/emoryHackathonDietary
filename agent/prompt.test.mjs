@@ -112,6 +112,18 @@ describe('first-call setup', () => {
     const words = SETUP_STEPS.map(s => s.says).join(' ').split(/\s+/).length;
     assert.ok(words <= 300, `${words} words`);
   });
+  it('the Kroger lines offer a new link later and the setup paragraph handles later', async () => {
+    const { SETUP_STEPS, instructions } = await import('./prompt.mjs');
+    const says = n => SETUP_STEPS.find(s => s.step === n).says;
+    assert.equal(says('kroger'), "Next, your Kroger account, so I can fill your grocery cart. I'm texting you a sign-in link now. Tap it and sign in while we keep going, or if now isn't a good time, just ask me for a new Kroger link on any call.");
+    assert.equal(says('kroger_later'), "No problem, you can connect Kroger later. Just ask me to text you the Kroger link, and your cart will work once you've signed in.");
+    assert.ok(says('kroger').includes('new Kroger link') && !says('kroger').includes('few more minutes'));
+    for (const s of SETUP_STEPS) assert.ok(!s.says.includes('few more minutes'), s.step);
+    assert.ok(!instructions.includes('few more minutes'));
+    assert.ok(instructions.includes('do not text a link') && instructions.includes('skip Kroger or do it later'));
+    assert.ok(!instructions.includes('call kroger_status once more'));
+    assert.ok(/signed in to Kroger, call kroger_status/.test(instructions));
+  });
   it('the instructions name the Kroger tools', async () => {
     const { instructions } = await import('./prompt.mjs');
     for (const w of ['kroger_status', 'text_kroger_sign_in']) assert.ok(instructions.includes(w), w);

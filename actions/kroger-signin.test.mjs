@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -116,7 +116,8 @@ test('401 or 403 stops with relay_rejected', async () => {
     const si = make(baseEnv(dir), makeFetch([{ status }]).impl);
     await si.startKrogerSignIn();
     assert.deepEqual(await si.waitForKrogerSignIn(), { ok: false, error: 'relay_rejected' });
-    assert.equal((await si.getKrogerStatus()).pending, false);
+    // the record is kept (a secret problem, not the patient's), so a fresh record still reads as pending
+    assert.equal((await si.getKrogerStatus()).pending, true);
   }
 });
 
@@ -136,7 +137,7 @@ test('timed_out leaves connected unchanged and stops polling', async () => {
   await si.startKrogerSignIn();
   assert.deepEqual(await si.waitForKrogerSignIn(), { ok: false, error: 'timed_out' });
   const st = await si.getKrogerStatus();
-  assert.equal(st.pending, false);
+  assert.equal(st.pending, true); // the record outlives the poller: another process may still claim within 10 minutes
   assert.equal(st.connected, false);
   const seen = log.claims.length;
   await new Promise((r) => setTimeout(r, 50));
@@ -230,4 +231,239 @@ test('the default-controller wrappers return the documented shapes without keys'
     delete process.env.KROGER_TOKEN_DIR;
     Object.assign(process.env, saved);
   }
+});
+
+// ---- pending record and resume ----
+
+const pendingPath = (dir) => join(dir, 'kroger-signin-pending.json');
+const stateOf = (started) => started.link.split('/k/')[1];
+const readRecord = async (dir) => JSON.parse(await readFile(pendingPath(dir), 'utf8'));
+const exists = async (f) => {
+  try {
+    await stat(f);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const FIXED_NOW = 1_800_000_000_000;
+
+test('start writes a private pending record with only the state and start time', async () => {
+  const dir = await tempDir();
+  const si = make(baseEnv(dir), makeFetch([{ status: 404 }]).impl, { now: () => FIXED_NOW });
+  const started = await si.startKrogerSignIn();
+  assert.equal((await stat(pendingPath(dir))).mode & 0o777, 0o600);
+  assert.equal((await stat(dir)).mode & 0o777, 0o700);
+  assert.deepEqual(await readRecord(dir), { state: stateOf(started), startedAt: FIXED_NOW });
+  assert.deepEqual((await readdir(dir)).filter((n) => n.endsWith('.tmp')), []);
+  si.cancel();
+});
+
+test('the record is removed on success and on a rejected exchange', async () => {
+  const dir = await tempDir();
+  const ok = make(baseEnv(dir), makeFetch([{ status: 200, body: { code: CODE } }]).impl);
+  await ok.startKrogerSignIn();
+  assert.deepEqual(await ok.waitForKrogerSignIn(), { ok: true });
+  assert.equal(await exists(pendingPath(dir)), false);
+
+  const dir2 = await tempDir();
+  const bad = make(baseEnv(dir2), makeFetch([{ status: 200, body: { code: CODE } }], { tokenOk: false }).impl);
+  await bad.startKrogerSignIn();
+  assert.deepEqual(await bad.waitForKrogerSignIn(), { ok: false, error: 'exchange_failed' });
+  assert.equal(await exists(pendingPath(dir2)), false);
+
+  const dir3 = await tempDir();
+  const long = make(baseEnv(dir3), makeFetch([{ status: 200, body: { code: 'x'.repeat(2049) } }]).impl);
+  await long.startKrogerSignIn();
+  assert.deepEqual(await long.waitForKrogerSignIn(), { ok: false, error: 'exchange_failed' });
+  assert.equal(await exists(pendingPath(dir3)), false);
+});
+
+test('relay_rejected, timed_out and cancel keep the record; a second start overwrites it', async () => {
+  const dir = await tempDir();
+  const rejected = make(baseEnv(dir), makeFetch([{ status: 401 }]).impl);
+  await rejected.startKrogerSignIn();
+  await rejected.waitForKrogerSignIn();
+  assert.equal(await exists(pendingPath(dir)), true);
+
+  const dir2 = await tempDir();
+  const slow = make(baseEnv(dir2), makeFetch([{ status: 404 }]).impl, { maxWaitMs: 40 });
+  await slow.startKrogerSignIn();
+  assert.deepEqual(await slow.waitForKrogerSignIn(), { ok: false, error: 'timed_out' });
+  assert.equal(await exists(pendingPath(dir2)), true);
+
+  const dir3 = await tempDir();
+  const si = make(baseEnv(dir3), makeFetch([{ status: 404 }]).impl);
+  const first = await si.startKrogerSignIn();
+  si.cancel();
+  assert.equal((await readRecord(dir3)).state, stateOf(first));
+  const second = await si.startKrogerSignIn();
+  assert.equal((await readRecord(dir3)).state, stateOf(second));
+  assert.notEqual(stateOf(first), stateOf(second));
+  si.cancel();
+});
+
+test('a fresh process resumes the sign-in the first process left behind', async () => {
+  const dir = await tempDir();
+  const a = make(baseEnv(dir), makeFetch([{ status: 404 }]).impl, { maxWaitMs: 40 });
+  const started = await a.startKrogerSignIn();
+  await a.waitForKrogerSignIn();
+  a.cancel();
+  const { impl, log } = makeFetch([{ status: 200, body: { code: CODE } }]);
+  const b = make(baseEnv(dir), impl);
+  assert.deepEqual(await b.resumePendingSignIn(), { resumed: 'connected' });
+  assert.equal(log.claims.length, 1);
+  assert.equal(log.claims[0].body.state, stateOf(started));
+  assert.equal(log.tokens.length, 1);
+  assert.match(await readFile(join(dir, 'kroger-tokens.json'), 'utf8'), /refresh-token-abc/);
+  assert.equal(await exists(pendingPath(dir)), false);
+  const st = await b.getKrogerStatus();
+  assert.equal(st.connected, true);
+  assert.equal(st.pending, false);
+});
+
+test('resume with a relay 404 waits and keeps the record; status reads pending from disk', async () => {
+  const dir = await tempDir();
+  const a = make(baseEnv(dir), makeFetch([{ status: 404 }]).impl);
+  await a.startKrogerSignIn();
+  a.cancel();
+  const b = make(baseEnv(dir), makeFetch([{ status: 404 }]).impl);
+  assert.deepEqual(await b.resumePendingSignIn(), { resumed: 'waiting' });
+  assert.equal(await exists(pendingPath(dir)), true);
+  const c = make(baseEnv(dir), makeFetch([{ status: 404 }]).impl);
+  const st = await c.getKrogerStatus();
+  assert.deepEqual(Object.keys(st), ['ok', 'configured', 'relay', 'connected', 'pending']);
+  assert.equal(st.pending, true);
+});
+
+test('a stale or far-future record is deleted without any claim', async () => {
+  for (const offset of [600_001, -60_001]) {
+    const dir = await tempDir();
+    const a = make(baseEnv(dir), makeFetch([{ status: 404 }]).impl, { now: () => FIXED_NOW });
+    await a.startKrogerSignIn();
+    a.cancel();
+    const { impl, log } = makeFetch([{ status: 200, body: { code: CODE } }]);
+    const b = make(baseEnv(dir), impl, { now: () => FIXED_NOW + offset });
+    assert.deepEqual(await b.resumePendingSignIn(), { resumed: 'expired' });
+    assert.equal(log.claims.length, 0);
+    assert.equal(await exists(pendingPath(dir)), false);
+  }
+});
+
+test('resume: Kroger rejecting the exchange, a bad code and a relay 401', async () => {
+  const dir = await tempDir();
+  await make(baseEnv(dir), makeFetch([{ status: 404 }]).impl).startKrogerSignIn();
+  const rejected = makeFetch([{ status: 200, body: { code: CODE } }], { tokenOk: false });
+  assert.deepEqual(await make(baseEnv(dir), rejected.impl).resumePendingSignIn(), { resumed: 'failed' });
+  assert.equal(await exists(pendingPath(dir)), false);
+  assert.equal(await exists(join(dir, 'kroger-tokens.json')), false);
+
+  const dir2 = await tempDir();
+  await make(baseEnv(dir2), makeFetch([{ status: 404 }]).impl).startKrogerSignIn();
+  const long = makeFetch([{ status: 200, body: { code: 'x'.repeat(2049) } }]);
+  assert.deepEqual(await make(baseEnv(dir2), long.impl).resumePendingSignIn(), { resumed: 'failed' });
+  assert.equal(long.log.tokens.length, 0);
+  assert.equal(await exists(pendingPath(dir2)), false);
+
+  const dir3 = await tempDir();
+  await make(baseEnv(dir3), makeFetch([{ status: 404 }]).impl).startKrogerSignIn();
+  assert.deepEqual(await make(baseEnv(dir3), makeFetch([{ status: 401 }]).impl).resumePendingSignIn(), { resumed: 'failed' });
+  assert.equal(await exists(pendingPath(dir3)), true);
+});
+
+test('resume with no record, no Kroger config or no relay config makes no request', async () => {
+  const guard = async () => assert.fail('no fetch expected');
+  const dir = await tempDir();
+  assert.deepEqual(await make(baseEnv(dir), guard).resumePendingSignIn(), { resumed: 'none' });
+  assert.deepEqual(await make({}, guard).resumePendingSignIn(), { resumed: 'none' });
+  await make(baseEnv(dir), makeFetch([{ status: 404 }]).impl).startKrogerSignIn();
+  const noRelay = baseEnv(dir, { KROGER_RELAY_URL: '' });
+  assert.deepEqual(await make(noRelay, guard).resumePendingSignIn(), { resumed: 'none' });
+  assert.equal(await exists(pendingPath(dir)), true);
+});
+
+test('a corrupt record is removed; a symlink is never followed or deleted', async () => {
+  const guard = async () => assert.fail('no fetch expected');
+  for (const body of ['not json', JSON.stringify({ state: 'short', startedAt: FIXED_NOW }), JSON.stringify({ state: 'A'.repeat(43) })]) {
+    const dir = await tempDir();
+    await writeFile(pendingPath(dir), body);
+    assert.deepEqual(await make(baseEnv(dir), guard).resumePendingSignIn(), { resumed: 'none' });
+    assert.equal(await exists(pendingPath(dir)), false);
+  }
+  const dir = await tempDir();
+  const target = join(await tempDir(), 'target.json');
+  await writeFile(target, JSON.stringify({ state: 'A'.repeat(43), startedAt: Date.now() }));
+  await symlink(target, pendingPath(dir));
+  assert.deepEqual(await make(baseEnv(dir), guard).resumePendingSignIn(), { resumed: 'none' });
+  assert.equal(await exists(target), true);
+  assert.equal((await readFile(target, 'utf8')).includes('AAAA'), true);
+});
+
+test('resume and status respect their time cap with a fetch that never answers', async () => {
+  const dir = await tempDir();
+  await make(baseEnv(dir), makeFetch([{ status: 404 }]).impl).startKrogerSignIn();
+  const hang = () => new Promise(() => {});
+  const si = make(baseEnv(dir), hang, { resumeWaitMs: 100 });
+  let t = Date.now();
+  assert.deepEqual(await si.resumePendingSignIn(), { resumed: 'waiting' });
+  assert.ok(Date.now() - t < 300, 'resume exceeded its cap');
+  t = Date.now();
+  const st = await si.getKrogerStatus();
+  assert.ok(Date.now() - t < 300, 'status exceeded its cap');
+  assert.deepEqual(st, { ok: true, configured: true, relay: true, connected: false, pending: true });
+});
+
+test('no double save: poller plus resumes, and two processes, exchange exactly once', async () => {
+  const dir = await tempDir();
+  let claimed = false;
+  const log = { tokens: 0, claims: 0 };
+  const impl = async (url) => {
+    if (url === `${RELAY}/api/kroger/claim`) {
+      log.claims += 1;
+      if (claimed) return new Response('{}', { status: 404 });
+      claimed = true;
+      return new Response(JSON.stringify({ code: CODE }), { status: 200 });
+    }
+    log.tokens += 1;
+    return new Response(JSON.stringify({ access_token: ACCESS, refresh_token: REFRESH, expires_in: 1800 }), { status: 200 });
+  };
+  const a = make(baseEnv(dir), impl, { pollMs: 5000, maxWaitMs: 8000 });
+  await a.startKrogerSignIn();
+  const results = await Promise.all([a.resumePendingSignIn(), a.resumePendingSignIn()]);
+  assert.deepEqual(results, [{ resumed: 'waiting' }, { resumed: 'waiting' }]); // the poller owns it: no claim
+  assert.equal(log.claims, 0);
+  a.cancel();
+
+  const b = make(baseEnv(dir), impl);
+  const c = make(baseEnv(dir), impl);
+  const both = await Promise.all([b.resumePendingSignIn(), c.resumePendingSignIn()]);
+  assert.equal(both.filter((r) => r.resumed === 'connected').length, 1);
+  assert.equal(log.tokens, 1);
+  assert.equal(await exists(pendingPath(dir)), false);
+});
+
+test('resume never leaks the state, code, tokens or secrets', async () => {
+  const dir = await tempDir();
+  const cap = captureConsole();
+  const results = [];
+  let state;
+  try {
+    const a = make(baseEnv(dir), makeFetch([{ status: 404 }]).impl);
+    state = stateOf(await a.startKrogerSignIn());
+    a.cancel();
+    const b = make(baseEnv(dir), makeFetch([{ status: 200, body: { code: CODE } }]).impl);
+    results.push(await b.resumePendingSignIn(), await b.getKrogerStatus());
+    const dir2 = await tempDir();
+    const x = make(baseEnv(dir2), makeFetch([{ status: 404 }]).impl, { now: () => FIXED_NOW });
+    state = [state, stateOf(await x.startKrogerSignIn())];
+    x.cancel();
+    results.push(await make(baseEnv(dir2), makeFetch([{ status: 401 }]).impl, { now: () => FIXED_NOW + 700_000 }).resumePendingSignIn());
+  } finally {
+    cap.restore();
+  }
+  const haystack = cap.lines.join('\n') + JSON.stringify(results);
+  for (const secret of [CLIENT_SECRET, RELAY_SECRET, CODE, REFRESH, ACCESS, ...state]) {
+    assert.ok(!haystack.includes(secret), 'leaked a sensitive value');
+  }
+  assert.ok(cap.lines.some((l) => l.includes('connected (resumed)')));
 });

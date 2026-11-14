@@ -89,7 +89,10 @@ test('callback stores the code and shows the success page with hardened headers'
   const res = await relay.callback(get(`/api/kroger/callback?code=abc123&state=${STATE}`));
   assert.equal(res.status, 200);
   const body = await res.text();
-  assert.match(body, /Kroger is connected\. You can go back to your call\./);
+  assert.ok(body.includes("<h1>Thanks, you're signed in to Kroger.</h1>"));
+  assert.ok(body.includes("<p>If you're still on your call, go back to it. If your call has ended, call your dietitian back within a few minutes to finish connecting.</p>"));
+  assert.ok(body.includes('<p>After ten minutes this sign-in is dropped, and you can ask for a new link on any call.</p>'));
+  assert.ok(!body.includes('Kroger is connected'));
   assert.ok(!body.includes('abc123') && !body.includes(STATE));
   assert.deepEqual(await store.get(STATE), { code: 'abc123', at: 5000 });
   assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8');

@@ -291,6 +291,7 @@ async function saveDebugFrame(dir, picture) {
 
 // Minimum time between reading the limits back and accepting the caller's yes. The read-back alone takes longer.
 export const CONFIRM_MIN_MS = 2500;
+export const KROGER_FINISH_LATER = "Kroger isn't connected yet; you can finish from the link I texted, or ask me for a new one on any call.";
 const LIMIT_FIELDS = [['sodium', 'sodiumMg', 'sodium_mg'], ['potassium', 'potassiumMg', 'potassium_mg'], ['phosphorus', 'phosphorusMg', 'phosphorus_mg'], ['fluid', 'fluidMl', 'fluid_ml']];
 
 // True when this caller still has to do first-call setup. Never throws; any trouble or delay gives false so the
@@ -1027,7 +1028,7 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     finish_onboarding: llm.tool({
-      description: 'Setup only. Call once at the end of setup, after telling the caller what you can do. Marks setup finished and says whether limits were saved.',
+      description: 'Setup only. Call once at the end of setup, after telling the caller what you can do. Marks setup finished, says whether limits were saved and, if a Kroger link was texted this call, whether Kroger is connected.',
       execute: guard(async call => {
         const gate = needSetup();
         if (gate) return gate;
@@ -1038,9 +1039,20 @@ export function buildTools({
         const saved = await saveDraft({ ...d, setupDone: true });
         if (!saved.ok) return fail('profile_unsaved');
         setupActive = false;
-        return draft.limits
+        const base = draft.limits
           ? { ok: true, complete: true, say: "You're all set. I'll use the limits you told me your care team gave you." }
           : { ok: true, complete: false, say: "Your setup is saved, but without your care team's limits I can't judge foods yet. When you have them, say 'update my setup'." };
+        // Only when a link was texted this call: one fixed sentence about Kroger. Bounded; never changes ok or complete.
+        if (krogerTextAt !== null && typeof actions.getKrogerStatus === 'function') {
+          let timer;
+          try {
+            const late = new Promise(resolve => { timer = setTimeout(() => resolve(null), Math.min(3000, Math.floor(timeoutMs / 2))); });
+            const s = await Promise.race([Promise.resolve().then(() => actions.getKrogerStatus()).catch(() => null), late]);
+            if (s?.ok && s.configured && s.connected) return { ...base, say: `${base.say} Your Kroger account is connected.` };
+            if (s?.ok && s.configured && s.relay && !s.connected) return { ...base, say: `${base.say} ${KROGER_FINISH_LATER}` };
+          } catch { /* no Kroger sentence */ } finally { clearTimeout(timer); }
+        }
+        return base;
       }, { timeoutMs }),
     }),
   };
