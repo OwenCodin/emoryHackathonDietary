@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-onw: finish the Kroger sign-in later
+Last activity: 2026-11-14 - Completed quick task 261114-oyc: dish to ingredients to list to Kroger cart
 
 Progress: [██████████] 100%
 
@@ -112,6 +112,7 @@ None yet.
 | fast | Docs: kroger-relay deployed and checked live; first real Kroger sign-in through a link texted by Chert, saved on the Mac about 30 s later | 2026-11-14 | bcbb203 | - |
 | 261114-onw | Finish the Kroger sign-in later: the pending sign-in is recorded in the token folder and picked up by any later process within the relay window (getKrogerStatus and the cart path), setup offers later, finish_onboarding says how to finish, relay page wording made honest (639/639 pass). Second-process pick-up passes locally; relay page needs a redeploy | 2026-11-14 | 71f7a81 | [261114-onw-finish-kroger-sign-in-later-during-or-af](./quick/261114-onw-finish-kroger-sign-in-later-during-or-af/) |
 | fast | Agent waits for the caller to stop talking: end-of-speech sensitivity low and one second of silence (AGENT_END_SILENCE_MS, 300 to 3000) before a turn ends; the model accepted the setting in a test session (641/641 pass). Not yet heard on a call | 2026-11-14 | 11ff696 | - |
+| 261114-oyc | Dish to ingredients to list to Kroger cart: renal dishIngredients (model gives names and quantities only, every ingredient re-checked by checkFood), actions previewCart (read-only list card, not in the Kroger cart yet), agent tools dish_ingredients, remove_from_list, set_quantity, text_list, start_cart refuses until the list was read back (confirm_list), honest sentence that Kroger items cannot be removed, prompt playbook and start_setup restriction, shared contract updated in all three READMEs (679/679 pass). Live read-only check for a ham sandwich passed; not yet run on a call | 2026-11-14 | d7d4018 | [261114-oyc-dish-to-ingredients-to-shopping-list-to-](./quick/261114-oyc-dish-to-ingredients-to-shopping-list-to-/) |
 
 ## Session Continuity
 
