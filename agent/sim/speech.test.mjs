@@ -29,3 +29,12 @@ describe('wavPcm', () => {
     assert.throws(() => wavPcm(Buffer.from('hello world, not a wav')), /not a 16-bit PCM WAV/);
   });
 });
+
+describe('speechPcm input checks', () => {
+  it('rejects empty, dash-leading and over-long text before running anything', async () => {
+    const { speechPcm, MAX_SPEECH_CHARS } = await import('./speech.mjs');
+    for (const t of ['', '  ', '-x', 'a'.repeat(MAX_SPEECH_CHARS + 1), 5]) {
+      await assert.rejects(() => speechPcm(t), /bad speech text/);
+    }
+  });
+});

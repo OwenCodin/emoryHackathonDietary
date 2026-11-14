@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
+export const MAX_SPEECH_CHARS = 300;
+const TOOL_TIMEOUT_MS = 30000; // a hung say or afconvert must not hang the script
 
 // Parse a 16-bit PCM WAV buffer into { sampleRate, channels, samples }.
 export function wavPcm(buffer) {
@@ -35,13 +37,13 @@ export function wavPcm(buffer) {
 
 // Text to 48 kHz mono 16-bit samples.
 export async function speechPcm(text) {
-  if (typeof text !== 'string' || !text.trim() || text.startsWith('-')) throw new Error('bad speech text');
+  if (typeof text !== 'string' || !text.trim() || text.startsWith('-') || text.length > MAX_SPEECH_CHARS) throw new Error('bad speech text');
   const dir = await mkdtemp(join(tmpdir(), 'sim-say-'));
   try {
     const aiff = join(dir, 's.aiff');
     const wav = join(dir, 's.wav');
-    await run('say', ['-o', aiff, text]);
-    await run('afconvert', ['-f', 'WAVE', '-d', 'LEI16@48000', '-c', '1', aiff, wav]);
+    await run('say', ['-o', aiff, '--', text], { timeout: TOOL_TIMEOUT_MS });
+    await run('afconvert', ['-f', 'WAVE', '-d', 'LEI16@48000', '-c', '1', aiff, wav], { timeout: TOOL_TIMEOUT_MS });
     const pcm = wavPcm(await readFile(wav));
     if (pcm.sampleRate !== 48000 || pcm.channels !== 1) throw new Error('unexpected speech format');
     return pcm.samples;

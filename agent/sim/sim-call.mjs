@@ -17,7 +17,7 @@ import {
 } from '@livekit/rtc-node';
 import { AccessToken, AgentDispatchClient, RoomServiceClient } from 'livekit-server-sdk';
 import { HEIGHT, WIDTH } from '../../shared/video.mjs';
-import { speechPcm } from './speech.mjs';
+import { MAX_SPEECH_CHARS, speechPcm } from './speech.mjs';
 
 const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]...';
 
@@ -36,7 +36,7 @@ function textArgs(name) {
   process.argv.forEach((a, i) => {
     if (a !== name) return;
     const v = process.argv[i + 1];
-    if (typeof v !== 'string' || !v.trim() || v.startsWith('-')) { console.log(USAGE); process.exit(1); }
+    if (typeof v !== 'string' || !v.trim() || v.startsWith('-') || (name === '--say' && v.length > MAX_SPEECH_CHARS)) { console.log(USAGE); process.exit(1); }
     out.push(v);
   });
   return out;
@@ -234,19 +234,19 @@ async function runCall(n) {
   }
 }
 
-// Speech and picture are prepared once, before any call and before the watchdog starts.
-const speech = [];
-for (const text of SAYS) speech.push(await speechPcm(text));
-const picture = IMAGE
-  ? new Uint8Array(await sharp(IMAGE).resize(WIDTH, HEIGHT, { fit: 'contain', background: '#ffffff' }).ensureAlpha().raw().toBuffer())
-  : null;
-
 const watchdog = setTimeout(async () => {
   console.log('[sim] FAIL timeout');
   if (activeRoom) await deleteRoomQuietly(activeRoom);
   process.exit(1);
 }, CALLS * (SECONDS + (SAYS.length > 0 ? 60 : 45)) * 1000);
 watchdog.unref();
+
+// Speech and picture are prepared once, before any call (the watchdog above already covers this).
+const speech = [];
+for (const text of SAYS) speech.push(await speechPcm(text));
+const picture = IMAGE
+  ? new Uint8Array(await sharp(IMAGE).resize(WIDTH, HEIGHT, { fit: 'contain', background: '#ffffff' }).ensureAlpha().raw().toBuffer())
+  : null;
 
 const results = [];
 for (let n = 1; n <= CALLS; n++) {
