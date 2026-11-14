@@ -111,6 +111,7 @@ None yet.
 | 261114-m9n | Kroger sign-in by texted link: kroger-relay (short link, callback page, one-time claim; holds only the short-lived code), relay sign-in in actions (startKrogerSignIn, getKrogerStatus), agent tools kroger_status and text_kroger_sign_in, a Kroger step in setup, shared contract updated in all three READMEs (615/615 pass). Local end-to-end test passes; the deployed relay and a real sign-in are not yet verified | 2026-11-14 | 4bf20bb | [261114-m9n-kroger-sign-in-by-texted-link-during-onb](./quick/261114-m9n-kroger-sign-in-by-texted-link-during-onb/) |
 | fast | Docs: kroger-relay deployed and checked live; first real Kroger sign-in through a link texted by Chert, saved on the Mac about 30 s later | 2026-11-14 | bcbb203 | - |
 | 261114-onw | Finish the Kroger sign-in later: the pending sign-in is recorded in the token folder and picked up by any later process within the relay window (getKrogerStatus and the cart path), setup offers later, finish_onboarding says how to finish, relay page wording made honest (639/639 pass). Second-process pick-up passes locally; relay page needs a redeploy | 2026-11-14 | 71f7a81 | [261114-onw-finish-kroger-sign-in-later-during-or-af](./quick/261114-onw-finish-kroger-sign-in-later-during-or-af/) |
+| fast | Agent waits for the caller to stop talking: end-of-speech sensitivity low and one second of silence (AGENT_END_SILENCE_MS, 300 to 3000) before a turn ends; the model accepted the setting in a test session (641/641 pass). Not yet heard on a call | 2026-11-14 | 11ff696 | - |
 
 ## Session Continuity
 
