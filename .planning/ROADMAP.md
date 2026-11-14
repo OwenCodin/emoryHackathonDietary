@@ -28,7 +28,10 @@ Real FaceTime calls are scarce (about 49 minutes left on the trial, 5 minutes pe
   3. `shared/video.mjs` is the only place the video size and rate are defined (1280, 720, 15) and the agent reads it from there
   4. `.env.example` lists every contract variable with no values, and `git status` shows `.env.local`, `node_modules/` and `actions/.browser-profile/` as ignored
 **Human checkpoint**: Putting LiveKit and Gemini keys in `.env.local` is not needed to finish this phase, but the person must do it before Phase 2.
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 01-01-PLAN.md — Root package, contract test, stubs, shared video size and check_food tool, and the Chert starter on Gemini booting with `npm start` (walking skeleton; see 01-SKELETON.md)
 
 ### Phase 2: First call
 **Goal**: A patient can FaceTime the line, is greeted in time, and holds a spoken conversation with the dietitian persona, repeatably
