@@ -4,6 +4,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
+import { makeFakeActions, makeFakeRenal } from './fake-modules.mjs';
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('network used'); };
@@ -11,8 +12,8 @@ globalThis.fetch = async () => { throw new Error('network used'); };
 let tools, renal, actions, prompt, jpeg, dir;
 before(async () => {
   tools = await import('./tools.mjs');
-  renal = await import('../renal/index.mjs');
-  actions = await import('../actions/index.mjs');
+  renal = makeFakeRenal();
+  actions = makeFakeActions();
   prompt = await import('./prompt.mjs');
   jpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#fff' } }).jpeg().toBuffer();
   dir = await mkdtemp(join(tmpdir(), 'tools-test-'));

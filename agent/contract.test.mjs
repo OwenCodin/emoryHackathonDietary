@@ -1,7 +1,14 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // No stub may touch the network. Replace fetch BEFORE the modules load.
+// Keep the real logFood from writing renal/data/diary.json.
+const stateDir = await mkdtemp(join(tmpdir(), 'agent-contract-state-'));
+process.env.RENAL_STATE_DIR = stateDir;
+
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => {
   throw new Error('network used by a stub');
@@ -16,8 +23,10 @@ before(async () => {
   tools = await import('./tools.mjs');
   face = await import('./face.mjs');
 });
-after(() => {
+after(async () => {
   globalThis.fetch = originalFetch;
+  delete process.env.RENAL_STATE_DIR;
+  await rm(stateDir, { recursive: true, force: true });
 });
 
 const isStr = v => typeof v === 'string';
@@ -43,7 +52,7 @@ describe('shared/video.mjs', () => {
   });
 });
 
-describe('renal stub', () => {
+describe('renal contract', () => {
   let profile;
   before(async () => {
     profile = (await renal.getProfile({ patientId: 'demo' })).profile;
@@ -57,12 +66,31 @@ describe('renal stub', () => {
   });
 
   it('describeImage returns a Seen', async () => {
-    const seen = await renal.describeImage({ jpeg: Buffer.alloc(4) });
-    assert.equal(seen.ok, true);
-    assert.ok(['label', 'plate', 'fridge', 'shelf', 'unclear'].includes(seen.kind));
-    assert.ok(Array.isArray(seen.foods));
-    for (const f of seen.foods) assert.ok(isStr(f.name) && (f.grams === null || isNum(f.grams)));
-    assert.ok(seen.label === null || isStr(seen.label.product));
+    const previousKey = process.env.GOOGLE_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    try {
+      const failed = await renal.describeImage({ jpeg: Buffer.alloc(4) });
+      assert.equal(failed.ok, false);
+      assert.ok(isStr(failed.error) && failed.error.length > 0);
+
+      process.env.GOOGLE_API_KEY = 'dummy-key';
+      const ai = {
+        models: {
+          generateContent: async () => ({
+            text: JSON.stringify({ kind: 'plate', foods: [{ name: 'banana', grams: 118 }], label: null }),
+          }),
+        },
+      };
+      const seen = await renal.describeImage({ jpeg: Buffer.alloc(4) }, { ai });
+      assert.equal(seen.ok, true);
+      assert.ok(['label', 'plate', 'fridge', 'shelf', 'unclear'].includes(seen.kind));
+      assert.ok(Array.isArray(seen.foods));
+      for (const f of seen.foods) assert.ok(isStr(f.name) && (f.grams === null || isNum(f.grams)));
+      assert.ok(seen.label === null || isStr(seen.label.product));
+    } finally {
+      if (previousKey === undefined) delete process.env.GOOGLE_API_KEY;
+      else process.env.GOOGLE_API_KEY = previousKey;
+    }
   });
 
   it('checkFood returns a Verdict', async () => {
@@ -93,11 +121,25 @@ describe('renal stub', () => {
     assert.ok(Array.isArray(t.items));
   });
 
-  it('every function returns a Promise resolving ok: true, with or without an argument', async () => {
-    for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'logFood', 'getToday']) {
-      const p = renal[name]();
-      assert.ok(p instanceof Promise, `${name} returns a Promise`);
-      assert.equal((await p).ok, true, `${name}() ok`);
+  it('every function returns a Promise that resolves to an ok result, with or without an argument', async () => {
+    const saved = { google: process.env.GOOGLE_API_KEY, usda: process.env.USDA_API_KEY };
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.USDA_API_KEY;
+    try {
+      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'logFood', 'getToday']) {
+        const p = renal[name]();
+        assert.ok(p instanceof Promise, `${name} returns a Promise`);
+        const r = await p;
+        assert.equal(typeof r.ok, 'boolean', `${name}() ok is a boolean`);
+        if (r.ok === false) assert.ok(isStr(r.error) && r.error.length > 0, `${name}() failure has an error`);
+      }
+      assert.equal((await renal.getProfile()).ok, true);
+      assert.equal((await renal.getToday()).ok, true);
+    } finally {
+      if (saved.google === undefined) delete process.env.GOOGLE_API_KEY;
+      else process.env.GOOGLE_API_KEY = saved.google;
+      if (saved.usda === undefined) delete process.env.USDA_API_KEY;
+      else process.env.USDA_API_KEY = saved.usda;
     }
   });
 });
