@@ -221,6 +221,7 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 - The agent tests now run on deterministic fakes (`agent/fake-modules.mjs`, not the real modules). `agent/contract.test.mjs` checks the real renal and actions contracts.
 - Pantry memory (`agent/memory.mjs`): the agent remembers food names between shots and calls, per patient, and the file expires after 2 hours. New tools: `pantry_list`, `remove_from_pantry`, `clear_pantry` and `text_recipe`.
 - `look_at_camera` gained an optional `place` argument (`home` or `store`) and the failure codes `vision_failed`, `unclear_picture` and `no_food_seen`. It no longer returns `check_failed`. A look that saw foods is always `ok: true`, with `unjudged: true` when none could be checked, `online: true` when a verdict came from the online lookup, and `remembered: true` when foods were added to the pantry.
+- A label with no printed product name is judged as "this product" with `unnamed: true` (only numbers printed on the label are used; it is not remembered in the pantry or for `log_meal`; a label with nothing usable returns `label_unreadable`). `suggest_meal` keeps water, ice, pepper and cooking oils off the shopping list and the cart. A leading `Okay,`, `Limit,` or `Avoid,` from renal is no longer repeated after the agent's own verdict word.
 - `agent/toollog.mjs` formats the log line `[agent] tool <name> ok=true|false [error=<code>]`. The code must match `^[a-z_]{1,40}$`, otherwise it logs `other`. Other values: `none` (failed with no code), `tool_exception` (the tool threw), `bad_output` (not an object), and the tool name `unknown_tool` for an invalid name.
 - The prompt (`agent/prompt.mjs`) has rules for the kitchen tour (fridge, then cupboards, one shot at a time) and for texting a recipe only when the caller agrees.
 - Seen on live calls on 14 November: the agent called `check_food` and `look_at_camera`, and a fridge frame (1280 by 720) was read as kind `fridge` with two foods. Pantry memory and `text_recipe` are tested with fakes only; the texting path was proven by a direct API send, not yet from a live call.
@@ -298,7 +299,7 @@ The object key in `agent/tools.mjs` is the tool name. Everything a tool returns 
 
 | Tool | What it does | Failure codes |
 |---|---|---|
-| `look_at_camera` (optional `place`: `home` or `store`) | Reads the caller's camera, judges each food seen, remembers fridge and shelf foods | `no_camera_picture`, `vision_failed`, `unclear_picture`, `no_food_seen` |
+| `look_at_camera` (optional `place`: `home` or `store`) | Reads the caller's camera, judges each food seen, remembers fridge and shelf foods | `no_camera_picture`, `vision_failed`, `unclear_picture`, `no_food_seen`, `label_unreadable` |
 | `check_food` | Judges a food the caller names | `bad_food`, `bad_amount`, `profile_unavailable`, `check_failed` |
 | `suggest_meal` | Suggests a meal from everything remembered from the kitchen | `nothing_seen`, `profile_unavailable`, `check_failed` |
 | `log_meal` | Logs what was eaten | `nothing_to_log`, `tool_failed` |
