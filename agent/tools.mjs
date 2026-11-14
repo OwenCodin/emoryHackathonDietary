@@ -168,7 +168,7 @@ function fit(result, limit) {
 
 // fn receives a per-call token first. When the call times out, token.timedOut becomes true and the
 // work that is still running must not change remembered state or start anything new.
-function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout'), activity = () => {} }) {
+function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout'), activity = () => {}, display = () => {} }) {
   return async (...args) => {
     const call = { timedOut: false };
     let timer;
@@ -179,7 +179,12 @@ function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout
       work.catch(() => {}); // a late failure after the timeout is not reported twice
       const result = await Promise.race([work, timedOut]);
       if (!result || typeof result !== 'object') return fail('tool_failed');
-      return fit(result, limit);
+      const fitted = fit(result, limit);
+      // A card is shown only for a finished, successful verdict (never a timeout, a failure or the TOO_LONG summary).
+      if (!call.timedOut && call.display && fitted?.ok === true && (typeof fitted.verdict === 'string' || Array.isArray(fitted.results))) {
+        try { display(call.display); } catch { /* a hook never changes a result */ }
+      }
+      return fitted;
     } catch {
       return fail('tool_failed');
     } finally {
@@ -190,6 +195,17 @@ function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout
 }
 
 const normalVerdict = v => (Object.hasOwn(RANK, v) ? v : 'unknown');
+
+// What the video screen may draw for one checked food: only fields the renal check returned, never its spoken text.
+const displayItem = (v, fallbackName, verdict) => ({
+  food: clean(v.food ?? fallbackName, 80),
+  verdict,
+  nutrients: v.nutrients && typeof v.nutrients === 'object'
+    ? { sodiumMg: v.nutrients.sodiumMg ?? null, potassiumMg: v.nutrients.potassiumMg ?? null, phosphorusMg: v.nutrients.phosphorusMg ?? null }
+    : null,
+  portion: typeof v.portion === 'string' ? clean(v.portion, 60) : null,
+  online: v.source === 'web',
+});
 
 // Picks the best checked food: ok, then limit, then unknown; never avoid, never a failed check.
 // Ties go to the lowest largest share of a daily limit, then to the order seen. Pure.
@@ -258,9 +274,10 @@ export function buildTools({
   phone = process.env.PATIENT_PHONE,
   onToolActivity = () => {},
   memory = null,
+  onDisplay = () => {},
 } = {}) {
   // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
-  const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity });
+  const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity, display: onDisplay });
   let lastFoods = []; // food names from the last look only; suggest_meal cooks from these
   const candidates = new Map(); // judged foods log_meal may log: key -> { names, verdict }
   let lastMissing = []; // CartItems the last meal suggestion said are missing
@@ -332,7 +349,7 @@ export function buildTools({
         verdicts.forEach((v, i) => {
           if (v?.ok === true) {
             const verdict = normalVerdict(v.verdict);
-            rows.push({ food: clean(v.food ?? foods[i].name, 80), verdict, swap: clean(v.swap, 40), speak: max => spokenVerdict({ ...v, verdict }, max) });
+            rows.push({ v, food: clean(v.food ?? foods[i].name, 80), verdict, swap: clean(v.swap, 40), speak: max => spokenVerdict({ ...v, verdict }, max) });
             good.push({ v, name: foods[i].name });
           } else {
             rows.push({ food: clean(foods[i].name, 80), verdict: 'unknown', swap: '', speak: () => "I can't tell, I couldn't check that one just now." });
@@ -347,6 +364,15 @@ export function buildTools({
         const unjudged = good.length === 0;
         // The most serious verdicts come first, so a shortened result never hides an "avoid".
         rows.sort((a, b) => RANK[a.verdict] - RANK[b.verdict]);
+        call.display = {
+          items: rows.slice(0, 6).map(r => (r.v
+            ? displayItem(r.v, r.food, r.verdict)
+            : { food: r.food, verdict: unjudged ? null : 'unknown', nutrients: null, portion: null, online: false })),
+          more: notChecked + Math.max(0, rows.length - 6),
+          unjudged,
+          seen: rows.length,
+          online: good.some(g => g.v?.source === 'web'),
+        };
         if (!call.timedOut && !nameless) {
           lastFoods = foods.map(f => clean(f.name, 80));
           good.forEach(g => remember(g.v, g.name));
@@ -421,6 +447,7 @@ export function buildTools({
         if (v?.ok !== true) return fail('check_failed');
         if (!call.timedOut) remember(v, name);
         const verdict = normalVerdict(v.verdict);
+        call.display = { items: [displayItem(v, name, verdict)], more: 0, unjudged: false, seen: 1, online: v.source === 'web' };
         return { ok: true, food: clean(v.food ?? name, 80), verdict, spoken: spokenVerdict({ ...v, verdict }), swap: clean(v.swap, 60) || null };
       }, { timeoutMs }),
     }),

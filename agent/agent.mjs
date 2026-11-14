@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { defineAgent, voice } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
 import { LocalVideoTrack, TrackPublishOptions, TrackSource, VideoBufferType, VideoFrame, VideoSource } from '@livekit/rtc-node';
-import { createFaceFrames } from './face.mjs';
+import { createScreen } from './screen.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
 import { buildTools, endCall, withTimeout } from './tools.mjs';
@@ -69,12 +69,13 @@ const agent = defineAgent({
     const track = LocalVideoTrack.createVideoTrack('agent-video', source);
     let tick = 0, speaking = false, timer = null;
     // Track C's browser frame while a cart runs (exact size or nothing), the cached face otherwise.
-    const faces = createFaceFrames();
+    // The brand screen renders in the background; the drawn face shows until it is ready. Nothing is awaited on the call path.
+    const screen = createScreen();
     const fakeCart = process.env.AGENT_FAKE_CART === '1' ? createFakeCart() : null;
     if (fakeCart) console.log('[agent] video: fake cart provider on (simulated proof only)');
     const picker = createVideoPicker({
       getCartFrame: fakeCart ? fakeCart.getCartFrame : getCartFrame,
-      drawOwnPicture: () => faces.frame(tick++, speaking),
+      drawOwnPicture: () => screen.frame(tick++, speaking),
       expectedLength: WIDTH * HEIGHT * 4,
     });
     // A failed frame must never take the call down: the timer callback has no caller to catch for it.
@@ -262,7 +263,7 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo', memory, onToolActivity: delta => watchdog.toolActivity(delta) }) }),
+        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo', memory, onToolActivity: delta => watchdog.toolActivity(delta), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,

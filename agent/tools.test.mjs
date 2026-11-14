@@ -1255,3 +1255,58 @@ describe('look_at_camera keeps whole sentences when they fit', () => {
     assert.ok(spoken.includes('Yes, eggs has about ninety nine milligrams of phosphorus.'), JSON.stringify(spoken));
   });
 });
+
+// ---- display hook (verdict card data) ----
+describe('display hook', () => {
+  const nutr = { sodiumMg: 1, potassiumMg: 422, phosphorusMg: 26 };
+  const web = (food, verdict = 'ok') => ({ ...verdictFor(food, verdict, 'Spoken words 999 mg.'), nutrients: nutr, portion: '118 g', source: 'web' });
+  const collect = () => { const calls = []; return { calls, onDisplay: d => calls.push(d) }; };
+
+  it('check_food emits structured data and leaves the model output alone', async () => {
+    const c = collect();
+    const r = await build({ ...c, renal: { ...renal, checkFood: async a => web(a.food.name) } }).check_food.execute({ name: 'banana', grams: null });
+    assert.deepEqual(c.calls, [{ items: [{ food: 'banana', verdict: 'ok', nutrients: nutr, portion: '118 g', online: true }], more: 0, unjudged: false, seen: 1, online: true }]);
+    assert.deepEqual(Object.keys(r), ['ok', 'food', 'verdict', 'spoken', 'swap']);
+    assert.ok(!JSON.stringify(r).includes('422'));
+  });
+  it('check_food failures and timeouts emit nothing', async () => {
+    const c = collect();
+    const bad = (over, args = { name: 'a', grams: null }) => build({ ...c, ...over }).check_food.execute(args);
+    await bad({}, { name: '', grams: null });
+    await bad({ renal: { ...renal, getProfile: async () => ({ ok: false }) } });
+    await bad({ renal: { ...renal, checkFood: async () => ({ ok: false }) } });
+    await bad({ timeoutMs: 20, renal: { ...renal, checkFood: async () => { await new Promise(r => setTimeout(r, 200)); return web('a'); } } });
+    assert.equal(c.calls.length, 0);
+  });
+  it('look_at_camera emits rows most serious first with a more count', async () => {
+    const order = { a: 'ok', b: 'unknown', c: 'limit', d: 'avoid' };
+    const c = collect();
+    const t = build({ ...c, renal: { ...renal,
+      describeImage: async () => ({ ok: true, kind: 'plate', foods: ['a', 'b', 'c', 'd'].map(name => ({ name })), label: null }),
+      checkFood: async a => verdictFor(a.food.name, order[a.food.name]) } });
+    const r = await t.look_at_camera.execute({});
+    assert.equal(c.calls.length, 1);
+    assert.deepEqual(c.calls[0].items.map(i => i.verdict), r.results.map(x => x.verdict));
+    assert.equal(c.calls[0].more, 0);
+    assert.equal(c.calls[0].seen, 4);
+    const c2 = collect();
+    await build({ ...c2, renal: manyFoods(8)() }).look_at_camera.execute({});
+    assert.equal(c2.calls[0].items.length, 6);
+    assert.equal(c2.calls[0].more, 2);
+  });
+  it('look_at_camera without a profile is unjudged; vision failure emits nothing', async () => {
+    const c = collect();
+    await build({ ...c, renal: { ...renal, getProfile: async () => ({ ok: false }) } }).look_at_camera.execute({});
+    assert.equal(c.calls[0].unjudged, true);
+    assert.ok(c.calls[0].items.every(i => i.verdict === null));
+    assert.equal(c.calls[0].seen, c.calls[0].items.length);
+    const c2 = collect();
+    await build({ ...c2, renal: { ...renal, describeImage: async () => ({ ok: false, error: 'x' }) } }).look_at_camera.execute({});
+    await build({ ...c2, camera: camOff }).look_at_camera.execute({});
+    assert.equal(c2.calls.length, 0);
+  });
+  it('a throwing onDisplay does not change the result', async () => {
+    const r = await build({ onDisplay: () => { throw new Error('boom'); } }).check_food.execute({ name: 'banana', grams: null });
+    assert.equal(r.ok, true);
+  });
+});
