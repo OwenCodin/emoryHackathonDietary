@@ -50,4 +50,6 @@ Flags below were checked against `vercel --version` (59.5.0) and `--help` for `l
 
 Verified: the handler tests (`lib/relay.test.mjs`), the local server end-to-end test (`actions/kroger-relay-e2e.test.mjs`, with a fake Kroger token endpoint), and the `@vercel/blob` 2.9.0 call signatures, read from the package's type files.
 
-Not verified: the deployed functions, the `/k/:state` rewrite on Vercel (the handler also reads the state from the path as a fallback), Blob on Vercel (including the message used to detect an existing pathname), the Kroger redirect-URI switch, the texted link on a real phone, and a real sign-in.
+Verified live on 14 Nov 2026 against https://renaline-kroger-relay.vercel.app: the deployed functions, the `/k/:state` rewrite, the private Blob store (store, one claim, then 404; a wrong secret gets 401), Kroger accepting `/api/kroger/callback` as a redirect URI, and one real sign-in from a phone through a link texted by Chert.
+
+Not verified: the message used to detect an existing pathname in Blob (the same code delivered twice).
