@@ -4,7 +4,8 @@
 
 const LIMITS = { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 };
 
-export function makeFakeRenal() {
+export function makeFakeRenal({ scenes } = {}) {
+  let sceneIndex = 0;
   return {
     async getProfile({ patientId } = {}) {
       return {
@@ -19,6 +20,7 @@ export function makeFakeRenal() {
       };
     },
     async describeImage({ jpeg } = {}) {
+      if (Array.isArray(scenes) && scenes.length > 0) return scenes[Math.min(sceneIndex++, scenes.length - 1)];
       return { ok: true, kind: 'plate', foods: [{ name: 'banana', grams: 118 }], label: null };
     },
     async checkFood({ food, profile } = {}) {

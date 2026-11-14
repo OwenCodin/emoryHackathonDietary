@@ -51,7 +51,7 @@ describe('spokenVerdict', () => {
 describe('buildTools shape', () => {
   it('has the eight tools, anonymous', () => {
     const t = build();
-    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'shopping_list', 'mark_item']);
+    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'shopping_list', 'mark_item', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'text_recipe']);
     for (const tool of Object.values(t)) assert.ok(!Object.hasOwn(tool, 'name'));
   });
 });
@@ -299,6 +299,8 @@ describe('cart tools', () => {
   });
 });
 
+const oneMealRenal = (meals) => ({ ...renal, suggestMeals: async () => ({ ok: true, meals: meals ?? [{ title: 'Rice with herbed chicken', uses: ['rice'], missing: [{ name: 'broth', quantity: '1 carton' }], minutes: 25, steps: ['Cook.', 'Serve.'], why: 'Gentle on sodium.' }] }) });
+
 describe('guarding the new tools', () => {
   const cases = {
     suggest_meal: { prep: t => t.look_at_camera.execute({}), mod: 'renal', fns: ['suggestMeals'] },
@@ -307,6 +309,7 @@ describe('guarding the new tools', () => {
     start_cart: { args: { items: [{ name: 'rice', quantity: '1' }] }, mod: 'actions', fns: ['startCart'] },
     cart_status: { mod: 'actions', fns: ['getCartStatus'] },
     text_cart_link: { mod: 'actions', fns: ['getCartStatus', 'sendText'] },
+    text_recipe: { prep: async t => { await t.look_at_camera.execute({}); await t.suggest_meal.execute({}); }, mod: 'actions', fns: ['sendText'], renalOne: true },
   };
   for (const [name, c] of Object.entries(cases)) {
     for (const fn of c.fns) {
@@ -314,6 +317,7 @@ describe('guarding the new tools', () => {
         it(`${name}: ${fn} ${label}`, async () => {
           const base = c.mod === 'renal' ? renal : actions;
           const over = { [c.mod]: { ...base, [fn]: impl }, phone: PHONE };
+          if (c.renalOne) over.renal = oneMealRenal();
           const t = build(over);
           if (c.prep) await c.prep(t);
           clean(await t[name].execute(c.args ?? {}));
@@ -436,7 +440,7 @@ describe('WR-02 log_meal logs only what was confirmed', () => {
     const { mod, calls } = rec(fridge(), 'logFood', () => ({ ok: true }));
     let seeing = true;
     const t = build({ renal: mod, camera: { jpeg: async () => (seeing ? jpeg : null) } });
-    await t.look_at_camera.execute({});
+    await t.look_at_camera.execute({ place: 'store' }); // a store look is never remembered in the pantry
     seeing = false;
     assert.equal((await t.look_at_camera.execute({})).ok, false);
     assert.equal((await t.log_meal.execute({ foods: ['milk'] })).error, 'nothing_to_log');
@@ -798,3 +802,211 @@ describe('look_at_camera on a shelf', () => {
   });
 });
 function splitCount(text) { return text.split(/(?<=[.!?])\s+/).length; }
+
+// ---- quick 261114-eyk: pantry and texted recipes ----
+const scene = (kind, names) => ({ ok: true, kind, foods: names.map(name => ({ name, grams: 100 })), label: null });
+const fridgeScenes = () => makeFakeRenal({ scenes: [scene('fridge', ['Rice', 'eggs', 'star fruit']), scene('shelf', ['EGGS', 'apples'])] });
+
+describe('pantry tools', async () => {
+  const { createMemory, MAX_AGE_MS } = await import('./memory.mjs');
+  let n = 0;
+  const stateDir = () => join(dir, `pantry-${n++}`);
+  const withMemory = (d, over = {}) => build({ memory: createMemory({ patientId: 'demo', dir: d }), ...over });
+
+  it('a fridge look then a shelf look remember both shots without duplicates', async () => {
+    const t = withMemory(stateDir(), { renal: fridgeScenes() });
+    const a = await t.look_at_camera.execute({ place: 'home' });
+    assert.equal(a.remembered, true);
+    await t.look_at_camera.execute({ place: 'home' });
+    const l = await t.pantry_list.execute({});
+    assert.deepEqual(l.names, ['Rice', 'eggs', 'star fruit', 'apples']);
+    assert.equal(l.count, 4);
+  });
+  it('plate, label and store looks add nothing', async () => {
+    const t = withMemory(stateDir());
+    await t.look_at_camera.execute({});
+    assert.equal((await t.pantry_list.execute({})).count, 0);
+    const label = { ...renal, describeImage: async () => ({ ok: true, kind: 'fridge', foods: [], label: { product: 'Soup' } }) };
+    await withMemory(stateDir(), { renal: label }).look_at_camera.execute({});
+    const t2 = withMemory(stateDir(), { renal: fridgeScenes() });
+    const r = await t2.look_at_camera.execute({ place: 'store' });
+    assert.equal(r.remembered, undefined);
+    assert.equal((await t2.pantry_list.execute({})).count, 0);
+    const t3 = withMemory(stateDir(), { renal: label });
+    await t3.look_at_camera.execute({});
+    assert.equal((await t3.pantry_list.execute({})).count, 0);
+  });
+  it('a timed-out look adds nothing', async () => {
+    const slow = { ...fridgeScenes() };
+    const base = slow.describeImage;
+    slow.describeImage = async a => { await new Promise(r => setTimeout(r, 100)); return base(a); };
+    const t = withMemory(stateDir(), { renal: slow, timeoutMs: 30 });
+    assert.equal((await t.look_at_camera.execute({})).error, 'timeout');
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal((await t.pantry_list.execute({})).count, 0);
+  });
+  it('suggest_meal gets the whole pantry, including avoid foods', async () => {
+    const r = fridgeScenes();
+    const { mod, calls } = rec(r, 'suggestMeals');
+    const t = withMemory(stateDir(), { renal: mod, });
+    await t.look_at_camera.execute({ place: 'home' });
+    await t.look_at_camera.execute({ place: 'home' });
+    assert.equal((await t.suggest_meal.execute({})).ok, true);
+    assert.deepEqual(calls[0].foods, ['Rice', 'eggs', 'star fruit', 'apples']);
+  });
+  it('without memory the pantry works inside the call; empty falls back to nothing_seen', async () => {
+    const { mod, calls } = rec(fridgeScenes(), 'suggestMeals');
+    const t = build({ renal: mod });
+    assert.equal((await t.suggest_meal.execute({})).error, 'nothing_seen');
+    await t.look_at_camera.execute({ place: 'home' });
+    await t.suggest_meal.execute({});
+    assert.deepEqual(calls[0].foods, ['Rice', 'eggs', 'star fruit']);
+  });
+  it('a call back sees the pantry, and it expires after two hours', async () => {
+    const d = stateDir();
+    const c = { t: 10_000_000 };
+    const mem = () => createMemory({ patientId: 'demo', dir: d, now: () => c.t });
+    const first = build({ renal: fridgeScenes(), memory: mem() });
+    await first.look_at_camera.execute({ place: 'home' });
+    const { mod, calls } = rec(renal, 'suggestMeals');
+    const second = build({ renal: mod, memory: mem() });
+    assert.deepEqual((await second.pantry_list.execute({})).names, ['Rice', 'eggs', 'star fruit']);
+    assert.equal((await second.suggest_meal.execute({})).ok, true);
+    assert.deepEqual(calls[0].foods, ['Rice', 'eggs', 'star fruit']);
+    c.t += MAX_AGE_MS + 1;
+    const third = build({ renal: mod, memory: mem() });
+    assert.equal((await third.pantry_list.execute({})).count, 0);
+    assert.equal((await third.suggest_meal.execute({})).error, 'nothing_seen');
+  });
+  it('pantry_list is short and says a fixed sentence when empty', async () => {
+    const t = withMemory(stateDir(), { renal: { ...renal, describeImage: async () => scene('fridge', Array.from({ length: 30 }, (_, i) => `${'f'.repeat(70)}${i}`)) } });
+    assert.match((await t.pantry_list.execute({})).say, /Show me your fridge/);
+    await t.look_at_camera.execute({ place: 'home' });
+    const l = await t.pantry_list.execute({});
+    assert.equal(l.names.length, 12);
+    assert.ok(l.names.every(x => x.length <= 40));
+    assert.equal(l.more, 8);
+    assert.ok(JSON.stringify(l).length <= 900);
+  });
+  it('remove_from_pantry removes, and fails when nothing matched', async () => {
+    const d = stateDir();
+    const t = withMemory(d, { renal: fridgeScenes() });
+    await t.look_at_camera.execute({ place: 'home' });
+    const r = await t.remove_from_pantry.execute({ items: ['rice', 'star'] });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.removed.sort(), ['Rice', 'star fruit']);
+    assert.deepEqual((await withMemory(d).pantry_list.execute({})).names, ['eggs']);
+    assert.equal((await t.remove_from_pantry.execute({ items: ['zzz'] })).error, 'not_in_pantry');
+    assert.equal((await t.remove_from_pantry.execute({ items: [] })).error, 'bad_items');
+    const lone = build({ renal: fridgeScenes() });
+    await lone.look_at_camera.execute({ place: 'home' });
+    assert.equal((await lone.remove_from_pantry.execute({ items: ['eggs'] })).ok, true);
+    assert.deepEqual((await lone.pantry_list.execute({})).names, ['Rice', 'star fruit']);
+  });
+  it('clear_pantry forgets here and on the next call', async () => {
+    const d = stateDir();
+    const t = withMemory(d, { renal: fridgeScenes() });
+    await t.look_at_camera.execute({ place: 'home' });
+    assert.equal((await t.clear_pantry.execute({})).ok, true);
+    assert.equal((await t.suggest_meal.execute({})).error, 'nothing_seen');
+    assert.equal((await withMemory(d).pantry_list.execute({})).count, 0);
+    const lone = build({ renal: fridgeScenes() });
+    await lone.look_at_camera.execute({ place: 'home' });
+    await lone.clear_pantry.execute({});
+    assert.equal((await lone.suggest_meal.execute({})).error, 'nothing_seen');
+  });
+});
+
+describe('recipeText', () => {
+  const meal = { title: 'Rice with herbed chicken', uses: ['rice', 'chicken'], missing: [{ name: 'unsalted broth', quantity: '1 carton' }], minutes: 25, steps: ['Cook the rice.', 'Cook the chicken.'], why: 'Low in sodium.' };
+  it('gives the plain text shape', () => {
+    assert.equal(tools.recipeText(meal), [
+      'Recipe from your AI renal dietitian: Rice with herbed chicken',
+      'Uses from your kitchen: rice, chicken',
+      'Missing: unsalted broth (1 carton)',
+      'Time: about 25 minutes',
+      'Steps:',
+      '1. Cook the rice.',
+      '2. Cook the chicken.',
+      'Why it fits: Low in sodium.',
+      'This recipe follows the limits set by your care team and does not replace their advice.',
+    ].join('\n'));
+  });
+  it('says nothing missing, omits time, strips links, stays within 4000', () => {
+    const t = tools.recipeText({ ...meal, missing: [], minutes: 0, title: 'A https://evil.example/x B' });
+    assert.ok(t.includes('Missing: nothing') && !t.includes('Time:') && !t.includes('http'));
+    const huge = tools.recipeText({ ...meal, steps: Array.from({ length: 200 }, () => 'x'.repeat(2000)), uses: Array.from({ length: 50 }, () => 'u'.repeat(500)) });
+    assert.ok(huge.length <= 4000);
+    assert.ok(huge.endsWith('does not replace their advice.'));
+  });
+});
+
+describe('text_recipe', () => {
+  const two = [
+    { title: 'Rice with herbed chicken', uses: ['rice'], missing: [], minutes: 25, steps: ['Cook.'], why: 'Gentle.' },
+    { title: 'Egg fried rice', uses: ['eggs'], missing: [], minutes: 15, steps: ['Fry.'], why: 'Quick.' },
+  ];
+  const ready = async (meals, over = {}) => {
+    const t = build({ renal: oneMealRenal(meals), phone: PHONE, ...over });
+    await t.look_at_camera.execute({});
+    await t.suggest_meal.execute({});
+    return t;
+  };
+  it('sends the single meal exactly once, then refuses a repeat', async () => {
+    const { mod, calls } = rec(actions, 'sendText');
+    const t = await ready(undefined, { actions: mod });
+    const r = await t.text_recipe.execute({});
+    assert.deepEqual([r.ok, r.sent], [true, true]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].phone, PHONE);
+    assert.equal(calls[0].text, tools.recipeText({ title: 'Rice with herbed chicken', uses: ['rice'], missing: [{ name: 'broth', quantity: '1 carton' }], minutes: 25, steps: ['Cook.', 'Serve.'], why: 'Gentle on sodium.' }));
+    assert.equal((await t.text_recipe.execute({})).error, 'recipe_already_sent');
+    assert.equal(calls.length, 1);
+  });
+  it('two meals need a choice; title and position pick the right one', async () => {
+    const { mod, calls } = rec(actions, 'sendText');
+    const t = await ready(two, { actions: mod });
+    const w = await t.text_recipe.execute({});
+    assert.equal(w.error, 'which_recipe');
+    assert.deepEqual(w.titles, ['Rice with herbed chicken', 'Egg fried rice']);
+    assert.equal(calls.length, 0);
+    assert.equal((await t.text_recipe.execute({ position: 3 })).error, 'which_recipe');
+    assert.equal((await t.text_recipe.execute({ title: 'nothing like it' })).error, 'which_recipe');
+    assert.equal((await t.text_recipe.execute({ position: 2 })).ok, true);
+    assert.equal((await t.text_recipe.execute({ title: 'herbed' })).ok, true);
+    assert.ok(calls[0].text.includes('Egg fried rice'));
+    assert.ok(calls[1].text.includes('herbed chicken'));
+  });
+  it('refuses without a phone or a suggestion and sends nothing', async () => {
+    const { mod, calls } = rec(actions, 'sendText');
+    for (const phone of ['', 'YOUR_PATIENT_PHONE', undefined]) {
+      const t = await ready(undefined, { actions: mod, phone });
+      assert.equal((await t.text_recipe.execute({})).error, 'no_phone');
+    }
+    assert.equal((await build({ actions: mod, phone: PHONE }).text_recipe.execute({})).error, 'no_recipe');
+    assert.equal(calls.length, 0);
+  });
+  it('a definite failure un-marks so a retry sends', async () => {
+    for (const impl of [async () => ({ ok: false, error: 'Chert rejected it' }), async () => { throw new Error('boom'); }]) {
+      const { mod, calls } = rec(actions, 'sendText', impl);
+      const t = await ready(undefined, { actions: mod });
+      assert.equal((await t.text_recipe.execute({})).error, 'text_failed');
+      assert.equal((await t.text_recipe.execute({})).error, 'text_failed');
+      assert.equal(calls.length, 2);
+    }
+  });
+  it('an unknown outcome is never resent', async () => {
+    const { mod, calls } = rec(actions, 'sendText', async () => ({ ok: false, error: 'Send outcome is unknown; inspect Chert before retrying' }));
+    const t = await ready(undefined, { actions: mod });
+    assert.equal((await t.text_recipe.execute({})).error, 'text_unconfirmed');
+    assert.equal((await t.text_recipe.execute({})).error, 'recipe_already_sent');
+    assert.equal(calls.length, 1);
+  });
+  it('a timeout is unconfirmed and never resent', async () => {
+    const { mod, calls } = rec(actions, 'sendText', () => new Promise(() => {}));
+    const t = await ready(undefined, { actions: mod, timeoutMs: 30 });
+    assert.equal((await t.text_recipe.execute({})).error, 'text_unconfirmed');
+    assert.equal((await t.text_recipe.execute({})).error, 'recipe_already_sent');
+    assert.equal(calls.length, 1);
+  });
+});

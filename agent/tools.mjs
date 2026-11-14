@@ -7,6 +7,7 @@ import { z } from 'zod';
 // This is the only file that imports renal/ and actions/.
 import * as renalModule from '../renal/index.mjs';
 import * as actionsModule from '../actions/index.mjs';
+import { mergePantry, matchPantry, PANTRY_MAX } from './memory.mjs';
 
 const WORDS = { ok: 'Yes', avoid: 'No', limit: 'Small portion' };
 const RANK = { avoid: 0, limit: 1, unknown: 2, ok: 3 };
@@ -90,13 +91,46 @@ const FAILS = {
   cart_failed: "The cart didn't work out. I can try again if you like.",
   no_cart_link: "The cart isn't ready yet, so there's no link to send. I can check on it for you.",
   link_already_sent: "I've already texted you that link. Please check your messages.",
-  no_phone: "I don't have a phone number to text, so I can't send the link.",
+  no_phone: "I don't have a phone number to text, so I can't send that.",
+  no_recipe: "I haven't suggested a meal yet. Ask me for a meal idea first, and then I can text you the recipe.",
+  which_recipe: 'Which meal should I text you? Tell me its name, or say the first or the second.',
+  recipe_already_sent: "I've already texted you that recipe. Please check your messages.",
+  text_unconfirmed: "I tried to text the recipe but couldn't confirm it went through. Please check your messages before we try again.",
+  text_failed: "I couldn't send the recipe just now. I can try again if you like.",
+  not_in_pantry: "I don't have that in what I remember from your kitchen.",
   memory_unavailable: "I can't keep a shopping list right now, but I can still check foods for you.",
   bad_items: 'Tell me the items you need, a few words each.',
   bad_item: 'Tell me which item you mean, in a few words.',
 };
 const TOO_LONG = "Done, but there's too much detail to read out. Ask me about one part at a time.";
 const fail = (error, extra = {}) => ({ ok: false, error, say: FAILS[error], ...extra });
+
+const RECIPE_CLOSING = 'This recipe follows the limits set by your care team and does not replace their advice.';
+
+// Plain text for one suggested meal, built only from cleaned fields (see lastMeals in suggest_meal). Pure.
+export function recipeText(meal) {
+  const title = clean(meal?.title, 80) || 'your meal';
+  const uses = (Array.isArray(meal?.uses) ? meal.uses : []).map(u => clean(u, 60)).filter(Boolean);
+  const missing = (Array.isArray(meal?.missing) ? meal.missing : [])
+    .map(m => ({ name: clean(m?.name, 80), quantity: clean(m?.quantity, 40) })).filter(m => m.name);
+  const steps = (Array.isArray(meal?.steps) ? meal.steps : []).map(x => clean(x, 300)).filter(Boolean);
+  const why = clean(meal?.why, 300);
+  const minutes = Number.isInteger(meal?.minutes) && meal.minutes > 0 ? meal.minutes : null;
+  const build = n => [
+    `Recipe from your AI renal dietitian: ${title}`,
+    `Uses from your kitchen: ${uses.length ? uses.join(', ') : 'nothing from your kitchen'}`,
+    `Missing: ${missing.length ? missing.map(m => (m.quantity ? `${m.name} (${m.quantity})` : m.name)).join(', ') : 'nothing'}`,
+    ...(minutes ? [`Time: about ${minutes} minutes`] : []),
+    'Steps:',
+    ...steps.slice(0, n).map((x, i) => `${i + 1}. ${x}`),
+    ...(why ? [`Why it fits: ${why}`] : []),
+    RECIPE_CLOSING,
+  ].join('\n');
+  let n = steps.length;
+  let text = build(n);
+  while (text.length > 4000 && n > 0) text = build(--n);
+  return text.length > 4000 ? `${text.slice(0, 3999 - RECIPE_CLOSING.length).trimEnd()}\n${RECIPE_CLOSING}`.slice(0, 4000) : text;
+}
 
 const size = value => JSON.stringify(value).length;
 
@@ -219,6 +253,16 @@ export function buildTools({
   const candidates = new Map(); // judged foods log_meal may log: key -> { names, verdict }
   let lastMissing = []; // CartItems the last meal suggestion said are missing
   const sentLinks = new Set(); // cart links already texted during this call
+  const sentRecipes = new Set(); // recipes already texted during this call
+  let lastMeals = []; // cleaned meals from the last suggestion, for text_recipe
+  let callPantry = []; // in-call copy of the pantry, so it works when memory is missing or unavailable
+  const hidden = new Set(); // names forgotten this call even if the stored copy could not be changed
+  const pantryNow = async () => {
+    let stored = [];
+    if (memory) { try { const l = await memory.load(); if (l?.ok) stored = l.state.pantry ?? []; } catch { /* the stored pantry is optional */ } }
+    const all = mergePantry(stored, callPantry).list.filter(x => !hidden.has(x.toLowerCase()));
+    return all.slice(-PANTRY_MAX);
+  };
   const phoneOk = typeof phone === 'string' && /^\+[1-9]\d{6,14}$/.test(phone);
   const cut = v => String(v ?? '').trim().slice(0, 80);
   const three = o => {
@@ -234,10 +278,13 @@ export function buildTools({
   return {
     // Anonymous tools: the object key is the tool name.
     look_at_camera: llm.tool({
-      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest. For a store shelf the result has best and spoken: say spoken, which names the product to pick.',
-      execute: guard(async call => {
+      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Pass place home for the caller own fridge, pantry or cupboards, and place store in a shop. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest. For a store shelf the result has best and spoken: say spoken, which names the product to pick.',
+      parameters: z.object({ place: z.enum(['home', 'store']).nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const place = args?.place === 'home' || args?.place === 'store' ? args.place : null;
         // A new look replaces the last one, whether or not it works.
         lastFoods = [];
+        let remembered = false;
         candidates.clear();
         const picture = camera ? await camera.jpeg() : null;
         if (!picture) return fail('no_camera_picture');
@@ -275,9 +322,20 @@ export function buildTools({
         if (!call.timedOut) {
           lastFoods = foods.map(f => clean(f.name, 80));
           good.forEach(g => remember(g.v, g.name));
+          if ((seen.kind === 'fridge' || seen.kind === 'shelf') && !seen.label?.product && place !== 'store') {
+            const names = all.slice(0, 20).map(f => clean(f.name, 80)).filter(Boolean);
+            if (names.length) {
+              callPantry = mergePantry(callPantry, names).list;
+              for (const n of names) hidden.delete(n.toLowerCase());
+              remembered = true;
+              if (memory) {
+                try { await memory.addPantry(names); } catch { /* a memory failure never changes the result */ }
+              }
+            }
+          }
         }
         let shelf = null;
-        if (seen.kind === 'shelf' && !seen.label?.product && foods.length >= 2) {
+        if (seen.kind === 'shelf' && place !== 'home' && !seen.label?.product && foods.length >= 2) {
           const best = pickBest(good.map(g => g.v), got.profile?.limits);
           const match = best ? good.find(g => g.v === best) : null;
           shelf = shelfSpoken(best, match?.name);
@@ -290,7 +348,7 @@ export function buildTools({
             ...(r.swap ? { swap: r.swap.slice(0, 40) } : {}),
           }));
           const omitted = rows.length - n + notChecked;
-          return { ok: true, kind: seen.kind, ...(shelf ? { best: shelf.name, spoken: shelf.spoken } : {}), results, ...(omitted > 0 ? { omitted, say: `I only covered ${n} of ${n + omitted} foods. Please show me the rest.` } : {}) };
+          return { ok: true, kind: seen.kind, ...(remembered ? { remembered: true } : {}), ...(shelf ? { best: shelf.name, spoken: shelf.spoken } : {}), results, ...(omitted > 0 ? { omitted, say: `I only covered ${n} of ${n + omitted} foods. Please show me the rest.` } : {}) };
         };
         for (const [capBad, capOk, capFood] of [[130, 60, 40], [90, 30, 30], [60, 0, 24]]) {
           const r = build(rows.length, capBad, capOk, capFood);
@@ -321,12 +379,14 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     suggest_meal: llm.tool({
-      description: 'Suggest meals to cook from the foods the caller last showed on camera, within their limits.',
+      description: 'Suggest meals to cook from everything the caller showed from their kitchen (fridge, pantry, cupboards), within their limits.',
       execute: guard(async call => {
-        if (lastFoods.length === 0) return fail('nothing_seen');
+        let foods = await pantryNow();
+        if (foods.length === 0) foods = lastFoods;
+        if (foods.length === 0) return fail('nothing_seen');
         const got = await renal.getProfile({ patientId });
         if (!got?.ok) return fail('profile_unavailable');
-        const r = await renal.suggestMeals({ foods: lastFoods, profile: got.profile, count: 2 });
+        const r = await renal.suggestMeals({ foods, profile: got.profile, count: 2 });
         const meals = Array.isArray(r?.meals) ? r.meals : [];
         if (!r?.ok || meals.length === 0) return fail('check_failed');
         const seen = new Map();
@@ -334,7 +394,18 @@ export function buildTools({
           const key = clean(item?.name, 80).toLowerCase();
           if (key && !seen.has(key)) seen.set(key, { name: clean(item.name, 80), quantity: clean(item.quantity, 80) });
         }
-        if (!call.timedOut) lastMissing = [...seen.values()];
+        if (!call.timedOut) {
+          lastMissing = [...seen.values()];
+          lastMeals = meals.slice(0, 5).map(m => ({
+            title: clean(m?.title, 80),
+            uses: (Array.isArray(m?.uses) ? m.uses : []).slice(0, 12).map(u => clean(u, 60)).filter(Boolean),
+            missing: (Array.isArray(m?.missing) ? m.missing : []).slice(0, 12)
+              .map(x => ({ name: clean(x?.name, 80), quantity: clean(x?.quantity, 40) })).filter(x => x.name),
+            ...(Number.isInteger(m?.minutes) && m.minutes > 0 && m.minutes <= 600 ? { minutes: m.minutes } : {}),
+            steps: (Array.isArray(m?.steps) ? m.steps : []).slice(0, 12).map(x => clean(x, 300)).filter(Boolean),
+            why: clean(m?.why, 300),
+          }));
+        }
         if (memory && !call.timedOut) {
           try { await memory.add([...seen.values()].map(i => i.name)); } catch { /* the list never changes this result */ }
         }
@@ -491,6 +562,99 @@ export function buildTools({
         if (!r?.ok) return fail('memory_unavailable');
         return { ok: true, name: r.name.slice(0, 50), status: r.status, left: r.state.needed.length };
       }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    pantry_list: llm.tool({
+      description: 'Say what the agent remembers the caller has in their kitchen from what they showed on camera.',
+      execute: guard(async () => {
+        const list = await pantryNow();
+        if (list.length === 0) return { ok: true, count: 0, names: [], say: "I don't remember anything from your kitchen yet. Show me your fridge or cupboards." };
+        return { ok: true, count: list.length, names: list.slice(0, 12).map(x => x.slice(0, 40)), more: Math.max(0, list.length - 12) };
+      }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    remove_from_pantry: llm.tool({
+      description: 'Forget items the caller says they no longer have or that were seen wrongly. Pass short item names.',
+      parameters: z.object({ items: z.array(z.string().trim().min(1).max(80)).min(1).max(20) }),
+      execute: guard(async (call, args = {}) => {
+        const items = Array.isArray(args.items) ? args.items.map(x => (typeof x === 'string' ? x.trim() : '')) : [];
+        if (items.length < 1 || items.length > 20 || !items.every(x => x.length >= 1 && x.length <= 80)) return fail('bad_items');
+        const before = await pantryNow();
+        const hits = new Set();
+        for (const w of items) {
+          for (const h of matchPantry(before, w)) hits.add(h);
+          for (const h of matchPantry(lastFoods, w)) hits.add(h);
+        }
+        if (hits.size === 0) return fail('not_in_pantry');
+        if (call.timedOut) return fail('timeout');
+        const gone = new Set([...hits].map(x => x.toLowerCase()));
+        callPantry = callPantry.filter(x => !gone.has(x.toLowerCase()));
+        lastFoods = lastFoods.filter(x => !gone.has(x.toLowerCase()));
+        for (const g of gone) hidden.add(g);
+        let kept = true;
+        if (memory) {
+          try { const r = await memory.removePantry(items); kept = r?.ok === true; } catch { kept = false; }
+        }
+        const removed = [...hits];
+        const left = (await pantryNow()).length;
+        return {
+          ok: true,
+          removed: removed.slice(0, 5).map(x => x.slice(0, 40)),
+          left,
+          ...(kept ? {} : { say: "Done for this call, but I may not remember that next time." }),
+        };
+      }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    clear_pantry: llm.tool({
+      description: 'Forget everything the caller showed from their kitchen.',
+      execute: guard(async call => {
+        if (call.timedOut) return fail('timeout');
+        const before = await pantryNow();
+        for (const x of before) hidden.add(x.toLowerCase());
+        callPantry = [];
+        lastFoods = [];
+        let kept = true;
+        if (memory) {
+          try { const r = await memory.clearPantry(); kept = r?.ok === true; } catch { kept = false; }
+        }
+        return { ok: true, say: kept ? "Okay, I've forgotten what you showed me from your kitchen." : "Okay, I've forgotten what you showed me from your kitchen for this call, but I may not remember that next time." };
+      }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    text_recipe: llm.tool({
+      description: 'Text the caller one of the meals just suggested, as a recipe. Pass the title or the position (1 or 2) they chose. Only call it after they agree.',
+      parameters: z.object({ title: z.string().trim().min(1).max(80).nullish(), position: z.number().int().min(1).max(5).nullish() }),
+      execute: guard(async (call, args = {}) => {
+        if (!phoneOk) return fail('no_phone');
+        if (lastMeals.length === 0) return fail('no_recipe');
+        const which = () => fail('which_recipe', { titles: lastMeals.slice(0, 5).map(m => m.title.slice(0, 60)) });
+        let meal = null;
+        const pos = args?.position;
+        const asked = typeof args?.title === 'string' ? norm(args.title) : '';
+        if (Number.isInteger(pos)) {
+          meal = lastMeals[pos - 1] ?? null;
+          if (!meal) return which();
+        } else if (asked) {
+          meal = lastMeals.find(m => norm(m.title) === asked) ?? null;
+          if (!meal && asked.length >= 3) {
+            const hits = lastMeals.filter(m => { const t = norm(m.title); return t.length >= 3 && (t.includes(asked) || asked.includes(t)); });
+            if (hits.length === 1) meal = hits[0];
+          }
+          if (!meal) return which();
+        } else if (lastMeals.length === 1) {
+          meal = lastMeals[0];
+        } else {
+          return which();
+        }
+        const key = norm(meal.title);
+        if (sentRecipes.has(key)) return fail('recipe_already_sent');
+        // Marked before sending: a send that times out may still arrive, and a repeat would duplicate it.
+        sentRecipes.add(key);
+        let r;
+        try { r = await actions.sendText({ phone, text: recipeText(meal) }); }
+        catch { sentRecipes.delete(key); return fail('text_failed'); }
+        if (r?.ok) return { ok: true, sent: true, title: meal.title.slice(0, 60) };
+        if (typeof r?.error === 'string' && /outcome is unknown/i.test(r.error)) return fail('text_unconfirmed');
+        sentRecipes.delete(key);
+        return fail('text_failed');
+      }, { timeoutMs, onTimeout: () => fail('text_unconfirmed') }),
     }),
   };
 }
