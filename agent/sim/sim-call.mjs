@@ -278,6 +278,7 @@ async function runCall(n) {
       result.imageFramesSent = framesSent;
       result.says = SAYS.length;
       result.replies = replies;
+      result.saysAnswered = replies.filter(r => r.replied).length;
     }
     const failed = [];
     if (result.spokeBeforeReady) failed.push('spokeBeforeReady');
@@ -334,6 +335,13 @@ for (let n = 1; n <= CALLS; n++) {
   results.push(result);
   console.log('RESULT ' + JSON.stringify(result));
   if (n < CALLS) await sleep(2000);
+}
+
+// Reply count for --say runs: how many spoken questions got an audible reply, over all calls.
+if (SAYS.length > 0) {
+  const asked = results.length * SAYS.length;
+  const answered = results.reduce((sum, r) => sum + (Number.isInteger(r.saysAnswered) ? r.saysAnswered : 0), 0);
+  console.log(`[sim] SAY_REPLIES answered=${answered} asked=${asked}`);
 }
 
 const bad = results.filter(r => !r.pass);
