@@ -1,0 +1,18 @@
+{
+  "alwaysAvoid": [
+    {
+      "name": "star fruit",
+      "reason": "star fruit is unsafe for many people with kidney disease"
+    }
+  ],
+  "alwaysLimit": [
+    {
+      "name": "cola",
+      "reason": "many colas contain phosphate additives; check the ingredient label"
+    }
+  ],
+  "warningIngredients": {
+    "phosphate": ["phosphate", "phosphoric acid"],
+    "potassiumSalt": ["potassium chloride"]
+  }
+}
