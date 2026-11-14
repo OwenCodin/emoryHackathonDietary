@@ -58,7 +58,9 @@ function lowerFirst(text, food) {
 export function spokenVerdict(verdict, max = 240) {
   const word = WORDS[verdict?.verdict] ?? "I can't tell";
   // The module may already start with a verdict word; ours is the one that is said.
-  const say = clean(verdict?.say, 1000).replace(/^(yes|no|small portion|i can't tell)\s*[,.:!;-]+\s*/i, '');
+  const say = clean(verdict?.say, 1000).replace(/^(yes|no|small portion|i can't tell)\s*[,.:!;-]+\s*/i, '')
+    // renal's own comma-form word ("Limit, banana has...") would double ours; "Avoid star fruit." has no comma and stays.
+    .replace(/^(okay|limit|avoid)\s*,\s*/i, '');
   if (!say || max <= word.length + 3) return `${word}.`;
   const sentences = splitSentences(say);
   for (const count of [2, 1]) {
@@ -212,7 +214,9 @@ function shelfSpoken(best, fallbackName) {
   const name = clean(best.food ?? fallbackName, 60);
   const lead = { ok: `Yes, the ${name} is the best choice here.`, limit: `Small portion, the ${name} is the best choice here.` }[normalVerdict(best.verdict)]
     ?? `I can't tell for sure, but the ${name} looks like the best choice here.`;
-  const say = clean(best.say, 400).replace(/^(yes|no|small portion|i can't tell)\s*[,.:!;-]+\s*/i, '');
+  const say = clean(best.say, 400).replace(/^(yes|no|small portion|i can't tell)\s*[,.:!;-]+\s*/i, '')
+    // renal's own comma-form word ("Limit, banana has...") would double ours; "Avoid star fruit." has no comma and stays.
+    .replace(/^(okay|limit|avoid)\s*,\s*/i, '');
   let why = splitSentences(say)[0] ?? '';
   if (why.length > 110) {
     why = why.slice(0, 109);
@@ -387,7 +391,7 @@ export function buildTools({
             ...(say ? { say } : {}),
           };
         };
-        for (const [capBad, capOk, capFood] of [[130, 60, 40], [90, 30, 30], [60, 0, 24]]) {
+        for (const [capBad, capOk, capFood] of [[130, 80, 40], [90, 30, 30], [60, 0, 24]]) {
           const r = build(rows.length, capBad, capOk, capFood);
           if (size(r) <= LOOK_LIMIT) return r;
         }
