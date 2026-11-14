@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkinGreeting, greeting } from './prompt.mjs';
-import { outboundCall, outboundRequested, parseJobMetadata, safeReason } from './outbound.mjs';
+import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata, safeReason } from './outbound.mjs';
 
 const VALID = '{"outbound":true,"reason":"dinner_checkin","bridgeIdentity":"chert-bridge-out-sim"}';
 
@@ -56,4 +56,52 @@ test('outboundRequested flags malformed outbound requests so they are not treate
   for (const m of [{}, { sim: true }, { outbound: 'true' }, { outbound: false }, null, undefined, [], 'x']) {
     assert.equal(outboundRequested(m), false, JSON.stringify(m));
   }
+});
+
+test('outboundWaitMs defaults to 90 s and accepts a positive override', () => {
+  for (const v of [undefined, '', '  ', 'abc', '0', '-5', 'Infinity', 'NaN', 7]) assert.equal(outboundWaitMs(v), 90000, String(v));
+  assert.equal(outboundWaitMs('8'), 8000);
+  assert.equal(outboundWaitMs('0.5'), 500);
+  assert.equal(outboundWaitMs('99999'), 600000);
+});
+
+function fakeTimers() {
+  const t = { fn: null, cleared: 0, set: 0 };
+  t.setTimer = fn => { t.set++; t.fn = fn; return t.set; };
+  t.clearTimer = () => { t.cleared++; t.fn = null; };
+  return t;
+}
+
+test('createDeadline fires once when it expires', () => {
+  const t = fakeTimers();
+  let fired = 0;
+  const d = createDeadline({ ms: 10, onExpire: () => { fired++; }, setTimer: t.setTimer, clearTimer: t.clearTimer });
+  d.arm();
+  t.fn();
+  assert.equal(fired, 1);
+  d.arm(); // closed after expiry
+  assert.equal(t.set, 1);
+});
+
+test('createDeadline restarts on arm and never fires after clear', () => {
+  const t = fakeTimers();
+  let fired = 0;
+  const d = createDeadline({ ms: 10, onExpire: () => { fired++; }, setTimer: t.setTimer, clearTimer: t.clearTimer });
+  d.arm();
+  d.arm(); // bridge joined: restart for the ready wait
+  assert.equal(t.set, 2);
+  assert.equal(t.cleared, 1);
+  d.clear();
+  assert.equal(t.fn, null);
+  d.arm();
+  assert.equal(t.set, 2);
+  assert.equal(fired, 0);
+});
+
+test('createDeadline really fires with real timers', async () => {
+  let fired = 0;
+  const d = createDeadline({ ms: 20, onExpire: () => { fired++; } });
+  d.arm();
+  await new Promise(r => setTimeout(r, 80));
+  assert.equal(fired, 1);
 });

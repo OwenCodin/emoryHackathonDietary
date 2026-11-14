@@ -36,3 +36,31 @@ export function outboundCall(metadata) {
 export function outboundRequested(metadata) {
   return metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata) && metadata.outbound === true;
 }
+
+const DEFAULT_WAIT_SECONDS = 90;
+const MAX_WAIT_SECONDS = 600;
+
+// How long an outbound job waits for the patient to answer, in milliseconds. Default 90 seconds (Chert rings for
+// up to 45 more after callPatient's 15 second agent wait). AGENT_OUTBOUND_WAIT_SECONDS overrides it for testing only;
+// it is deliberately not part of the shared env contract. Anything not a positive number gives the default.
+export function outboundWaitMs(raw) {
+  const seconds = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_WAIT_SECONDS * 1000;
+  return Math.min(seconds, MAX_WAIT_SECONDS) * 1000;
+}
+
+// One restartable deadline. arm() starts or restarts it, clear() stops it for good; onExpire runs at most once.
+// Timer functions are injectable so this is unit tested without waiting.
+export function createDeadline({ ms, onExpire, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let handle = null, closed = false;
+  const stop = () => { if (handle !== null) { clearTimer(handle); handle = null; } };
+  return {
+    arm() {
+      if (closed) return;
+      stop();
+      handle = setTimer(() => { handle = null; if (closed) return; closed = true; onExpire(); }, ms);
+      if (typeof handle?.unref === 'function') handle.unref();
+    },
+    clear() { closed = true; stop(); },
+  };
+}

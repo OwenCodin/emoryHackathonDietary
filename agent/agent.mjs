@@ -11,7 +11,7 @@ import { createVideoPicker } from './video.mjs';
 import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
-import { outboundCall, outboundRequested, parseJobMetadata } from './outbound.mjs';
+import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata } from './outbound.mjs';
 import { checkinGreeting, greeting, instructions } from './prompt.mjs';
 
 
@@ -44,6 +44,21 @@ const agent = defineAgent({
     }
 
     const joinedAt = Date.now();
+
+    // Outbound only: if the patient never answers, end the job so the model session, timer, tracks and audio are
+    // released. Limit: 90 s by default (AGENT_OUTBOUND_WAIT_SECONDS overrides it for testing, not in the shared env
+    // contract). Armed now for the bridge to join, restarted when it joins, cleared by chert_bridge_ready.
+    let answerDeadline = null, onBridgeJoined = null;
+    if (call) {
+      answerDeadline = createDeadline({
+        ms: outboundWaitMs(process.env.AGENT_OUTBOUND_WAIT_SECONDS),
+        onExpire: () => { console.error('[agent] outbound call not answered'); ctx.shutdown('outbound_not_answered'); },
+      });
+      onBridgeJoined = participant => { if (participant?.identity === call.bridgeIdentity) answerDeadline.arm(); };
+      ctx.room.on('participantConnected', onBridgeJoined);
+      answerDeadline.arm();
+      if (ctx.room.remoteParticipants?.has(call.bridgeIdentity)) answerDeadline.arm();
+    }
 
     // Video: one camera track, published by this agent. The Mac shows video only
     // from the participant that speaks, so the picture and the voice stay together.
@@ -107,6 +122,8 @@ const agent = defineAgent({
     // Registered before anything is opened, so a throw while publishing or starting still cleans up.
     ctx.addShutdownCallback(async () => {
       console.log('[agent] call ended');
+      answerDeadline?.clear();
+      if (onBridgeJoined) ctx.room.off('participantConnected', onBridgeJoined);
       if (timer) clearInterval(timer);
       // Close each resource even if an earlier one fails or hangs: every step has its own time limit.
       // stopCart goes first so a cart from this call cannot block or leak into the next one.
@@ -135,6 +152,7 @@ const agent = defineAgent({
     const sessionReady = new Promise((resolve, reject) => { markReady = resolve; markFailed = reject; });
     sessionReady.catch(() => {}); // reported by the greeting, or by the entry error below
     const stopGreeting = greetOnBridgeReady(ctx.room, async () => {
+      answerDeadline?.clear();
       const requestedAt = Date.now();
       try {
         await sessionReady;
