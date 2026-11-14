@@ -50,7 +50,7 @@ describe('spokenVerdict', () => {
 describe('buildTools shape', () => {
   it('has the eight tools, anonymous', () => {
     const t = build();
-    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link']);
+    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'shopping_list', 'mark_item']);
     for (const tool of Object.values(t)) assert.ok(!Object.hasOwn(tool, 'name'));
   });
 });
@@ -622,5 +622,69 @@ describe('onToolActivity', () => {
   it('works without a hook', async () => {
     const r = await build().check_food.execute({ name: 'banana', grams: 118 });
     assert.equal(r.ok, true);
+  });
+});
+
+describe('shopping list tools', async () => {
+  const { createMemory } = await import('./memory.mjs');
+  let n = 0;
+  const stateDir = () => join(dir, `state-${n++}`);
+  const withMemory = (d, over = {}) => build({ memory: createMemory({ patientId: 'demo', dir: d }), ...over });
+
+  it('add, then a call back without a call sees the list', async () => {
+    const d = stateDir();
+    const r = await withMemory(d).add_to_shopping_list.execute({ items: ['unsalted chicken broth', 'white rice'] });
+    assert.equal(r.ok, true);
+    assert.equal(r.added.length, 2);
+    assert.equal(r.left, 2);
+    const t2 = withMemory(d); // a new buildTools and a new store on the same folder
+    const l = await t2.shopping_list.execute({});
+    assert.deepEqual(l.needed, ['unsalted chicken broth', 'white rice']);
+    const m = await t2.mark_item.execute({ name: 'white rice', status: 'approved' });
+    assert.equal(m.ok, true);
+    const l2 = await t2.shopping_list.execute({});
+    assert.deepEqual(l2.approved, ['white rice']);
+    assert.deepEqual(l2.needed, ['unsalted chicken broth']);
+  });
+  it('an empty list says so', async () => {
+    const l = await withMemory(stateDir()).shopping_list.execute({});
+    assert.equal(l.ok, true);
+    assert.equal(l.say, 'Your shopping list is empty.');
+  });
+  it('without memory the list tools report memory_unavailable', async () => {
+    const t = build();
+    assert.equal((await t.add_to_shopping_list.execute({ items: ['rice'] })).error, 'memory_unavailable');
+    assert.equal((await t.shopping_list.execute({})).error, 'memory_unavailable');
+    assert.equal((await t.mark_item.execute({ name: 'rice', status: 'approved' })).error, 'memory_unavailable');
+  });
+  it('rejects bad arguments', async () => {
+    const t = withMemory(stateDir());
+    assert.equal((await t.add_to_shopping_list.execute({ items: [] })).error, 'bad_items');
+    assert.equal((await t.add_to_shopping_list.execute({ items: Array.from({ length: 21 }, (_, i) => `i${i}`) })).error, 'bad_items');
+    assert.equal((await t.add_to_shopping_list.execute({ items: ['  '] })).error, 'bad_items');
+    assert.equal((await t.mark_item.execute({ name: 'rice', status: 'maybe' })).error, 'bad_item');
+    assert.equal((await t.mark_item.execute({ name: ' ', status: 'approved' })).error, 'bad_item');
+  });
+  it('suggest_meal adds the missing items to needed', async () => {
+    const t = withMemory(stateDir());
+    await t.look_at_camera.execute({});
+    await t.suggest_meal.execute({});
+    assert.deepEqual((await t.shopping_list.execute({})).needed, ['unsalted chicken broth']);
+  });
+  it('start_cart with an empty list uses the remembered needed list', async () => {
+    const { mod, calls } = rec(actions, 'startCart');
+    const t = withMemory(stateDir(), { actions: mod });
+    await t.add_to_shopping_list.execute({ items: ['white rice'] });
+    const r = await t.start_cart.execute({ items: [] });
+    assert.equal(r.ok, true);
+    assert.deepEqual(calls[0].items, [{ name: 'white rice', quantity: '1' }]);
+  });
+  it('results stay within 900 characters with long names', async () => {
+    const t = withMemory(stateDir());
+    for (let k = 0; k < 3; k++) await t.add_to_shopping_list.execute({ items: Array.from({ length: 20 }, (_, i) => `${'w'.repeat(75)}${k}${i}`) });
+    await t.mark_item.execute({ name: `${'w'.repeat(75)}00`, status: 'approved' });
+    const l = await t.shopping_list.execute({});
+    assert.ok(JSON.stringify(l).length <= 900);
+    assert.equal(l.ok, true);
   });
 });

@@ -90,6 +90,9 @@ const FAILS = {
   no_cart_link: "The cart isn't ready yet, so there's no link to send. I can check on it for you.",
   link_already_sent: "I've already texted you that link. Please check your messages.",
   no_phone: "I don't have a phone number to text, so I can't send the link.",
+  memory_unavailable: "I can't keep a shopping list right now, but I can still check foods for you.",
+  bad_items: 'Tell me the items you need, a few words each.',
+  bad_item: 'Tell me which item you mean, in a few words.',
 };
 const TOO_LONG = "Done, but there's too much detail to read out. Ask me about one part at a time.";
 const fail = (error, extra = {}) => ({ ok: false, error, say: FAILS[error], ...extra });
@@ -160,6 +163,7 @@ async function saveDebugFrame(dir, picture) {
 
 const LOOK_LIMIT = 900;
 const MEALS_LIMIT = 900;
+const LIST_LIMIT = 900;
 
 export function buildTools({
   camera,
@@ -170,6 +174,7 @@ export function buildTools({
   timeoutMs = 12000,
   phone = process.env.PATIENT_PHONE,
   onToolActivity = () => {},
+  memory = null,
 } = {}) {
   // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
   const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity });
@@ -287,6 +292,9 @@ export function buildTools({
           if (key && !seen.has(key)) seen.set(key, { name: clean(item.name, 80), quantity: clean(item.quantity, 80) });
         }
         if (!call.timedOut) lastMissing = [...seen.values()];
+        if (memory && !call.timedOut) {
+          try { await memory.add([...seen.values()].map(i => i.name)); } catch { /* the list never changes this result */ }
+        }
         return { ok: true, meals: meals.map((m, i) => ({
           title: clean(m?.title, 60),
           ...(Number.isFinite(m?.minutes) ? { minutes: m.minutes } : {}),
@@ -333,11 +341,15 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     start_cart: llm.tool({
-      description: 'Start filling an online grocery cart with items the caller needs. Pass an empty list to use the missing items from the last meal suggestion. This never pays or checks out. If it says it has not heard back, check cart_status before trying again.',
+      description: 'Start filling an online grocery cart with items the caller needs. Pass an empty list to use the missing items from the last meal suggestion, or the remembered shopping list when that meal had nothing missing. This never pays or checks out. If it says it has not heard back, check cart_status before trying again.',
       parameters: z.object({ items: z.array(z.object({ name: z.string(), quantity: z.string() })) }),
       execute: guard(async (call, args = {}) => {
         let list = (Array.isArray(args.items) ? args.items : []).map(i => ({ name: cut(i?.name), quantity: cut(i?.quantity) })).filter(i => i.name);
         if (list.length === 0) list = lastMissing.map(i => ({ name: cut(i.name), quantity: cut(i.quantity) })).filter(i => i.name);
+        if (list.length === 0 && memory) {
+          const l = await memory.load();
+          if (l?.ok) list = l.state.needed.map(name => ({ name: cut(name), quantity: '1' })).filter(i => i.name);
+        }
         list = list.slice(0, 12);
         if (list.length === 0) return fail('nothing_to_buy');
         const r = await actions.startCart({ items: list });
@@ -393,6 +405,49 @@ export function buildTools({
         if (!r?.ok) { sentLinks.delete(link); return fail('tool_failed'); }
         return { ok: true, sent: true };
       }, { timeoutMs }),
+    }),
+    add_to_shopping_list: llm.tool({
+      description: 'Add things the caller wants to buy to their shopping list. The list is kept between calls. Pass short item names.',
+      parameters: z.object({ items: z.array(z.string().trim().min(1).max(80)).min(1).max(20) }),
+      execute: guard(async (call, args = {}) => {
+        const items = Array.isArray(args.items) ? args.items : [];
+        if (items.length < 1 || items.length > 20 || !items.every(x => typeof x === 'string' && x.trim().length >= 1 && x.trim().length <= 80)) return fail('bad_items');
+        if (!memory || call.timedOut) return fail('memory_unavailable');
+        const r = await memory.add(items.map(x => x.trim()));
+        if (!r?.ok) return fail('memory_unavailable');
+        return { ok: true, added: r.added.slice(0, 5).map(x => x.slice(0, 50)), ...(r.added.length > 5 ? { addedMore: r.added.length - 5 } : {}), left: r.state.needed.length };
+      }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    shopping_list: llm.tool({
+      description: "What is on the caller's shopping list, kept between calls: still needed, approved and rejected items.",
+      execute: guard(async () => {
+        if (!memory) return fail('memory_unavailable');
+        const r = await memory.load();
+        if (!r?.ok) return fail('memory_unavailable');
+        const part = (list, n) => ({ names: list.slice(0, n).map(x => x.slice(0, 40)), more: list.length - n });
+        const { needed, approved, rejected } = r.state;
+        const a = part(needed, 8), b = part(approved, 5), c = part(rejected, 3);
+        return {
+          ok: true,
+          needed: a.names, ...(a.more > 0 ? { neededMore: a.more } : {}),
+          approved: b.names, ...(b.more > 0 ? { approvedMore: b.more } : {}),
+          rejected: c.names, ...(c.more > 0 ? { rejectedMore: c.more } : {}),
+          ...(needed.length + approved.length + rejected.length === 0 ? { say: 'Your shopping list is empty.' } : {}),
+        };
+      }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    mark_item: llm.tool({
+      description: 'Record that the caller chose (approved) or turned down (rejected) an item or product, so the list stays right between calls.',
+      parameters: z.object({ name: z.string().trim().min(1).max(80), status: z.enum(['approved', 'rejected']) }),
+      execute: guard(async (call, args = {}) => {
+        const name = typeof args.name === 'string' ? args.name.trim() : '';
+        if (!name || name.length > 80 || (args.status !== 'approved' && args.status !== 'rejected')) return fail('bad_item');
+        if (!memory || call.timedOut) return fail('memory_unavailable');
+        const r = await memory.mark(name, args.status);
+        if (r?.error === 'bad_item') return fail('bad_item');
+        if (!r?.ok) return fail('memory_unavailable');
+        return { ok: true, name: r.name.slice(0, 50), status: r.status, left: r.state.needed.length };
+      }, { timeoutMs, limit: LIST_LIMIT }),
     }),
   };
 }
