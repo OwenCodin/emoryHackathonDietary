@@ -81,7 +81,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Camera watcher, look_at_camera and check_food with verdict wording and safe results, simulated caller that shows a picture and speaks, proof on simulated calls (wave 1)
+- [x] 03-01-PLAN.md — Camera watcher, look_at_camera and check_food with verdict wording and safe results, simulated caller that shows a picture and speaks, proof on simulated calls (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -130,6 +130,6 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Scaffold and stubs | 1/1 | Complete   | 2026-11-14 |
 | 2. First call | 1/1 | Complete   | 2026-11-14 |
-| 3. Camera and tools | 0/2 | Planned | - |
+| 3. Camera and tools | 1/2 | In Progress|  |
 | 4. Browser on the call and the agent calls you | 0/0 | Not started | - |
 | 5. In the aisle | 0/0 | Not started | - |

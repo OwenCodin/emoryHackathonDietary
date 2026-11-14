@@ -24,18 +24,18 @@
 
 ### Camera
 
-- [ ] **CAM-01**: When the patient asks about something in view, the agent captures the caller's current video frame as a JPEG
-- [ ] **CAM-02**: When the camera is off, muted or the last frame is older than 1.5 seconds, the patient is told the agent cannot see and is asked to turn the camera on; an old frame is never used
-- [ ] **CAM-03**: A developer can test the camera path from LiveKit's playground without a FaceTime call, behind a `PLAYGROUND=1` flag that leaves the real path unchanged
+- [x] **CAM-01**: When the patient asks about something in view, the agent captures the caller's current video frame as a JPEG
+- [x] **CAM-02**: When the camera is off, muted or the last frame is older than 1.5 seconds, the patient is told the agent cannot see and is asked to turn the camera on; an old frame is never used
+- [x] **CAM-03**: A developer can test the camera path from LiveKit's playground without a FaceTime call, behind a `PLAYGROUND=1` flag that leaves the real path unchanged
 
 ### Tools
 
-- [ ] **TOOL-01**: Patient can show a label, plate, fridge or shelf and hear a verdict for what is in view (`look_at_camera`: frame, `describeImage`, `checkFood`)
-- [ ] **TOOL-02**: Patient can name a food without showing it and hear a verdict (`check_food`)
+- [x] **TOOL-01**: Patient can show a label, plate, fridge or shelf and hear a verdict for what is in view (`look_at_camera`: frame, `describeImage`, `checkFood`)
+- [x] **TOOL-02**: Patient can name a food without showing it and hear a verdict (`check_food`)
 - [ ] **TOOL-03**: Patient can ask what to cook from the foods last seen and hear a meal that fits their limits (`suggest_meal`)
 - [ ] **TOOL-04**: Patient can say they ate something and ask how much of each limit is left today (`log_meal`, `todays_totals`)
 - [ ] **TOOL-05**: Patient can ask the agent to shop for missing items, hear progress, and get the cart link by text (`start_cart`, `cart_status`, `text_cart_link`)
-- [ ] **TOOL-06**: When a renal or actions function returns `ok: false`, the patient hears a plain explanation and the call continues
+- [x] **TOOL-06**: When a renal or actions function returns `ok: false`, the patient hears a plain explanation and the call continues
 
 ### Video out
 
@@ -52,7 +52,7 @@
 - [ ] **AISL-01**: Patient can point at a shelf and hear which product in view is the best choice
 - [ ] **AISL-02**: Patient who calls back after a call ends continues with the same shopping list and approved items
 - [ ] **AISL-03**: Patient is told at about four minutes that the call will end soon and to call back
-- [ ] **AISL-04**: Verdicts are one sentence and start with "Yes", "No" or "Small portion"
+- [x] **AISL-04**: Verdicts are one sentence and start with "Yes", "No" or "Small portion"
 
 ## v2 Requirements
 
@@ -94,16 +94,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CALL-03 | Phase 2 | Complete |
 | CALL-04 | Phase 2 | Complete |
 | CALL-05 | Phase 2 | Complete |
-| CAM-01 | Phase 3 | Pending |
-| CAM-02 | Phase 3 | Pending |
-| CAM-03 | Phase 3 | Pending |
-| TOOL-01 | Phase 3 | Pending |
-| TOOL-02 | Phase 3 | Pending |
+| CAM-01 | Phase 3 | Complete |
+| CAM-02 | Phase 3 | Complete |
+| CAM-03 | Phase 3 | Complete |
+| TOOL-01 | Phase 3 | Complete |
+| TOOL-02 | Phase 3 | Complete |
 | TOOL-03 | Phase 3 | Pending |
 | TOOL-04 | Phase 3 | Pending |
 | TOOL-05 | Phase 3 | Pending |
-| TOOL-06 | Phase 3 | Pending |
-| AISL-04 | Phase 3 | Pending |
+| TOOL-06 | Phase 3 | Complete |
+| AISL-04 | Phase 3 | Complete |
 | VID-01 | Phase 4 | Pending |
 | VID-02 | Phase 4 | Pending |
 | OUT-01 | Phase 4 | Pending |

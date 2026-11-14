@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Roadmap created, ready to plan Phase 1
-last_updated: "2026-11-14T02:51:58.906Z"
-last_activity: 2026-11-14 -- Phase 03 execution started
+last_updated: "2026-11-14T02:57:33.077Z"
+last_activity: 2026-11-14
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 3
   percent: 40
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 ## Current Position
 
 Phase: 03 (camera-and-tools) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 03
-Last activity: 2026-11-14 -- Phase 03 execution started
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-11-14
 
-Progress: [██████████] 100%
+Progress: [████████░░] 75%
 
 ## Performance Metrics
 
@@ -46,6 +46,7 @@ Progress: [██████████] 100%
 |-------|-------|-------|----------|
 | 01 | 1 | - | - |
 | Phase 02 P01 | 20min | 3 tasks | 3 files |
+| Phase 03 P01 | 45min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -58,6 +59,7 @@ Progress: [██████████] 100%
 - Voice model: try gemini-3.8-live, then gemini-3.1-flash-live-preview, then OpenAI Realtime; at most two hours on the choice
 - [Phase ?]: [Phase 01] face.mjs offsets scaled by HEIGHT/360 for 1280x720
 - [Phase 02]: Keep gemini-3.8-live default; agent logs only caller identity, model, tool name+ok
+- [Phase 03]: 03-01: jpeg() drops frames that arrive while muted; tool failures use only our own error codes
 
 ### Pending Todos
 
@@ -73,6 +75,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-11-14T02:34:18.100Z
+Last session: 2026-11-14T02:57:30.658Z
 Stopped at: Roadmap created, ready to plan Phase 1
 Resume file: None
