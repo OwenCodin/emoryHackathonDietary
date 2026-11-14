@@ -1,5 +1,7 @@
 // One-time Kroger sign-in, run by a person: node --env-file=.env.local actions/kroger-login.mjs
-// Opens Kroger's sign-in page in the default browser, waits for the redirect on localhost, checks the state value,
+// Two modes. With KROGER_RELAY_URL and KROGER_RELAY_SECRET set it prints (and opens) a sign-in link that goes
+// through the public relay (kroger-relay/), then waits for the relay to hold the code and exchanges it locally.
+// Otherwise it opens Kroger's sign-in page, waits for the redirect on localhost, checks the state value,
 // exchanges the code and saves the refresh token outside the repo. The code and tokens are never printed.
 import { execFile } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -10,6 +12,7 @@ import {
   createTokenStore,
   readKrogerConfig,
 } from './kroger.mjs';
+import { createKrogerSignIn, readRelayConfig } from './kroger-signin.mjs';
 
 const TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -20,6 +23,22 @@ function die(message) {
 
 const config = readKrogerConfig(process.env);
 if (!config) die('Set KROGER_CLIENT_ID and KROGER_CLIENT_SECRET in .env.local first.');
+
+if (readRelayConfig(process.env)) {
+  // unrefTimers:false keeps this process alive while it waits; the agent's timers are unref'd.
+  const signIn = createKrogerSignIn({ unrefTimers: false });
+  const started = await signIn.startKrogerSignIn();
+  if (!started.ok) die(`Could not start the sign-in (${started.error}).`);
+  console.log('Open this link on your phone (or here) and sign in to Kroger:');
+  console.log(started.link);
+  if (process.platform === 'darwin') execFile('open', [started.link], () => {});
+  const outcome = await signIn.waitForKrogerSignIn();
+  if (outcome.ok) {
+    console.log('Kroger sign-in saved.');
+    process.exit(0);
+  }
+  die(`Kroger sign-in did not finish (${outcome.error}).`);
+}
 
 let redirect;
 try {

@@ -188,12 +188,47 @@ describe('actions contract', () => {
     }
   });
 
-  it('every async function returns a Promise with an ok result', async () => {
-    for (const name of ['startCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText']) {
-      const p = actions[name]();
-      assert.ok(p instanceof Promise, `${name} returns a Promise`);
-      assert.equal(typeof (await p).ok, 'boolean', `${name}() returns an ok result`);
+  // The main checkout's .env.local may hold real Kroger keys: scrub every KROGER_* var and use a throwaway token folder.
+  async function withScrubbedKroger(fn) {
+    const saved = {};
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('KROGER_')) {
+        saved[key] = process.env[key];
+        delete process.env[key];
+      }
     }
+    const tokenDir = await mkdtemp(join(tmpdir(), 'agent-contract-kroger-'));
+    process.env.KROGER_TOKEN_DIR = tokenDir;
+    try {
+      return await fn();
+    } finally {
+      delete process.env.KROGER_TOKEN_DIR;
+      Object.assign(process.env, saved);
+      await rm(tokenDir, { recursive: true, force: true });
+    }
+  }
+
+  it('Kroger sign-in actions report not configured without keys', async () => {
+    await withScrubbedKroger(async () => {
+      assert.deepEqual(await actions.startKrogerSignIn(), { ok: false, error: 'not_configured' });
+      assert.deepEqual(await actions.getKrogerStatus(), {
+        ok: true,
+        configured: false,
+        relay: false,
+        connected: false,
+        pending: false,
+      });
+    });
+  });
+
+  it('every async function returns a Promise with an ok result', async () => {
+    await withScrubbedKroger(async () => {
+      for (const name of ['startCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText', 'startKrogerSignIn', 'getKrogerStatus']) {
+        const p = actions[name]();
+        assert.ok(p instanceof Promise, `${name} returns a Promise`);
+        assert.equal(typeof (await p).ok, 'boolean', `${name}() returns an ok result`);
+      }
+    });
   });
 });
 
