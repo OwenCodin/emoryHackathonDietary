@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Roadmap created, ready to plan Phase 1
-last_updated: "2026-11-14T02:03:25.125Z"
+last_updated: "2026-11-14T02:03:27.182Z"
 last_activity: 2026-11-14
 progress:
   total_phases: 5
@@ -48,11 +48,14 @@ Progress: [██████████] 100%
 
 ## Accumulated Context
 
+| Phase 01 P01 | 15min | 3 tasks | 13 files |
+
 ### Decisions
 
 - Roadmap: five phases; AISL-04 (one-sentence verdicts starting Yes/No/Small portion) is delivered in Phase 3 with the verdict tools, not Phase 5
 - Roadmap: video out and outbound (Phase 4) and in-aisle (Phase 5) are the first things to cut
 - Voice model: try gemini-3.8-live, then gemini-3.1-flash-live-preview, then OpenAI Realtime; at most two hours on the choice
+- [Phase ?]: [Phase 01] face.mjs offsets scaled by HEIGHT/360 for 1280x720
 
 ### Pending Todos
 
