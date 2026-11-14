@@ -2,10 +2,13 @@
 // No LiveKit imports, so everything here is unit tested offline.
 
 // Never throws. A cart frame is accepted only as a Uint8Array of exactly expectedLength bytes.
+// VideoFrame reads the whole backing buffer from offset 0 and ignores byteOffset, so a partial view
+// (a Buffer slice or subarray) is copied into a fresh exact-size array first.
 export function pickFrame(cartFrame, drawOwnPicture, expectedLength) {
   try {
     if (cartFrame instanceof Uint8Array && cartFrame.length === expectedLength) {
-      return { source: 'cart', pixels: cartFrame, rejected: false };
+      const exact = cartFrame.byteOffset === 0 && cartFrame.byteLength === cartFrame.buffer.byteLength;
+      return { source: 'cart', pixels: exact ? cartFrame : new Uint8Array(cartFrame), rejected: false };
     }
   } catch { /* fall through to the agent's own picture */ }
   return { source: 'face', pixels: drawOwnPicture(), rejected: cartFrame !== null && cartFrame !== undefined };

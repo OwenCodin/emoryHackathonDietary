@@ -18,6 +18,23 @@ test('pickFrame accepts a correct Uint8Array and a Buffer without drawing', () =
   assert.equal(drew, 0);
 });
 
+test('pickFrame copies a partial view into a fresh exact-size array', () => {
+  const backing = new Uint8Array(N * 2).map((_, i) => i % 251);
+  const views = [backing.subarray(N, N * 2), backing.subarray(0, N), Buffer.from(backing.buffer, 8, N)];
+  for (const view of views) {
+    const r = pickFrame(view, () => assert.fail('must not draw'), N);
+    assert.equal(r.source, 'cart');
+    assert.equal(r.rejected, false);
+    assert.equal(r.pixels.byteOffset, 0);
+    assert.equal(r.pixels.byteLength, N);
+    assert.equal(r.pixels.buffer.byteLength, N);
+    assert.notEqual(r.pixels.buffer, backing.buffer);
+    assert.ok(same(r.pixels, view));
+  }
+  const exact = good();
+  assert.equal(pickFrame(exact, () => assert.fail('must not draw'), N).pixels, exact);
+});
+
 test('pickFrame falls back for null and undefined', () => {
   for (const v of [null, undefined]) {
     let drew = 0;
