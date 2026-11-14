@@ -70,7 +70,7 @@ describe('store rules', () => {
 describe('kitchen and recipe rules', () => {
   it('carries the kitchen tour, remember, text and pantry rules', async () => {
     const { instructions } = await import('./prompt.mjs');
-    for (const w of ['fridge', 'pantry or cupboards', 'place home', 'place store', 'remember', 'suggest_meal', 'text_recipe', 'only when they agree', 'pantry_list', 'remove_from_pantry', 'clear_pantry']) assert.ok(instructions.includes(w), w);
+    for (const w of ['fridge', 'pantry or cupboards', 'place home', 'place store', 'remember', 'suggest_meal', 'text_recipe', 'only when they agree', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'from_scratch']) assert.ok(instructions.includes(w), w);
   });
   it('keeps the existing rules', async () => {
     const { instructions } = await import('./prompt.mjs');
