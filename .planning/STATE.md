@@ -100,6 +100,7 @@ None yet.
 | 261114-jcl | Cart against the real Gemini Interactions API: v1beta client, actions and final text read from `steps`, 0-999 coordinates confirmed, extra action names, wait default (421/421 pass). Live: kroger.com returns an empty search page to the automated browser, so nothing was added there | 2026-11-14 | 6def87f | [261114-jcl-cart-works-against-the-real-gemini-inter](./quick/261114-jcl-cart-works-against-the-real-gemini-inter/) |
 | 261114-k0g | Kroger public API cart path beside the browser cart: client (app token, product search at the store, stored sign-in, add to cart), one-time sign-in script, startCart uses the API when both KROGER keys are set (441/441 pass). Live: product search only; sign-in and add-to-cart not yet run | 2026-11-14 | f9a0ec8 | [261114-k0g-kroger-api-cart-path-beside-the-browser-](./quick/261114-k0g-kroger-api-cart-path-beside-the-browser-/) |
 | fast | Docs: live Kroger API cart run recorded (three items added and confirmed in the cart on kroger.com); KROGER keys added to the shared env table in all three track READMEs and to the root README | 2026-11-14 | 1194f75 | - |
+| fast | Agent prompt: always speak English unless the caller clearly asks for another language (the agent had switched to Spanish on a call; no language was set anywhere) | 2026-11-14 | 5c02273 | - |
 
 ## Session Continuity
 
