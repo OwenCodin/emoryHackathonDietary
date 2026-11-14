@@ -1,0 +1,19 @@
+{
+  "private": true,
+  "type": "module",
+  "engines": { "node": "^22.23.2 || ^24.0.0" },
+  "scripts": {
+    "start": "node --env-file=.env.local agent/agent.mjs start",
+    "test": "node --env-file-if-exists=.env.local --test"
+  },
+  "dependencies": {
+    "@livekit/agents": "1.8.0",
+    "@livekit/agents-plugin-google": "1.8.0",
+    "@livekit/rtc-node": "0.13.35",
+    "@google/genai": "^3.3.0",
+    "livekit-server-sdk": "^2.19.3",
+    "playwright": "^1.65.1",
+    "sharp": "^0.35.5",
+    "zod": "^4.1.8"
+  }
+}
