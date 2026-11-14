@@ -1210,3 +1210,35 @@ describe('quick 261114-gnr: no doubled verdict word', () => {
     assert.equal(r.results[0].spoken, 'Yes, this product has about twenty five milligrams of sodium.');
   });
 });
+
+describe('quick 261114-gnr: kitchen basics stay off the shopping list', async () => {
+  const { createMemory } = await import('./memory.mjs');
+  let n = 0;
+  const stateDir = () => join(dir, `gnr-basics-${n++}`);
+  const meal = missing => ({ title: 'Rice bowl', uses: ['rice'], missing, minutes: 20, steps: ['Cook.'], why: 'Low sodium.' });
+  const basics = [{ name: 'Water', quantity: '1 cup' }, { name: ' olive  oil ', quantity: '1 tbsp' }, { name: 'black pepper', quantity: 'pinch' }, { name: 'unsalted butter', quantity: '1 tbsp' }, { name: 'salt-free seasoning', quantity: '1 tsp' }];
+  const ready = async (missing, over = {}) => {
+    const t = build({ memory: createMemory({ patientId: 'demo', dir: stateDir() }), phone: PHONE, renal: { ...renal, suggestMeals: async () => ({ ok: true, meals: [meal(missing)] }) }, ...over });
+    await t.look_at_camera.execute({});
+    const m = await t.suggest_meal.execute({});
+    return { t, m };
+  };
+  it('water, oil and pepper never reach the list or the cart', async () => {
+    const { mod, calls } = rec(actions, 'startCart');
+    const { t } = await ready(basics, { actions: mod });
+    assert.deepEqual((await t.shopping_list.execute({})).needed, ['unsalted butter', 'salt-free seasoning']);
+    await t.start_cart.execute({ items: [] });
+    assert.deepEqual(calls[0].items, [{ name: 'unsalted butter', quantity: '1 tbsp' }, { name: 'salt-free seasoning', quantity: '1 tsp' }]);
+  });
+  it('the recipe itself still lists them and the text keeps them', async () => {
+    const { mod, calls } = rec(actions, 'sendText');
+    const { t, m } = await ready(basics, { actions: mod });
+    assert.ok(JSON.stringify(m).includes('Water'));
+    await t.text_recipe.execute({ position: 1 });
+    assert.match(calls[0].text, /Water \(1 cup\)/);
+  });
+  it('salt is deliberately kept', async () => {
+    const { t } = await ready([{ name: 'salt', quantity: '1 pinch' }]);
+    assert.deepEqual((await t.shopping_list.execute({})).needed, ['salt']);
+  });
+});
