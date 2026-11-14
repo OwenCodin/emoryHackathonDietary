@@ -156,16 +156,35 @@ const agent = defineAgent({
     const memory = createMemory({ patientId: 'demo' });
 
     // Time warning: once, a little before the trial's call limit. Armed with the greeting, cleared on shutdown.
-    const warnNow = async () => {
+    // When it falls due it waits for an idle moment (watchdog.warnReady: up to 20 s, then it is said anyway), and
+    // its speech is marked as our own so it never counts as the answer to a caller's question.
+    let warnTimer = null;
+    const warnNow = async dueAt => {
       try {
         if (closing) return;
-        console.log('[agent] time warning requested');
-        await session.generateReply({ instructions: timeWarning });
+        console.log(`[agent] time warning requested waited_ms=${Date.now() - dueAt}`);
+        watchdog.ignoreNextSpeech();
+        const handle = session.generateReply({ instructions: timeWarning });
+        try { handle?.addDoneCallback?.(() => { try { watchdog.ignoreDone(); } catch { /* ignore */ } }); } catch { /* ignore */ }
+        await handle;
       } catch (error) {
+        try { watchdog.ignoreDone(); } catch { /* ignore */ }
         try { console.error(`[agent] time warning failed ${error?.name ?? 'Error'}`); } catch { /* ignore */ }
       }
     };
-    const warning = createDeadline({ ms: callWarnMs(process.env.AGENT_CALL_WARN_SECONDS), onExpire: () => { void warnNow(); } });
+    const warnWhenIdle = () => {
+      const dueAt = Date.now();
+      const poll = () => {
+        warnTimer = null;
+        try {
+          if (closing) return;
+          if (watchdog.warnReady(dueAt)) { void warnNow(dueAt); return; }
+          warnTimer = setTimeout(poll, 500);
+        } catch { /* never breaks the call */ }
+      };
+      poll();
+    };
+    const warning = createDeadline({ ms: callWarnMs(process.env.AGENT_CALL_WARN_SECONDS), onExpire: warnWhenIdle });
 
     // Registered before anything is opened, so a throw while publishing or starting still cleans up.
     ctx.addShutdownCallback(async () => {
@@ -175,6 +194,8 @@ const agent = defineAgent({
       if (nudgeTimer) clearInterval(nudgeTimer);
       answerDeadline?.clear();
       warning.clear();
+      if (warnTimer) clearTimeout(warnTimer);
+      warnTimer = null;
       if (onBridgeJoined) ctx.room.off('participantConnected', onBridgeJoined);
       if (timer) clearInterval(timer);
       // Close each resource even if an earlier one fails or hangs: every step has its own time limit.

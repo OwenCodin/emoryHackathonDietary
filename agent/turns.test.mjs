@@ -221,6 +221,74 @@ describe('createReplyWatchdog', () => {
   });
 });
 
+describe('time warning deferral (warnReady, ignoreNextSpeech)', () => {
+  it('is ready at once when the agent is idle and no caller turn is waiting', () => {
+    const { c, w } = make();
+    w.arm(); w.agentState('listening'); c.tick(60000);
+    assert.equal(w.warnReady(c.t), true);
+  });
+  it('waits while the agent speaks or thinks or a tool runs, then goes when idle', () => {
+    const { c, w } = make();
+    w.arm(); w.agentState('listening');
+    const dueAt = c.t;
+    w.agentState('speaking'); assert.equal(w.warnReady(dueAt), false);
+    w.agentState('thinking'); assert.equal(w.warnReady(dueAt), false);
+    w.toolActivity(1); w.agentState('listening'); assert.equal(w.warnReady(dueAt), false);
+    w.toolActivity(-1); c.tick(500); assert.equal(w.warnReady(dueAt), true);
+  });
+  it('is not said on top of a caller turn: waits for the caller to be quiet and for the answer', () => {
+    const { c, w } = make();
+    w.arm(); w.agentState('listening');
+    const dueAt = c.t;
+    turnEnded(w);
+    assert.equal(w.warnReady(dueAt), false); // caller just spoke
+    c.tick(2000); assert.equal(w.warnReady(dueAt), false); // question still unanswered
+    w.agentState('speaking'); c.tick(2000); assert.equal(w.warnReady(dueAt), false);
+    w.agentState('listening'); assert.equal(w.warnReady(dueAt), true);
+  });
+  it('is not said on top of a nudge: waits for the nudge reply to start', () => {
+    const { c, w } = make();
+    w.arm(); w.agentState('listening'); turnEnded(w); c.tick(6000);
+    assert.equal(w.due(), true); w.nudged();
+    const dueAt = c.t;
+    c.tick(1000); assert.equal(w.warnReady(dueAt), false);
+    w.agentState('thinking'); c.tick(1000); assert.equal(w.warnReady(dueAt), false);
+    w.agentState('speaking'); c.tick(2000); w.agentState('listening');
+    assert.equal(w.warnReady(dueAt), true);
+  });
+  it('is said anyway after 20 s', () => {
+    const { c, w } = make();
+    w.arm(); w.agentState('speaking');
+    const dueAt = c.t;
+    c.tick(19999); assert.equal(w.warnReady(dueAt), false);
+    c.tick(1); assert.equal(w.warnReady(dueAt), true);
+  });
+  it('the warning speech does not answer a pending caller turn', () => {
+    const { c, w } = make();
+    w.arm(); w.agentState('listening'); turnEnded(w);
+    c.tick(500); w.ignoreNextSpeech(); w.agentState('speaking'); c.tick(3000); w.agentState('listening'); w.ignoreDone();
+    assert.equal(w.due(), false); // the clock restarts when the warning ends
+    c.tick(6000); assert.equal(w.due(), true);
+  });
+  it('only the next speech is ignored: the reply after the warning answers the turn', () => {
+    const { c, w } = make();
+    w.arm(); w.agentState('listening');
+    w.ignoreNextSpeech(); w.agentState('speaking'); c.tick(3000); turnEnded(w); c.tick(200); w.agentState('listening'); w.ignoreDone();
+    c.tick(1000); w.agentState('speaking'); c.tick(2000); w.agentState('listening');
+    c.tick(20000); assert.equal(w.due(), false);
+  });
+  it('a warning that never spoke does not swallow the next reply', () => {
+    let { c, w } = make();
+    w.arm(); w.agentState('listening'); w.ignoreNextSpeech(); w.ignoreDone();
+    turnEnded(w); c.tick(1000); w.agentState('speaking'); c.tick(2000); w.agentState('listening'); c.tick(20000);
+    assert.equal(w.due(), false);
+    ({ c, w } = make()); // and an unanswered request lapses on its own
+    w.arm(); w.agentState('listening'); w.ignoreNextSpeech(); c.tick(15000);
+    turnEnded(w); c.tick(1000); w.agentState('speaking'); c.tick(2000); w.agentState('listening'); c.tick(20000);
+    assert.equal(w.due(), false);
+  });
+});
+
 describe('replyNudge', () => {
   it('is a fixed instruction', () => {
     assert.equal(typeof replyNudge, 'string');

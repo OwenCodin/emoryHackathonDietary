@@ -8,6 +8,14 @@ export const MAX_NUDGES = 3;
 export const REPLY_MIN_MS = 1500;
 // A generation stuck in "thinking" stops holding the nudge back after this long.
 export const THINKING_CAP_MS = 15000;
+// After a nudge, the time warning waits this long for the nudge reply to start.
+export const NUDGE_SETTLE_MS = 8000;
+// The time warning waits until no new caller words have arrived for this long.
+export const CALLER_QUIET_MS = 1500;
+// The time warning waits at most this long for a quiet moment, then is said anyway.
+export const WARN_MAX_DEFER_MS = 20000;
+// An ignoreNextSpeech() request lapses if no agent speech starts within this long.
+const IGNORE_LAPSE_MS = 15000;
 const MAX_ITEMS = 32;
 
 // Gemini does not treat caller noise as barge-in unless AGENT_ALLOW_BARGE_IN is exactly "1".
@@ -58,17 +66,21 @@ export function callWarnMs(raw) {
 // speaks, or it thinks (up to THINKING_CAP_MS), no nudge is due.
 export function createReplyWatchdog({
   now = () => Date.now(), waitMs = NUDGE_WAIT_MS, maxNudges = MAX_NUDGES, replyMinMs = REPLY_MIN_MS,
-  thinkingCapMs = THINKING_CAP_MS,
+  thinkingCapMs = THINKING_CAP_MS, nudgeSettleMs = NUDGE_SETTLE_MS, callerQuietMs = CALLER_QUIET_MS,
+  warnMaxDeferMs = WARN_MAX_DEFER_MS,
 } = {}) {
   let armed = false;
   let disarmed = false;
   let turn = null; // { endedAt, answered, nudged, nudgedAt }
   let agentNow = 'initializing';
-  let speakingSince = null; // start of the agent speech now playing; null when none
+  let speakingSince = null; // start of the agent speech now playing; null when none or when it is ignored
   let thinkingSince = null;
   let holdEndedAt = -Infinity;
+  let lastHeardAt = -Infinity;
   let tools = 0;
   let sent = 0;
+  let ignoreRequestedAt = null;
+  let ignoring = false;
   const items = new Map(); // transcript item id -> longest transcript length seen
 
   return {
@@ -93,6 +105,7 @@ export function createReplyWatchdog({
         }
         if (!armed) return;
         const t = now();
+        lastHeardAt = t;
         // More words before an answer (or a nudge) extend the same turn; anything else starts a new one.
         if (turn && !turn.answered && !turn.nudged) turn.endedAt = t;
         else turn = { endedAt: t, answered: false, nudged: false, nudgedAt: null };
@@ -106,7 +119,9 @@ export function createReplyWatchdog({
         agentNow = newState;
         const t = now();
         if (prev === 'speaking') {
-          if (turn && !turn.answered && speakingSince !== null && t - turn.endedAt >= replyMinMs) {
+          if (ignoring) {
+            ignoring = false;
+          } else if (turn && !turn.answered && speakingSince !== null && t - turn.endedAt >= replyMinMs) {
             turn.answered = true; // speech that overlapped the turn went on long enough after it to be the reply
           }
           speakingSince = null;
@@ -118,8 +133,13 @@ export function createReplyWatchdog({
         }
         if (newState === 'thinking') thinkingSince = t;
         if (newState === 'speaking') {
-          speakingSince = t;
-          if (turn && !turn.answered && t >= turn.endedAt) turn.answered = true;
+          if (ignoreRequestedAt !== null && t - ignoreRequestedAt < IGNORE_LAPSE_MS) {
+            ignoring = true;
+          } else {
+            speakingSince = t;
+            if (turn && !turn.answered && t >= turn.endedAt) turn.answered = true;
+          }
+          ignoreRequestedAt = null;
         }
       } catch { /* never throws */ }
     },
@@ -154,6 +174,28 @@ export function createReplyWatchdog({
         if (turn) { turn.nudged = true; turn.nudgedAt = now(); }
         sent += 1;
       } catch { /* never throws */ }
+    },
+
+    // The next agent speech is our own announcement (the time warning): it never answers a caller turn.
+    ignoreNextSpeech() {
+      try { ignoreRequestedAt = now(); } catch { /* never throws */ }
+    },
+    // That announcement's speech handle is done (spoken or not): a request that never spoke must not eat a reply.
+    ignoreDone() { ignoreRequestedAt = null; },
+
+    // The time warning fell due at dueAt: say it when the agent is idle (not speaking or thinking, no tool running,
+    // the caller quiet and no caller turn still waiting for its answer or nudge), or once warnMaxDeferMs has passed.
+    warnReady(dueAt) {
+      try {
+        const t = now();
+        if (t - dueAt >= warnMaxDeferMs) return true;
+        if (agentNow === 'speaking' || agentNow === 'thinking' || tools > 0) return false;
+        if (t - lastHeardAt < callerQuietMs) return false;
+        if (armed && turn && !turn.answered) {
+          if (turn.nudged ? t - turn.nudgedAt < nudgeSettleMs : sent < maxNudges) return false;
+        }
+        return true;
+      } catch { return true; }
     },
 
     get nudges() { return sent; },
