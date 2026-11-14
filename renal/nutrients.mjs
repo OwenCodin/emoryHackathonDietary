@@ -1,31 +1,9 @@
-import { errorResult, normalizeFoodName, readData, writeData } from './data.mjs';
+import { errorResult, normalizeFoodName, plausibleMatch, readData, writeData } from './data.mjs';
+
+export { plausibleMatch };
 
 const NUTRIENT_IDS = { sodiumMg: 1093, potassiumMg: 1092, phosphorusMg: 1091, waterMl: 1051 };
 let cache;
-
-const STOPWORDS = new Set(['a', 'an', 'the', 'of', 'and', 'with', 'in', 'or', 'raw', 'fresh', 'plain']);
-
-function significantTokens(value) {
-  return normalizeFoodName(value).split(' ').filter((token) => token.length >= 2 && !STOPWORDS.has(token));
-}
-
-function tokenMatches(queryToken, descriptionTokens) {
-  const forms = new Set([queryToken, `${queryToken}s`, `${queryToken}es`]);
-  if (queryToken.endsWith('es')) forms.add(queryToken.slice(0, -2));
-  if (queryToken.endsWith('s')) forms.add(queryToken.slice(0, -1));
-  if (queryToken.endsWith('ies')) forms.add(`${queryToken.slice(0, -3)}y`);
-  if (queryToken.endsWith('y')) forms.add(`${queryToken.slice(0, -1)}ies`);
-  return descriptionTokens.some((token) => forms.has(token));
-}
-
-// True only when every significant word of the query appears in the USDA description (plural tolerant).
-export function plausibleMatch(query, description) {
-  if (typeof query !== 'string' || typeof description !== 'string') return false;
-  const queryTokens = significantTokens(query);
-  if (queryTokens.length === 0) return false;
-  const descriptionTokens = significantTokens(description);
-  return queryTokens.every((token) => tokenMatches(token, descriptionTokens));
-}
 
 function findSeed(name, foods) {
   const normalized = normalizeFoodName(name);

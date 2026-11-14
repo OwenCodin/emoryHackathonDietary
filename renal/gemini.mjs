@@ -59,7 +59,7 @@ export function generateJsonWithFallback({
       request.then((response) => {
         let value = null;
         try {
-          value = parse(response?.text);
+          value = parse(response?.text, response);
         } catch {
           value = null;
         }

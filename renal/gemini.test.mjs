@@ -183,3 +183,23 @@ test('suggestMeals uses the fallback model instead of the canned meals', async (
   assert.equal(result.ok, true);
   assert.equal(result.meals[0].title, 'Rice and cabbage bowl');
 });
+
+test('generateJsonWithFallback passes the full response as the second argument to parse', async () => {
+  const response = { text: 'hello', candidates: [{ marker: 1 }] };
+  const ai = { models: { generateContent: async () => response } };
+  let seen;
+  const result = await generateJsonWithFallback({
+    ai,
+    models: ['m'],
+    buildRequest: (model) => ({ model }),
+    parse: (text, full) => {
+      seen = { text, full };
+      return text;
+    },
+    totalMs: 500,
+    hedgeMs: 200,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(seen.text, 'hello');
+  assert.equal(seen.full, response);
+});

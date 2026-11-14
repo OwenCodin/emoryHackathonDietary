@@ -47,3 +47,27 @@ export function errorResult(error, fallback = 'renal operation failed') {
   const message = error instanceof Error ? error.message : fallback;
   return { ok: false, error: message.slice(0, 120) || fallback };
 }
+
+const STOPWORDS = new Set(['a', 'an', 'the', 'of', 'and', 'with', 'in', 'or', 'raw', 'fresh', 'plain']);
+
+function significantTokens(value) {
+  return normalizeFoodName(value).split(' ').filter((token) => token.length >= 2 && !STOPWORDS.has(token));
+}
+
+function tokenMatches(queryToken, descriptionTokens) {
+  const forms = new Set([queryToken, `${queryToken}s`, `${queryToken}es`]);
+  if (queryToken.endsWith('es')) forms.add(queryToken.slice(0, -2));
+  if (queryToken.endsWith('s')) forms.add(queryToken.slice(0, -1));
+  if (queryToken.endsWith('ies')) forms.add(`${queryToken.slice(0, -3)}y`);
+  if (queryToken.endsWith('y')) forms.add(`${queryToken.slice(0, -1)}ies`);
+  return descriptionTokens.some((token) => forms.has(token));
+}
+
+// True only when every significant word of the query appears in the USDA description (plural tolerant).
+export function plausibleMatch(query, description) {
+  if (typeof query !== 'string' || typeof description !== 'string') return false;
+  const queryTokens = significantTokens(query);
+  if (queryTokens.length === 0) return false;
+  const descriptionTokens = significantTokens(description);
+  return queryTokens.every((token) => tokenMatches(token, descriptionTokens));
+}
