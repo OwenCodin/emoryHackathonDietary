@@ -62,6 +62,8 @@ Root `package.json` scripts and dependencies:
 | `USDA_API_KEY` | B | FoodData Central key (free, from api.data.gov). `DEMO_KEY` works but is heavily rate limited. |
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Project API key (`ftk_...`, created on the Chert Developer page), project UUID and line UUID. |
 | `PATIENT_PHONE` | C | The demo patient's phone in international form, for example `+15551234567`. Must be a phone verified for the Chert project. |
+| `GROCERY_STORE_URL` | C | HTTPS URL for the selected Walmart, Kroger, Instacart or Amazon store. |
+| `INSTACART_API_KEY` | C | Optional Instacart Developer Platform key used only when a store blocks browser automation. |
 
 Keys go in `.env.local` only. Never paste them in chat, commit them, or print them.
 
@@ -169,6 +171,20 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 ## Track C in detail
 
+### Local implementation status
+
+The Track C modules are implemented locally, but no grocery store login has
+been tested yet. Set `GROCERY_STORE_URL` and sign in manually before claiming a
+retailer works. The current repository still has no `agent/agent.mjs`, so its
+root `npm start` flow is not available until Track A is implemented.
+
+The current runtime dependency audit reports three high advisories in
+`sharp@0.35.3`, which is pinned transitively by `@livekit/agents@1.8.0`.
+Upgrading the LiveKit stack is outside this track and conflicts with the
+compatibility pin above; the Track C screenshot converter uses the root
+`sharp@0.35.5` dependency. Revisit the transitive advisory when the pinned
+LiveKit stack can be upgraded safely.
+
 ### What you build
 
 | File | Purpose |
@@ -186,7 +202,7 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 ### Order of work
 
 1. **Ask Chert staff (first 30 minutes):** "Can our trial line place outbound FaceTime video calls to a verified phone, and can it do that while `chert dev` is holding the line for inbound calls?" The answer decides whether twist 3 is a call or a text.
-2. **Pick the store (first hour).** Sign in by hand in a Playwright browser on two or three grocery sites and try adding one item with a script. Choose the one that does not throw a bot check. Record the choice in this README.
+2. **Pick the store (first hour).** Sign in by hand in a Playwright browser on two or three grocery sites and try adding one item with a script. Choose the one that does not throw a bot check. Record the choice in this README. Store accessibility is not verified until this manual login test is completed.
 3. `frames.mjs` and a fake cart that just browses a page, so Track A can test video out early. Merge.
 4. The real cart loop on the chosen store.
 5. `sendText`.
@@ -208,7 +224,9 @@ const context = await chromium.launchPersistentContext('actions/.browser-profile
 const page = context.pages()[0] ?? await context.newPage();
 ```
 
-Run `npx playwright install chromium` once. `login.mjs` opens this same profile and waits while you sign in by hand. Do the login yourself; do not have the model type a password.
+Run `npx playwright install chromium` once. Set `GROCERY_STORE_URL` to an HTTPS URL on a supported retailer domain, then run `node actions/login.mjs`. It opens this same profile and waits while you sign in by hand. Do the login yourself; do not have the model type a password. Credentials and cookies remain in the ignored browser profile.
+
+The computer-use loop restricts navigation to Walmart, Kroger, Instacart and Amazon domains and enables Gemini's prompt-injection check. It sends browser screenshots to Gemini to choose actions; screenshots and credentials are not written to logs.
 
 **Frames.** A timer takes `await page.screenshot({ type: 'png' })` about four times a second and converts it:
 
@@ -223,7 +241,7 @@ latest = new Uint8Array(await sharp(png)
 
 **Why you cannot publish the video yourself.** Chert only shows the caller video that comes from the same participant that speaks. The browser has to travel through Track A's video track, which is why the hand-off is a frame, not a LiveKit track.
 
-**The model loop.** Google's computer-use guide is at https://ai.google.dev/gemini-api/docs/computer-use. Read it before writing code; what follows is a summary of that page as of 13 November and has not been run.
+**The model loop.** Google's computer-use guide is at https://ai.google.dev/gemini-api/docs/computer-use. The current implementation follows the Interactions API and enables its prompt-injection check. Real store interactions remain unverified until the user signs into a store and runs the manual test.
 
 - Use `@google/genai` and the Interactions API: `ai.interactions.create({ model, input, tools: [{ type: 'computer_use', environment: 'browser' }] })`. The guide's examples use `gemini-4-hydrogen`.
 - The model replies with function calls such as `navigate { url }`, `click { x, y }`, `type { text, press_enter }`, `scroll { x, y, direction }`, `press_key { key }`, `wait { seconds }`, `go_back`, `take_screenshot`. Each also carries an `intent` string.
@@ -241,7 +259,9 @@ The `intent` strings are useful: copy the latest one into `getCartStatus().step`
 - When every item is added or reported missing, set `state: 'done'` with `cartUrl` and `total`, and stop the loop.
 - Cap the run at four minutes and 60 actions, then `state: 'failed'` with a `step` that says why.
 
-**Fallback if every store blocks automation.** Instacart's Developer Platform turns a list of items into a shoppable page with one request (`POST /idp/v1/products/products_link` on `https://connect.dev.instacart.tools`, bearer key from their developer dashboard; see https://docs.instacart.com/developer_platform_api/api/products/create_shopping_list_page for the body). Open the returned link in the same Playwright browser so the caller still sees a cart on screen, and return it as `cartUrl`.
+**Fallback when the selected store blocks automation.** Instacart's Developer Platform turns a list of items into a shoppable page with one request (`POST /idp/v1/products/products_link` on `https://connect.dev.instacart.tools`, bearer key from their developer dashboard; see https://docs.instacart.com/developer_platform_api/api/products/create_shopping_list_page for the body). Open the returned link in the same Playwright browser so the caller still sees a cart on screen, and return it as `cartUrl`.
+The generated link is a shopping list: the patient must choose a store and review the items there. It does not purchase anything. The local implementation uses this fallback when it detects a bot challenge and `INSTACART_API_KEY` is configured.
+No store login has been tested by this implementation yet; the user must sign in and validate the selected site before it can be called reliable.
 
 **Where it runs.** Track A imports `actions/index.mjs`, so the browser runs inside the agent's process for that call. Module-level state is fine. Close the browser context in `stopCart()` and when the cart finishes, or the next call cannot open the profile.
 
@@ -284,7 +304,7 @@ Chert dials out and joins a LiveKit room that you prepare. The agent must alread
    token.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true });
    const participantToken = await token.toJwt();
    ```
-5. Create the call. Chert's FaceTime docs give the base `https://facetime.trychert.com/api`; its setup doc gives `https://app.trychert.com/api`. Try the first and keep whichever answers.
+5. Create the call at `https://app.trychert.com/api/v1/calls` using the project API key. The call request is retried at most once with the same idempotency key if its outcome is uncertain.
    ```
    POST https://facetime.trychert.com/api/v1/calls
    Authorization: Bearer $CHERT_API_KEY
@@ -299,12 +319,14 @@ Chert dials out and joins a LiveKit room that you prepare. The agent must alread
      "remote_participant_identity": "<the agent's identity in the room>" }
    ```
    HTTP 201 means accepted, not answered. Save `data.id`. If the request times out, retry with the same idempotency key, never a new one, or the patient may be called twice.
-6. Poll `GET /api/v1/calls/<id>/events` once a second. When a `bridge_ready` event appears, write the signal Track A's greeting waits for:
+6. Poll `GET https://app.trychert.com/api/v1/calls/<id>/events` once a second. When a `bridge_ready` event appears, write the signal Track A's greeting waits for:
    ```js
    await rooms.updateRoomMetadata(room, JSON.stringify({ chert_call: id, chert_bridge_ready: true, at: new Date().toISOString() }));
    ```
-   The exact shape of the events response is not documented in what was read; log the first response and match on what is really there.
-7. If nobody answers in 45 seconds, or the call reaches a terminal state, `POST /api/v1/calls/<id>/end` with a new idempotency key and an empty JSON body, then `rooms.deleteRoom(room)`.
+   The exact shape of the events response has not been verified. Confirm it
+   during a user-approved manual call, without logging raw response data that
+   might contain personal information.
+7. If nobody answers in 45 seconds, the call reaches its terminal state, or the call runs for five minutes, `POST https://app.trychert.com/api/v1/calls/<id>/end` with a new idempotency key and an empty JSON body when needed, then `rooms.deleteRoom(room)`.
 
 The API key needs the `facetime:write` and `facetime:read` scopes. The project owner creates it on Chert's Developer page and puts it in `.env.local`.
 

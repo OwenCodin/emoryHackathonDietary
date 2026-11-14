@@ -41,6 +41,10 @@ most reliable site in `actions/README.md`. Store authentication stays in the
 ignored persistent browser profile and is performed by the user. If direct
 store automation is blocked, support the documented Instacart product-list
 link when its API key is configured; show that page in the same browser.
+Restrict browser navigation to HTTPS on those supported retailer domains and
+enable Gemini's prompt-injection check. Treat page content as untrusted.
+Screenshots are sent to Gemini for action selection but are not persisted or
+logged.
 
 ## Cart behavior and safety
 
