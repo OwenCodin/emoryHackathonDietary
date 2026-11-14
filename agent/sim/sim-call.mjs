@@ -4,11 +4,13 @@
 // publishes (greeting timing, silence before the signal, video size). One RESULT line per call.
 //
 // Run against an already running agent (npm start, or node --env-file=.env.local agent/agent.mjs start):
-//   node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch]
+//   node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch] [--outbound]
 // --image PATH publishes a facetime-remote-video track showing that picture (1280x720, about 5 frames a second).
 // --say TEXT (repeatable) speaks the text into the caller microphone after the greeting, using macOS say.
 // --expect-cart-switch checks that the agent's video goes face, then cart (magenta), then face; run against an agent
 // started with AGENT_FAKE_CART=1.
+// --outbound simulates Track C's callPatient: dispatches the agent with outbound metadata before the bridge joins and
+// checks that the agent already publishes audio and video.
 // With --say or --image listening ends at the earlier of ready + SECONDS and 44 s after the call started.
 // Exit 0 only if every call passes all checks; otherwise exit 1 naming the failed checks.
 import { existsSync } from 'node:fs';
@@ -17,12 +19,12 @@ import {
   AudioFrame, AudioSource, AudioStream, LocalAudioTrack, LocalVideoTrack, Room, RoomEvent, TrackKind, TrackSource,
   VideoBufferType, VideoFrame, VideoSource, VideoStream,
 } from '@livekit/rtc-node';
-import { AccessToken, AgentDispatchClient, RoomServiceClient } from 'livekit-server-sdk';
+import { AccessToken, AgentDispatchClient, RoomServiceClient, TrackType } from 'livekit-server-sdk';
 import { HEIGHT, WIDTH } from '../../shared/video.mjs';
 import { followsFaceCartFace, isMagenta } from './fake-cart.mjs';
 import { MAX_SPEECH_CHARS, speechPcm } from './speech.mjs';
 
-const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch]';
+const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch] [--outbound]';
 
 function intArg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -49,6 +51,7 @@ const IMAGES = textArgs('--image');
 if (IMAGES.length > 1 || (IMAGES.length === 1 && !existsSync(IMAGES[0]))) { console.log(USAGE); process.exit(1); }
 const IMAGE = IMAGES[0] ?? null;
 const EXPECT_CART = process.argv.includes('--expect-cart-switch');
+const OUTBOUND = process.argv.includes('--outbound');
 const SCRIPTED = SAYS.length > 0 || IMAGE !== null;
 
 const url = process.env.LIVEKIT_URL;
@@ -64,7 +67,7 @@ const rooms = new RoomServiceClient(host, apiKey, apiSecret);
 const dispatch = new AgentDispatchClient(host, apiKey, apiSecret);
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const identity = 'chert-bridge-sim';
+const identity = OUTBOUND ? 'chert-bridge-out-sim' : 'chert-bridge-sim';
 const QUIET_WINDOW_MS = 3000;
 const CALL_CAP_MS = 44000;
 let activeRoom = null; // the room being used now, so the watchdog can delete it
@@ -130,6 +133,30 @@ async function runCall(n) {
       }
     });
 
+    if (OUTBOUND) {
+      // Track C's callPatient: the agent is dispatched into the prepared room before the bridge exists.
+      await dispatch.createDispatch(roomName, agentName, { metadata: JSON.stringify({ outbound: true, reason: 'dinner_checkin', bridgeIdentity: identity }) });
+      log('dispatched agent (outbound)');
+      const dispatchedAt = Date.now();
+      const pubDeadline = dispatchedAt + 20000;
+      stats.agentPublishedBeforeBridge = false;
+      stats.secondsToAgentPublished = null;
+      while (Date.now() < pubDeadline && !stats.agentPublishedBeforeBridge) {
+        try {
+          const list = await rooms.listParticipants(roomName);
+          stats.agentPublishedBeforeBridge = list.some(p => p.identity !== identity
+            && p.tracks.some(t => t.type === TrackType.AUDIO) && p.tracks.some(t => t.type === TrackType.VIDEO));
+        } catch { /* poll again */ }
+        if (!stats.agentPublishedBeforeBridge) await sleep(250);
+      }
+      if (stats.agentPublishedBeforeBridge) {
+        stats.secondsToAgentPublished = Number(((Date.now() - dispatchedAt) / 1000).toFixed(2));
+        log('agent publishing audio and video before bridge joined');
+      } else {
+        log('WARNING: agent not publishing audio and video within 20 s');
+      }
+    }
+
     await room.connect(url, await grant.toJwt(), { autoSubscribe: true, dynacast: false });
     log('joined room as', identity);
 
@@ -154,8 +181,10 @@ async function runCall(n) {
       camTimer = setInterval(send, 200);
     }
 
-    await dispatch.createDispatch(roomName, agentName, { metadata: JSON.stringify({ sim: true }) });
-    log('dispatched agent', agentName);
+    if (!OUTBOUND) {
+      await dispatch.createDispatch(roomName, agentName, { metadata: JSON.stringify({ sim: true }) });
+      log('dispatched agent', agentName);
+    }
 
     const deadline = Date.now() + 20000;
     while (Date.now() < deadline && stats.audioFrames === 0) await sleep(250);
@@ -207,6 +236,14 @@ async function runCall(n) {
       listenEndAt = Date.now();
     }
 
+    if (OUTBOUND) {
+      try {
+        const list = await rooms.listParticipants(roomName);
+        stats.agentAudioTracksAtEnd = list.filter(p => p.identity !== identity)
+          .reduce((sum, p) => sum + p.tracks.filter(t => t.type === TrackType.AUDIO).length, 0);
+      } catch { stats.agentAudioTracksAtEnd = null; }
+    }
+
     const result = {
       call: n,
       agentIdentity: stats.agentIdentity,
@@ -218,6 +255,11 @@ async function runCall(n) {
       videoFrames: stats.videoFrames, videoSize: stats.videoSize,
     };
     result.callSeconds = Number(((listenEndAt - t0) / 1000).toFixed(1));
+    if (OUTBOUND) {
+      result.agentPublishedBeforeBridge = stats.agentPublishedBeforeBridge === true;
+      result.secondsToAgentPublished = stats.secondsToAgentPublished;
+      result.agentAudioTracksAtEnd = stats.agentAudioTracksAtEnd;
+    }
     if (EXPECT_CART) {
       result.videoTimeline = stats.timeline;
       result.cartSwitch = followsFaceCartFace(stats.timeline);
@@ -238,7 +280,9 @@ async function runCall(n) {
       if (SAYS.length > 0 && (replies.length < SAYS.length || replies.some(r => !r.replied))) failed.push('repliedToSay');
     }
     if (EXPECT_CART && !result.cartSwitch) failed.push('cartSwitch');
-    if ((SCRIPTED || EXPECT_CART) && result.callSeconds > 45) failed.push('callUnder45s');
+    if (OUTBOUND && result.agentPublishedBeforeBridge !== true) failed.push('agentPublishedBeforeBridge');
+    if (OUTBOUND && result.agentAudioTracksAtEnd !== 1) failed.push('oneAgentAudioTrack');
+    if ((SCRIPTED || EXPECT_CART || OUTBOUND) && result.callSeconds > 45) failed.push('callUnder45s');
     result.failed = failed;
     result.pass = failed.length === 0;
     return result;
@@ -257,7 +301,7 @@ const watchdog = setTimeout(async () => {
   console.log('[sim] FAIL timeout');
   if (activeRoom) await deleteRoomQuietly(activeRoom);
   process.exit(1);
-}, CALLS * (SECONDS + (SAYS.length > 0 ? 60 : 45)) * 1000);
+}, CALLS * (SECONDS + (SAYS.length > 0 ? 60 : 45) + (OUTBOUND ? 20 : 0)) * 1000);
 watchdog.unref();
 
 // Speech and picture are prepared once, before any call (the watchdog above already covers this).
