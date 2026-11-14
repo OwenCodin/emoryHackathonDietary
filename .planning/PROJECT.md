@@ -14,7 +14,7 @@ A kidney patient can FaceTime the agent, point the camera at food, and hear a co
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ Root scaffold, shared video constants and contract-shaped stubs for `renal/` and `actions/` (SCAF-01 to SCAF-04) — Phase 1: Scaffold and stubs
 
 ### Active
 
@@ -121,4 +121,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-13 after team split and Chert/LiveKit findings*
+*Last updated: 2026-11-13 after Phase 1 (scaffold and stubs)*
