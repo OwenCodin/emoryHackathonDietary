@@ -1093,3 +1093,100 @@ describe('quick 261114-fc6: a look that sees foods is never a dead end', async (
     assert.ok(r.spoken.endsWith("not from your care team's list."), r.spoken);
   });
 });
+
+describe('quick 261114-gnr: a label without a product name', async () => {
+  const real = await import('../renal/index.mjs');
+  const { createMemory } = await import('./memory.mjs');
+  let n = 0;
+  const stateDir = () => join(dir, `gnr-state-${n++}`);
+  const nameless = (over = {}) => ({ product: null, servingSize: '1 Can - 12 fl oz', sodiumMg: null, potassiumMg: null, phosphorusMg: null, ingredients: null, ...over });
+  const scene = (label, kind = 'label', foods = []) => ({ ok: true, kind, foods, label });
+  const withScene = (label, over = {}, kind = 'label', foods = []) => build({ renal: { ...renal, describeImage: async () => scene(label, kind, foods), ...over }, ...(over.__top ?? {}) });
+  const ingredientRule = a => ({ ...verdictFor(a.food.name, 'limit', 'Limit this product. Phosphate additive in the ingredients can add phosphorus not shown on the label.'), nutrients: { sodiumMg: null, potassiumMg: null, phosphorusMg: null }, source: 'rule' });
+
+  it('judges the live payload through the real checkFood', async () => {
+    const label = nameless({ sodiumMg: 25, ingredients: 'Carbonated water, natural flavors, citric acid, malic acid, green tea extract (caffeine), sodium citrate, sucralose, acesulfame potassium.' });
+    const t = build({ renal: { ...real, describeImage: async () => scene(label) } });
+    const r = await t.look_at_camera.execute({});
+    assert.equal(r.ok, true);
+    assert.equal(r.unnamed, true);
+    assert.equal(r.kind, 'label');
+    assert.equal(r.results.length, 1);
+    assert.equal(r.results[0].food, 'this product');
+    assert.equal(r.results[0].verdict, 'ok');
+    assert.match(r.results[0].spoken, /^Yes, /);
+    assert.match(r.results[0].spoken, /this product has about twenty five milligrams of sodium\.$/);
+    assert.equal(r.results[0].spoken, 'Yes, this product has about twenty five milligrams of sodium.');
+  });
+  it('passes the label object through to checkFood once', async () => {
+    const calls = [];
+    const label = nameless({ sodiumMg: 25 });
+    const r = await withScene(label, { checkFood: async a => { calls.push(a); return { ...verdictFor(a.food.name, 'ok', 'Okay, this product has about twenty five milligrams of sodium.'), nutrients: { sodiumMg: 25, potassiumMg: null, phosphorusMg: null }, source: 'label' }; } }).look_at_camera.execute({});
+    assert.equal(r.ok, true);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].food, { name: 'this product', label });
+  });
+  it('is never remembered, pantried, suggested or logged', async () => {
+    let suggested = 0;
+    const label = nameless({ sodiumMg: 25 });
+    const r2 = { ...renal, describeImage: async () => scene(label, 'fridge'), suggestMeals: async () => { suggested++; return { ok: true, meals: [] }; } };
+    const t = build({ memory: createMemory({ patientId: 'demo', dir: stateDir() }), renal: r2 });
+    const r = await t.look_at_camera.execute({ place: 'home' });
+    assert.equal(r.ok, true);
+    assert.equal(r.unnamed, true);
+    assert.equal(r.remembered, undefined);
+    assert.equal((await t.pantry_list.execute({})).count, 0);
+    assert.equal((await t.suggest_meal.execute({})).error, 'nothing_seen');
+    assert.equal(suggested, 0);
+    assert.equal((await t.log_meal.execute({ foods: ['this product'] })).error, 'nothing_to_log');
+  });
+  it('an ingredients-only label is judged by the ingredient rule', async () => {
+    const r = await withScene(nameless({ ingredients: 'Water, sugar, sodium phosphate, citric acid' }), { checkFood: async a => ingredientRule(a) }).look_at_camera.execute({});
+    assert.equal(r.ok, true);
+    assert.equal(r.unnamed, true);
+    assert.equal(r.results[0].verdict, 'limit');
+    assert.match(r.results[0].spoken, /^Small portion, /);
+  });
+  it('refuses numbers that are not printed on the label', async () => {
+    const lookup = { ...verdictFor('this product', 'avoid', 'Avoid this product.'), nutrients: { sodiumMg: 900, potassiumMg: null, phosphorusMg: null }, source: 'seed' };
+    let r = await withScene(nameless({ ingredients: 'Water, salt' }), { checkFood: async () => lookup }).look_at_camera.execute({});
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'label_unreadable');
+    r = await withScene(nameless({ ingredients: 'Water, salt' }), { checkFood: async () => ({ ...lookup, source: 'web' }) }).look_at_camera.execute({});
+    assert.equal(r.error, 'label_unreadable');
+    r = await withScene(nameless({ sodiumMg: 25 }), { checkFood: async () => ({ ...lookup, nutrients: { sodiumMg: 30, potassiumMg: null, phosphorusMg: null }, source: 'label' }) }).look_at_camera.execute({});
+    assert.equal(r.error, 'label_unreadable');
+  });
+  it('a label with nothing usable gives label_unreadable without calling checkFood', async () => {
+    let called = 0;
+    const checkFood = async () => { called++; return verdictFor('x'); };
+    for (const ingredients of [null, '   ']) {
+      const r = await withScene(nameless({ servingSize: '1 cup', ingredients }), { checkFood }).look_at_camera.execute({});
+      assert.equal(r.ok, false);
+      assert.equal(r.error, 'label_unreadable');
+      assert.match(r.say, /front/);
+      assert.match(r.say, /closer/);
+    }
+    assert.equal(called, 0);
+  });
+  it('a named label has no unnamed key', async () => {
+    const r = await withScene({ product: 'Chicken broth', sodiumMg: 860 }, { checkFood: async a => verdictFor(a.food.name, 'avoid', 'Very salty.') }).look_at_camera.execute({});
+    assert.equal(r.ok, true);
+    assert.equal(r.unnamed, undefined);
+  });
+  it('named foods win when the kind is not label', async () => {
+    const seen = [];
+    const r = await withScene(nameless({ sodiumMg: 25 }), { checkFood: async a => { seen.push(a.food.name); return verdictFor(a.food.name); } }, 'plate', [{ name: 'apple' }]).look_at_camera.execute({});
+    assert.deepEqual(seen, ['apple']);
+    assert.equal(r.unnamed, undefined);
+  });
+  it('an unavailable profile is unjudged, unnamed and still not remembered', async () => {
+    const t = build({ memory: createMemory({ patientId: 'demo', dir: stateDir() }), renal: { ...renal, getProfile: async () => ({ ok: false }), describeImage: async () => scene(nameless({ sodiumMg: 25 }), 'fridge') } });
+    const r = await t.look_at_camera.execute({ place: 'home' });
+    assert.equal(r.ok, true);
+    assert.equal(r.unjudged, true);
+    assert.equal(r.unnamed, true);
+    assert.equal(r.remembered, undefined);
+    assert.equal((await t.pantry_list.execute({})).count, 0);
+  });
+});

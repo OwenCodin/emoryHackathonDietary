@@ -36,3 +36,7 @@ test('an unusual tool name is replaced and the line never carries caller content
   const line = toolLogLine('check_food', out({ ok: false, error: 'check_failed', say: 'banana pudding', food: 'banana' }));
   assert.doesNotMatch(line, /banana|pudding/);
 });
+
+test('an unreadable label logs its code', () => {
+  assert.equal(toolLogLine('look_at_camera', out({ ok: false, error: 'label_unreadable' })), '[agent] tool look_at_camera ok=false error=label_unreadable');
+});

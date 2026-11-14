@@ -77,3 +77,10 @@ describe('kitchen and recipe rules', () => {
     for (const w of ['one or two short sentences', 'Never invent or estimate nutrient numbers', 'care team', 'Never pay', 'ask them to show the fridge']) assert.ok(instructions.includes(w), w);
   });
 });
+
+describe('unnamed label rule', () => {
+  it('tells the model what to do with an unnamed result', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    for (const w of ['unnamed', 'front of the package']) assert.ok(instructions.includes(w), w);
+  });
+});
