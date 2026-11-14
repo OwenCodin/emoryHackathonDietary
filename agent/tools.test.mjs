@@ -1190,3 +1190,23 @@ describe('quick 261114-gnr: a label without a product name', async () => {
     assert.equal((await t.pantry_list.execute({})).count, 0);
   });
 });
+
+describe('quick 261114-gnr: no doubled verdict word', () => {
+  it('drops the module\'s own comma-form verdict word', () => {
+    assert.equal(
+      tools.spokenVerdict({ verdict: 'limit', food: 'banana', say: 'Limit, banana has about four hundred twenty two milligrams of potassium. A smaller portion may fit better.' }),
+      'Small portion, banana has about four hundred twenty two milligrams of potassium. A smaller portion may fit better.');
+    assert.equal(tools.spokenVerdict({ verdict: 'ok', say: 'Okay, this product has about twenty five milligrams of sodium.' }, 240), 'Yes, this product has about twenty five milligrams of sodium.');
+    assert.equal(tools.spokenVerdict({ verdict: 'avoid', say: 'Avoid, ham is very salty.' }), 'No, ham is very salty.');
+  });
+  it('keeps a verdict word that is part of the sentence', () => {
+    assert.equal(tools.spokenVerdict({ verdict: 'avoid', food: 'star fruit', say: "Avoid star fruit. It is on the kidney care team's avoid list." }), "No, avoid star fruit. It is on the kidney care team's avoid list.");
+    assert.equal(tools.spokenVerdict({ verdict: 'limit', food: 'Coca-Cola', say: 'Limit Coca-Cola. Many colas add phosphorus.' }), 'Small portion, limit Coca-Cola. Many colas add phosphorus.');
+  });
+  it('the nameless label sentence is spoken whole by look_at_camera', async () => {
+    const label = { product: null, servingSize: '1 Can - 12 fl oz', sodiumMg: 25, potassiumMg: null, phosphorusMg: null, ingredients: null };
+    const real = await import('../renal/index.mjs');
+    const r = await build({ renal: { ...real, describeImage: async () => ({ ok: true, kind: 'label', foods: [], label }) } }).look_at_camera.execute({});
+    assert.equal(r.results[0].spoken, 'Yes, this product has about twenty five milligrams of sodium.');
+  });
+});
