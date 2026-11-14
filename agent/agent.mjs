@@ -92,17 +92,22 @@ const agent = defineAgent({
       llm: new google.realtime.RealtimeModel({ model, voice: 'Puck', ...(realtimeInputConfig ? { realtimeInputConfig } : {}) }),
       ...(turnHandling ? { turnHandling } : {}),
     });
-    // Reply watchdog: nudges the model once when a caller turn ends with no reply and no tool run.
+    // Reply watchdog: after the caller has said something, the agent must be heard; otherwise one nudge (see turns.mjs).
     const watchdog = createReplyWatchdog();
     let nudgeTimer = null, closing = false;
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => {
       try { speaking = event.newState === 'speaking'; watchdog.agentState(event.newState); } catch { /* never breaks the call */ }
     });
-    session.on(voice.AgentSessionEventTypes.UserStateChanged, event => {
-      try { watchdog.userState(event.newState); } catch { /* never breaks the call */ }
+    // The caller's words, as a length only: the transcript text is never kept or logged.
+    session.on(voice.AgentSessionEventTypes.UserInputTranscribed, event => {
+      try {
+        const length = typeof event?.transcript === 'string' ? event.transcript.trim().length : 0;
+        watchdog.heard({ itemId: event?.itemId ?? null, isFinal: event?.isFinal === true, length });
+      } catch { /* never breaks the call */ }
     });
     // Tool name and ok only: arguments and outputs contain what the caller said.
     session.on(voice.AgentSessionEventTypes.FunctionToolsExecuted, event => {
+      // Restarts the reply clock; a tool run is not an answer.
       try { watchdog.toolsExecuted(); } catch { /* never breaks the call */ }
       try {
         event.functionCalls.forEach((call, i) => {

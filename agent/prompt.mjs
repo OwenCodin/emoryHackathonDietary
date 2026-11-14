@@ -18,7 +18,7 @@ export const greeting = `Greet the caller in one or two short sentences: say you
 export const checkinGreeting = `Greet the caller in one or two short sentences: say you are their AI renal dietitian checking in at mealtime, that you follow the limits set by their care team and do not replace them, and ask them to show you their plate.`;
 
 // Fixed text for the reply watchdog (never built from caller or model text).
-export const replyNudge = `The caller finished speaking and has not had an answer yet. Answer their last question now in one or two short sentences, calling a tool if it needs one. If you did not catch a question, ask them briefly to repeat it.`;
+export const replyNudge = `The caller finished speaking and has not heard an answer yet. Answer their last question now in one or two short sentences, using a tool first if it needs one; if a tool already returned the result, say its spoken sentence. If you did not catch the question, ask them briefly to repeat it.`;
 
 // Returning caller with a fresh remembered list: a count only, never an item name (stored names came from the model).
 export function resumeGreeting(state) {
