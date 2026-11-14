@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { HEIGHT, WIDTH } from '../shared/video.mjs';
-import { WAVE, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintWave, renderSvg, VERDICTS } from './card.mjs';
+import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
+import { WAVE, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintWave, renderSvg, VERDICTS, waveBand } from './card.mjs';
 
 globalThis.fetch = async () => { throw new Error('network used'); };
 
@@ -117,17 +117,83 @@ describe('render and wave', () => {
     await assert.rejects(renderSvg(brandSvg(), { timeoutMs: 0 }));
   });
   it('paints only inside the band and moves', () => {
+    const band = waveBand(SAFE_SCALE_DEFAULT);
     const base = new Uint8Array(WIDTH * HEIGHT * 4).fill(7);
     const a = base.slice(), b = base.slice(), c = base.slice(), d = base.slice();
-    paintWave(a, 5, true); paintWave(b, 5, false); paintWave(c, 0, false); paintWave(d, 7, false);
+    const s = SAFE_SCALE_DEFAULT;
+    paintWave(a, 5, true, s); paintWave(b, 5, false, s); paintWave(c, 0, false, s); paintWave(d, 7, false, s);
     assert.notDeepEqual(a, b);
     assert.notDeepEqual(c, d);
     for (const p of [a, b, c, d]) {
       for (let y = 0; y < HEIGHT; y++) {
-        if (y >= WAVE.top && y < WAVE.bottom) continue;
+        if (y >= band.top && y < band.bottom) continue;
         const row = y * WIDTH * 4;
         assert.ok(p.subarray(row, row + WIDTH * 4).every(v => v === 7), `row ${y}`);
       }
     }
+  });
+  it('waveBand at scale 1 is the old band', () => {
+    assert.deepEqual(waveBand(1), { top: 505, bottom: 585, left: 135, right: 1145 });
+    assert.equal(WAVE.top, 505);
+  });
+  it('wave stays inside the safe rect at 0.8 for every tick', () => {
+    const s = SAFE_SCALE_DEFAULT, a = safeArea(s), band = waveBand(s);
+    for (let t = 0; t <= 60; t++) for (const speaking of [true, false]) {
+      const p = new Uint8Array(WIDTH * HEIGHT * 4).fill(7);
+      paintWave(p, t, speaking, s);
+      for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
+        if (p[(y * WIDTH + x) * 4] === 7) continue;
+        assert.ok(x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height, `outside safe ${x},${y}`);
+        assert.ok(y >= band.top && y < band.bottom, `outside band ${y}`);
+      }
+    }
+  });
+});
+
+describe('safe area rendering', () => {
+  const s = SAFE_SCALE_DEFAULT;
+  const MX = Math.floor(0.09 * WIDTH), MY = Math.floor(0.09 * HEIGHT);
+  const BG = [15, 36, 48, 255];
+  const bandOnly = px => {
+    for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
+      if (x >= MX && x < WIDTH - MX && y >= MY && y < HEIGHT - MY) continue;
+      const i = (y * WIDTH + x) * 4;
+      if (BG.some((v, k) => px[i + k] !== v)) return false;
+    }
+    return true;
+  };
+  const insideHasContent = px => {
+    for (let y = MY; y < HEIGHT - MY; y++) for (let x = MX; x < WIDTH - MX; x++) {
+      const i = (y * WIDTH + x) * 4;
+      if (px[i] !== BG[0] || px[i + 1] !== BG[1] || px[i + 2] !== BG[2]) return true;
+    }
+    return false;
+  };
+  const many = n => Array.from({ length: n }, (_, k) => item({ food: `Food number ${k + 1}`, verdict: ['ok', 'limit', 'avoid', 'unknown'][k % 4] }));
+  const displays = {
+    brand: null,
+    ok: { items: [item({ verdict: 'ok' })] },
+    limit: { items: [item({ verdict: 'limit', food: 'A very long food name that goes on and on for a while', nutrients: { sodiumMg: 300, potassiumMg: 400, phosphorusMg: 100 }, portion: 'half cup' })] },
+    avoid: { items: [item({ verdict: 'avoid' })] },
+    unknown: { items: [item({ verdict: 'unknown' })] },
+    multi: { items: many(4), more: 2 },
+    unjudged: { items: [item()], unjudged: true, seen: 2 },
+    online: { items: [item()], online: true },
+  };
+  for (const [name, d] of Object.entries(displays)) {
+    it(`keeps the outer 9% background-only: ${name}`, async () => {
+      const svg = d ? cardSvg(d, { scale: s }) : brandSvg({ scale: s });
+      const px = await renderSvg(svg);
+      assert.equal(px.length, WIDTH * HEIGHT * 4);
+      assert.ok(bandOnly(px), 'content in the margin');
+      assert.ok(insideHasContent(px));
+    });
+  }
+  it('scale 1 reproduces the old layout', async () => {
+    assert.ok(brandSvg({ scale: 1 }).includes('scale(1)'));
+    const svg = cardSvg(displays.ok, { scale: 1 });
+    assert.ok(svg.includes('scale(1)'));
+    const px = await renderSvg(svg);
+    assert.ok(!bandOnly(px));
   });
 });

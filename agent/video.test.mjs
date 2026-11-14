@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HEIGHT, WIDTH } from '../shared/video.mjs';
+import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH } from '../shared/video.mjs';
 import { createFaceFrames, drawFace, renderFace } from './face.mjs';
 import { createVideoPicker, pickFrame } from './video.mjs';
 
@@ -105,4 +105,44 @@ test('createFaceFrames renders only at creation', () => {
   assert.ok(after <= 8);
   for (let t = 0; t < 300; t++) faces.frame(t, t % 7 < 3);
   assert.equal(count, after);
+});
+
+test('drawn face keeps the outer 9% bands background-only at the safe scale', () => {
+  const MX = Math.floor(0.09 * WIDTH), MY = Math.floor(0.09 * HEIGHT);
+  const BG = [16, 40, 52, 255];
+  const check = (px, label) => {
+    assert.equal(px.length, WIDTH * HEIGHT * 4);
+    let inside = false;
+    for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
+      const i = (y * WIDTH + x) * 4;
+      const isBg = BG.every((v, k) => px[i + k] === v);
+      const inner = x >= MX && x < WIDTH - MX && y >= MY && y < HEIGHT - MY;
+      if (!inner) assert.ok(isBg, `${label}: margin pixel ${x},${y}`);
+      else if (!isBg) inside = true;
+    }
+    assert.ok(inside, label);
+  };
+  const faces = createFaceFrames({ scale: SAFE_SCALE_DEFAULT });
+  for (const tick of [0, 1, 5, 30, 59, 100, 200, 210, 215, 300]) {
+    const speaking = tick % 2 === 0;
+    check(drawFace(tick, speaking, SAFE_SCALE_DEFAULT), `drawFace ${tick}`);
+    const f = faces.frame(tick, speaking);
+    check(f, `frame ${tick}`);
+    // Speaking frames use a quantised mouth, so only idle frames match drawFace exactly (as before).
+    if (!speaking) assert.ok(same(f, drawFace(tick, false, SAFE_SCALE_DEFAULT)), `match ${tick}`);
+  }
+});
+
+test('drawn face at scale 1 has the accent bar in rows 676-696', () => {
+  const px = drawFace(5, false, 1);
+  const hasAccent = y => {
+    for (let x = 0; x < WIDTH; x++) {
+      const i = (y * WIDTH + x) * 4;
+      if (px[i] === 255 && px[i + 1] === 200 && px[i + 2] === 118) return true;
+    }
+    return false;
+  };
+  assert.ok(hasAccent(686));
+  assert.ok(!hasAccent(670));
+  assert.ok(!hasAccent(700));
 });
