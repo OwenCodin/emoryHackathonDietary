@@ -25,6 +25,7 @@ shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15, and the 
 agent/               Track A  the call: voice, camera in, video out, tools
 renal/               Track B  the renal brain: profile, image reading, verdicts, meals
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video
+kroger-relay/        Track C  small public Vercel relay for the Kroger sign-in callback (not part of the agent; deployed by a person)
 ```
 
 Root `package.json`:
@@ -88,7 +89,8 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `INSTACART_API_KEY` | C | Optional | Instacart shopping-list fallback when the store blocks automation. |
 | `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | C | Optional | Kroger public API app credentials (developer.kroger.com, Production, with Cart, Locations, Products and Profile). When both are set the cart uses the Kroger API instead of the browser. |
 | `KROGER_LOCATION_ID` | C | Optional | Kroger store used for product search and prices. Empty means `01100695` (Kroger - Ponce). |
-| `KROGER_REDIRECT_URI` | C | Optional | Sign-in redirect; must match the redirect URI registered on the Kroger app. Empty means `http://localhost:8765/callback`. |
+| `KROGER_REDIRECT_URI` | C | Optional | Used only by the localhost sign-in, when the two relay variables below are empty; must match the redirect URI registered on the Kroger app. Empty means `http://localhost:8765/callback`. |
+| `KROGER_RELAY_URL`, `KROGER_RELAY_SECRET` | C | Optional | The sign-in relay's production domain (https, no trailing slash) and the shared secret (the relay's `RELAY_SECRET`, 32 characters or more). When both are set, Kroger sign-in goes through the relay (a texted link, or `actions/kroger-login.mjs`), and the Kroger app's redirect URI must be `<relay>/api/kroger/callback`. See `kroger-relay/README.md`. |
 | `KROGER_TOKEN_DIR` | C | Optional | A folder outside this repo for the saved Kroger sign-in. Empty means `~/.config/renal-dietitian`. |
 
 ### Rules for every function that crosses a track boundary
@@ -167,6 +169,8 @@ The optional second argument `{ ai }` is an injected Gemini client. It is a test
 | `stopCart()` | `{ ok }` |
 | `callPatient({ phone, reason })` | `{ ok, callId }` once Chert has accepted the request |
 | `sendText({ phone, text })` | `{ ok }`. Refuses any recipient other than `PATIENT_PHONE`. |
+| `startKrogerSignIn()` | `{ ok: true, link }`, where `link` is `${KROGER_RELAY_URL}/k/<43-character state>`; otherwise `{ ok: false, error: 'not_configured' \| 'no_relay' }`. Starts polling the relay in the background for up to 4 minutes and saves the Kroger sign-in when the patient finishes. Nothing but the link is returned, and no code, state, secret or token is logged. |
+| `getKrogerStatus()` | `{ ok: true, configured, relay, connected, pending }`, all booleans: both Kroger keys set; both relay variables set and valid; a stored sign-in exists (no refresh call, so an expired sign-in reads as connected until the cart reports it); a relay sign-in is being polled. |
 
 The agent log prints each tool result as `[agent] tool <name> ok=true|false [error=<code>]`.
 
@@ -193,6 +197,7 @@ The Live voice model defaults to `gemini-3.8-live` when `GEMINI_LIVE_MODEL` is e
 Not verified yet:
 
 - The grocery cart on a live call.
+- The Kroger sign-in relay deployed on Vercel, the switch of the Kroger app's redirect URI, and the texted sign-in link tapped on a real phone. Only the handlers and a local end-to-end test with a fake Kroger token endpoint have run.
 - The outbound mealtime call, and whether the trial allows outbound calls.
 - `text_cart_link` and `text_recipe` from a live call. Only a direct API send worked.
 - Pantry memory on a live call (tested with fakes only).
@@ -313,8 +318,10 @@ The object key in `agent/tools.mjs` is the tool name. Everything a tool returns 
 | `suggest_meal` (optional `from_scratch`) | Suggests a meal from everything remembered from the kitchen; with `from_scratch` true, a meal built only from the built-in food list, with every ingredient on the shopping list and per-serving sodium, potassium and phosphorus totals | `nothing_seen`, `profile_unavailable`, `limits_needed`, `not_enough_food` (too little to cook a real meal; asks to see the cupboards), `no_safe_meal` (from scratch: no meal could be fully checked within the limits), `check_failed` |
 | `log_meal` | Logs what was eaten | `nothing_to_log`, `tool_failed` |
 | `todays_totals` | Today's totals and what is left | `limits_needed`, `tool_failed` |
-| `start_cart` | Starts the grocery cart | `nothing_to_buy`, `cart_busy`, `tool_failed`, `cart_unconfirmed` (timeout) |
-| `cart_status` | Reports the cart | `cart_failed`, `tool_failed` |
+| `start_cart` | Starts the grocery cart; first checks Kroger when it is configured and says plainly if nobody has signed in | `nothing_to_buy`, `cart_busy`, `kroger_not_connected` (the relay can text a link), `kroger_sign_in_needed` (no relay, so no link can be texted), `kroger_sign_in_pending` (a sign-in is waiting), `tool_failed`, `cart_unconfirmed` (timeout) |
+| `cart_status` | Reports the cart | `cart_failed`, `kroger_not_connected` (the run failed because the Kroger sign-in is missing or expired), `tool_failed` |
+| `kroger_status` | Whether the Kroger account is connected; the result carries a fixed `say` and never a link, state or account detail | `tool_failed` |
+| `text_kroger_sign_in` | Texts a Kroger sign-in link to the patient phone (once per 60 s). The text reads "Sign in to Kroger so your renal dietitian can fill your cart: <link> Nothing is ever paid for you." The link is never returned or spoken | `no_phone`, `kroger_not_configured`, `kroger_link_already_sent`, `kroger_texting_refused` (HTTP 403: the phone has not texted the line within 24 hours), `kroger_text_unconfirmed` (outcome unknown or timeout), `kroger_text_failed`, `tool_failed` |
 | `text_cart_link` | Texts the cart link to the patient phone | `no_phone`, `no_cart_link`, `nothing_added` (the cart finished but the store had none of the items), `link_already_sent`, `tool_failed` |
 | `add_to_shopping_list`, `shopping_list`, `mark_item` | The shopping list kept between calls | `bad_items`, `bad_item`, `memory_unavailable` |
 | `pantry_list`, `remove_from_pantry`, `clear_pantry` | What the agent remembers from the kitchen | `bad_items`, `not_in_pantry`, `timeout` |
@@ -332,7 +339,7 @@ Any tool can also return `timeout` or `tool_failed` from the guard. Whether Gemi
 ### Onboarding (first-call setup)
 
 - When it runs. An inbound call from a caller whose saved profile is missing or has `setupDone` false starts with the setup greeting. `AGENT_SKIP_ONBOARDING=1` stops that (it also spares the first 3 minutes of a scarce 5-minute call). Saying "update my setup" at any time calls `start_setup` and runs the same steps. A first call that drops before `finish_onboarding` gets setup again next time; whatever was confirmed is already saved. Outbound calls never start setup.
-- The script (`SETUP_STEPS` in `agent/prompt.mjs`, always in the instructions, gated in words to "only while setup is running"): welcome, name, condition, limits (read back and confirmed), foods to avoid, voice (upbeat, firm, warm or mature), brief or detailed and English or Spanish, what I can do, finish. About 200 spoken words by the agent; `node agent/sim/onboarding-run.mjs` estimates the whole setup at about 165 s, shorter than the 3 minute aim and well inside the 240 s warning. The time warning first calls `finish_onboarding` so what was confirmed is saved.
+- The script (`SETUP_STEPS` in `agent/prompt.mjs`, always in the instructions, gated in words to "only while setup is running"): welcome, name, condition, limits (read back and confirmed), foods to avoid, voice (upbeat, firm, warm or mature), brief or detailed and English or Spanish, Kroger (`kroger_status`; if not connected and a link can be texted, say a text is coming and call `text_kroger_sign_in`, then keep going), what I can do, a second `kroger_status` check (connected, or "that link works for a few more minutes"; setup finishes either way), finish. The script is about 245 words (capped at 300 by a test); `node agent/sim/onboarding-run.mjs` estimates the whole setup at about 203 s, inside the 180 to 240 s target and the 240 s warning. The Kroger step needs `KROGER_RELAY_URL` and `KROGER_RELAY_SECRET`; with Kroger not configured the agent says nothing about it. The time warning first calls `finish_onboarding` so what was confirmed is saved.
 - Two-step limits, enforced in code. `propose_limits` validates four whole numbers against `LIMIT_BOUNDS` and returns a read-back sentence; `confirm_limits` saves only when it carries exactly the same four numbers, at least `CONFIRM_MIN_MS` (2500 ms) after the proposal, and (when the call's transcription has produced any event) after the caller spoke again more than 1 s after the proposal. If transcription has produced nothing at all, only the time check applies, so a line without transcription is not a dead end. A changed number clears the proposal. The code cannot prove the word "yes"; the prompt requires it. Outside setup the setup tools refuse with `setup_not_started`, so no limit can be accepted or changed.
 - No limits means no judging. A caller who does not have their limits finishes setup with `limits: null`; the food tools then answer `limits_needed` ("I don't have your care team's limits yet...") and never use the built-in demo profile. Without any saved profile the built-in demo profile is used, as before.
 - Safety and privacy. Saved limits are labelled as told by the patient, not by a care team record. Name, condition, limits and foods are never logged (the log shows tool name, ok, an error code and `setup due=true|false`), never texted, and reach only the Gemini calls that already receive limits. `profiles.json` (renal) and `<patient>.prefs.json` (agent) are mode 600 in user-owned 700 folders outside the repo (`RENAL_STATE_DIR`, `AGENT_STATE_DIR`, or folders in the system temp directory).

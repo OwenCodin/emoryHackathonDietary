@@ -25,6 +25,7 @@ shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15, and the 
 agent/               Track A  the call: voice, camera in, video out, tools
 renal/               Track B  the renal brain: profile, image reading, verdicts, meals
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video
+kroger-relay/        Track C  small public Vercel relay for the Kroger sign-in callback (not part of the agent; deployed by a person)
 ```
 
 Root `package.json`:
@@ -88,7 +89,8 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `INSTACART_API_KEY` | C | Optional | Instacart shopping-list fallback when the store blocks automation. |
 | `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | C | Optional | Kroger public API app credentials (developer.kroger.com, Production, with Cart, Locations, Products and Profile). When both are set the cart uses the Kroger API instead of the browser. |
 | `KROGER_LOCATION_ID` | C | Optional | Kroger store used for product search and prices. Empty means `01100695` (Kroger - Ponce). |
-| `KROGER_REDIRECT_URI` | C | Optional | Sign-in redirect; must match the redirect URI registered on the Kroger app. Empty means `http://localhost:8765/callback`. |
+| `KROGER_REDIRECT_URI` | C | Optional | Used only by the localhost sign-in, when the two relay variables below are empty; must match the redirect URI registered on the Kroger app. Empty means `http://localhost:8765/callback`. |
+| `KROGER_RELAY_URL`, `KROGER_RELAY_SECRET` | C | Optional | The sign-in relay's production domain (https, no trailing slash) and the shared secret (the relay's `RELAY_SECRET`, 32 characters or more). When both are set, Kroger sign-in goes through the relay (a texted link, or `actions/kroger-login.mjs`), and the Kroger app's redirect URI must be `<relay>/api/kroger/callback`. See `kroger-relay/README.md`. |
 | `KROGER_TOKEN_DIR` | C | Optional | A folder outside this repo for the saved Kroger sign-in. Empty means `~/.config/renal-dietitian`. |
 
 ### Rules for every function that crosses a track boundary
@@ -167,6 +169,8 @@ The optional second argument `{ ai }` is an injected Gemini client. It is a test
 | `stopCart()` | `{ ok }` |
 | `callPatient({ phone, reason })` | `{ ok, callId }` once Chert has accepted the request |
 | `sendText({ phone, text })` | `{ ok }`. Refuses any recipient other than `PATIENT_PHONE`. |
+| `startKrogerSignIn()` | `{ ok: true, link }`, where `link` is `${KROGER_RELAY_URL}/k/<43-character state>`; otherwise `{ ok: false, error: 'not_configured' \| 'no_relay' }`. Starts polling the relay in the background for up to 4 minutes and saves the Kroger sign-in when the patient finishes. Nothing but the link is returned, and no code, state, secret or token is logged. |
+| `getKrogerStatus()` | `{ ok: true, configured, relay, connected, pending }`, all booleans: both Kroger keys set; both relay variables set and valid; a stored sign-in exists (no refresh call, so an expired sign-in reads as connected until the cart reports it); a relay sign-in is being polled. |
 
 The agent log prints each tool result as `[agent] tool <name> ok=true|false [error=<code>]`.
 
@@ -193,6 +197,7 @@ The Live voice model defaults to `gemini-3.8-live` when `GEMINI_LIVE_MODEL` is e
 Not verified yet:
 
 - The grocery cart on a live call.
+- The Kroger sign-in relay deployed on Vercel, the switch of the Kroger app's redirect URI, and the texted sign-in link tapped on a real phone. Only the handlers and a local end-to-end test with a fake Kroger token endpoint have run.
 - The outbound mealtime call, and whether the trial allows outbound calls.
 - `text_cart_link` and `text_recipe` from a live call. Only a direct API send worked.
 - Pantry memory on a live call (tested with fakes only).
