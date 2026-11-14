@@ -315,7 +315,13 @@ Any tool can also return `timeout` or `tool_failed` from the guard. Whether Gemi
 
 ### Video out
 
-Use `WIDTH`, `HEIGHT`, `FPS` from `shared/video.mjs` for the `VideoSource`. In the frame tick the agent takes Track C's `getCartFrame()` when it returns a frame of exactly the right length, and its own face otherwise (`agent/video.mjs`). `drawFace` loops over every pixel in JavaScript; at 1280 by 720 that is about 14 million pixel writes a second, so if the agent's voice stutters, cache a few frames or lower `WIDTH` and `HEIGHT` in the one shared file and tell Track C. Whether cart text is readable on a phone is not checked on a live call.
+Sizes still come from `shared/video.mjs` (`WIDTH`, `HEIGHT`, `FPS`). Track C's cart frame still wins when it is exactly the right length (`agent/video.mjs`). Otherwise `agent/screen.mjs` shows the RenaLine brand screen: the wordmark, "Your renal dietitian", a voice wave and "Follows your care team's limits".
+
+After a successful `check_food` or `look_at_camera` the screen shows a verdict card instead: YES, SMALL PORTION, NO or CAN'T TELL in large type, the food, and the nutrient numbers and portion from the tool result only. A look shows up to three rows, and "Found online" appears when the numbers came from a web search. The card stays for 15 seconds (`AGENT_CARD_SECONDS`) or until the next verdict, then the brand screen returns. A failed or timed-out tool never shows a card.
+
+The card data goes through the `onDisplay` callback of `buildTools` and is never sent to the model. Screens are SVG pages rendered by sharp in the background; the wave is painted on each frame tick. If a render fails the last screen stays. If the brand screen cannot be rendered, the drawn face in `agent/face.mjs` is shown.
+
+Preview the screens with `node agent/sim/preview-card.mjs <folder outside the repo>`. Whether the text is readable on a phone is not checked on a live call.
 
 ### Outbound calls (twist 3)
 
