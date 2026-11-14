@@ -48,9 +48,9 @@ describe('spokenVerdict', () => {
 });
 
 describe('buildTools shape', () => {
-  it('has the two tools, anonymous', () => {
+  it('has the eight tools, anonymous', () => {
     const t = build();
-    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food']);
+    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link']);
     for (const tool of Object.values(t)) assert.ok(!Object.hasOwn(tool, 'name'));
   });
 });
@@ -175,11 +175,158 @@ describe('debug frames', () => {
   });
 });
 
+const PHONE = '+15551234567';
+const rec = (obj, name, impl) => { const calls = []; return { mod: { ...obj, [name]: async a => { calls.push(a); return impl ? impl(a) : obj[name](a); } }, calls }; };
+const bad = { ok: false, error: 'https://x.test/?token=SECRET123' };
+const clean = r => { assert.equal(r.ok, false); assert.ok(r.say.length > 0); const j = JSON.stringify(r); for (const w of ['SECRET123', 'http', 'boom']) assert.ok(!j.includes(w), w); };
+
+describe('suggest_meal', () => {
+  it('refuses before any look', async () => {
+    const { mod, calls } = rec(renal, 'suggestMeals');
+    const r = await build({ renal: mod }).suggest_meal.execute({});
+    assert.equal(r.error, 'nothing_seen');
+    assert.match(r.say, /fridge/);
+    assert.equal(calls.length, 0);
+  });
+  it('suggests after a look', async () => {
+    const { mod, calls } = rec(renal, 'suggestMeals');
+    const t = build({ renal: mod });
+    await t.look_at_camera.execute({});
+    const r = await t.suggest_meal.execute({});
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].foods, ['banana']);
+    assert.equal(calls[0].count, 2);
+    assert.equal(calls[0].profile.name, 'Sam');
+    assert.equal(r.ok, true);
+    assert.equal(r.meals.length, 2);
+    assert.equal(r.meals[0].title, 'Rice with herbed chicken');
+    assert.deepEqual(r.meals[0].missing, ['unsalted chicken broth']);
+    assert.ok(r.meals[0].steps.length <= 3);
+    assert.equal(r.meals[1].steps, undefined);
+  });
+});
+
+describe('log_meal and todays_totals', () => {
+  it('log_meal needs something to log', async () => {
+    const r = await build().log_meal.execute({});
+    assert.equal(r.error, 'nothing_to_log');
+  });
+  it('logs once, never twice', async () => {
+    const { mod, calls } = rec(renal, 'logFood');
+    const t = build({ renal: mod });
+    await t.check_food.execute({ name: 'banana', grams: null });
+    const r = await t.log_meal.execute({});
+    assert.deepEqual(r, { ok: true, logged: ['banana'] });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].patientId, 'demo');
+    assert.equal(calls[0].verdict.food, 'banana');
+    assert.equal((await t.log_meal.execute({})).error, 'nothing_to_log');
+    assert.equal(calls.length, 1);
+  });
+  it('a failed log keeps the verdicts for a retry', async () => {
+    let fail = true;
+    const { mod } = rec(renal, 'logFood', () => (fail ? bad : { ok: true }));
+    const t = build({ renal: mod });
+    await t.check_food.execute({ name: 'banana', grams: null });
+    clean(await t.log_meal.execute({}));
+    fail = false;
+    assert.equal((await t.log_meal.execute({})).ok, true);
+  });
+  it('todays_totals returns only the three numbers each', async () => {
+    const r = await build().todays_totals.execute({});
+    assert.deepEqual(r, { ok: true,
+      totals: { sodiumMg: 1, potassiumMg: 422, phosphorusMg: 26 },
+      remaining: { sodiumMg: 1999, potassiumMg: 1578, phosphorusMg: 974 } });
+  });
+});
+
+describe('cart tools', () => {
+  it('start_cart with nothing to buy', async () => {
+    const { mod, calls } = rec(actions, 'startCart');
+    const r = await build({ actions: mod }).start_cart.execute({ items: [] });
+    assert.equal(r.error, 'nothing_to_buy');
+    assert.equal(calls.length, 0);
+  });
+  it('start_cart uses the remembered missing items, deduplicated', async () => {
+    const { mod, calls } = rec(actions, 'startCart');
+    const t = build({ actions: mod });
+    await t.look_at_camera.execute({});
+    await t.suggest_meal.execute({});
+    const r = await t.start_cart.execute({ items: [] });
+    assert.deepEqual(calls[0].items, [{ name: 'unsalted chicken broth', quantity: '1 carton' }]);
+    assert.deepEqual(r, { ok: true, started: true, items: ['unsalted chicken broth'] });
+  });
+  it('start_cart trims and caps explicit items', async () => {
+    const { mod, calls } = rec(actions, 'startCart');
+    const items = Array.from({ length: 15 }, (_, i) => ({ name: ` ${'n'.repeat(100)}${i} `, quantity: 'q'.repeat(100) }));
+    items.push({ name: '  ', quantity: '1' });
+    await build({ actions: mod }).start_cart.execute({ items });
+    assert.equal(calls[0].items.length, 12);
+    assert.equal(calls[0].items[0].name.length, 80);
+    assert.equal(calls[0].items[0].quantity.length, 80);
+  });
+  it('start_cart busy', async () => {
+    const { mod } = rec(actions, 'startCart', () => ({ ok: false, error: 'busy' }));
+    const r = await build({ actions: mod }).start_cart.execute({ items: [{ name: 'rice', quantity: '1' }] });
+    assert.equal(r.error, 'cart_busy');
+    assert.match(r.say, /how it's going/);
+  });
+  it('cart_status hides the link', async () => {
+    const r = await build().cart_status.execute({});
+    assert.deepEqual(r, { ok: true, state: 'done', step: 'cart filled', added: ['unsalted chicken broth'], missing: [], total: 3.49 });
+    const j = JSON.stringify(r);
+    assert.ok(!j.includes('http') && !j.includes('cartUrl'));
+  });
+  it('text_cart_link sends to the configured phone only', async () => {
+    const { mod, calls } = rec(actions, 'sendText');
+    const r = await build({ actions: mod, phone: PHONE }).text_cart_link.execute({});
+    assert.deepEqual(r, { ok: true, sent: true });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].phone, PHONE);
+    assert.ok(calls[0].text.includes('https://example.com/cart'));
+    assert.ok(!JSON.stringify(r).includes('1555'));
+  });
+  it('text_cart_link without a phone or a link', async () => {
+    const { mod, calls } = rec(actions, 'sendText');
+    for (const phone of ['', 'YOUR_PATIENT_PHONE', undefined]) {
+      const r = await build({ actions: mod, phone }).text_cart_link.execute({});
+      assert.equal(r.error, 'no_phone');
+    }
+    assert.equal(calls.length, 0);
+    const noUrl = { ...actions, getCartStatus: async () => ({ ok: true, state: 'running', added: [], missing: [], total: 0, cartUrl: null }) };
+    assert.equal((await build({ actions: noUrl, phone: PHONE }).text_cart_link.execute({})).error, 'no_cart_link');
+  });
+});
+
+describe('guarding the new tools', () => {
+  const cases = {
+    suggest_meal: { prep: t => t.look_at_camera.execute({}), mod: 'renal', fns: ['suggestMeals'] },
+    log_meal: { prep: t => t.check_food.execute({ name: 'a', grams: null }), mod: 'renal', fns: ['logFood'] },
+    todays_totals: { mod: 'renal', fns: ['getToday'] },
+    start_cart: { args: { items: [{ name: 'rice', quantity: '1' }] }, mod: 'actions', fns: ['startCart'] },
+    cart_status: { mod: 'actions', fns: ['getCartStatus'] },
+    text_cart_link: { mod: 'actions', fns: ['getCartStatus', 'sendText'] },
+  };
+  for (const [name, c] of Object.entries(cases)) {
+    for (const fn of c.fns) {
+      for (const [label, impl] of [['ok:false', async () => bad], ['throws', async () => { throw new Error('boom SECRET123'); }]]) {
+        it(`${name}: ${fn} ${label}`, async () => {
+          const base = c.mod === 'renal' ? renal : actions;
+          const over = { [c.mod]: { ...base, [fn]: impl }, phone: PHONE };
+          const t = build(over);
+          if (c.prep) await c.prep(t);
+          clean(await t[name].execute(c.args ?? {}));
+        });
+      }
+    }
+  }
+});
+
 describe('prompt', () => {
   it('names the tools and the rules, drops Phase 2 wording', () => {
     const text = prompt.instructions;
     for (const k of Object.keys(build())) assert.ok(text.includes(k), k);
-    for (const w of ['spoken', 'say', 'pay', 'no_camera_picture']) assert.ok(text.includes(w), w);
+    for (const w of ['spoken', 'say', 'pay', 'no_camera_picture', 'link']) assert.ok(text.includes(w), w);
     for (const w of ['camera yet', 'never claim to see food', 'could not check it']) assert.ok(!text.includes(w), w);
   });
 });
