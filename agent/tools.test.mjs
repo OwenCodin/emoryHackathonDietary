@@ -593,3 +593,34 @@ describe('WR-09 endCall and withTimeout', () => {
     assert.deepEqual(r, { ok: false, timedOut: true });
   });
 });
+
+describe('onToolActivity', () => {
+  it('reports +1 then -1 around a tool run', async () => {
+    const seen = [];
+    const r = await build({ onToolActivity: d => seen.push(d) }).check_food.execute({ name: 'banana', grams: 118 });
+    assert.equal(r.ok, true);
+    assert.deepEqual(seen, [1, -1]);
+  });
+  it('reports -1 when the renal module throws', async () => {
+    const seen = [];
+    const t = build({ onToolActivity: d => seen.push(d), renal: { ...renal, checkFood: async () => { throw new Error('boom'); } } });
+    const r = await t.check_food.execute({ name: 'banana', grams: null });
+    assert.equal(r.ok, false);
+    assert.deepEqual(seen, [1, -1]);
+  });
+  it('reports -1 when the tool times out', async () => {
+    const seen = [];
+    const t = build({ timeoutMs: 50, onToolActivity: d => seen.push(d), renal: { ...renal, checkFood: () => new Promise(() => {}) } });
+    const r = await t.check_food.execute({ name: 'banana', grams: null });
+    assert.equal(r.ok, false);
+    assert.deepEqual(seen, [1, -1]);
+  });
+  it('a throwing hook does not change the result', async () => {
+    const r = await build({ onToolActivity: () => { throw new Error('hook'); } }).check_food.execute({ name: 'banana', grams: 118 });
+    assert.equal(r.ok, true);
+  });
+  it('works without a hook', async () => {
+    const r = await build().check_food.execute({ name: 'banana', grams: 118 });
+    assert.equal(r.ok, true);
+  });
+});

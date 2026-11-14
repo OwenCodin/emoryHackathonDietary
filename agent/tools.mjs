@@ -120,10 +120,11 @@ function fit(result, limit) {
 
 // fn receives a per-call token first. When the call times out, token.timedOut becomes true and the
 // work that is still running must not change remembered state or start anything new.
-function guard(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout') }) {
+function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout'), activity = () => {} }) {
   return async (...args) => {
     const call = { timedOut: false };
     let timer;
+    try { activity(1); } catch { /* a hook never changes a result */ }
     try {
       const timedOut = new Promise(resolve => { timer = setTimeout(() => { call.timedOut = true; resolve(onTimeout()); }, timeoutMs); });
       const work = Promise.resolve().then(() => fn(call, ...args));
@@ -135,6 +136,7 @@ function guard(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout') }
       return fail('tool_failed');
     } finally {
       clearTimeout(timer);
+      try { activity(-1); } catch { /* a hook never changes a result */ }
     }
   };
 }
@@ -167,7 +169,10 @@ export function buildTools({
   debugFrameDir = process.env.AGENT_DEBUG_FRAME_DIR,
   timeoutMs = 12000,
   phone = process.env.PATIENT_PHONE,
+  onToolActivity = () => {},
 } = {}) {
+  // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
+  const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity });
   let lastFoods = []; // food names from the last look only; suggest_meal cooks from these
   const candidates = new Map(); // judged foods log_meal may log: key -> { names, verdict }
   let lastMissing = []; // CartItems the last meal suggestion said are missing
