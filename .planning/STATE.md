@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-fc6: grounded web lookup, generic names and tool failure logging
+Last activity: 2026-11-14 - Completed quick task 261114-g29: READMEs for the merged app
 
 Progress: [██████████] 100%
 
@@ -93,6 +93,7 @@ None yet.
 | 261114-ej7 | Fix renal food-check crash, cola brand resolution and USDA match guard, numberless-label fallback, Gemini fallback model, test isolation; repair 12 stub-era agent tests (270/270 pass) | 2026-11-14 | 618fd3e | [261114-ej7-fix-renal-and-tests](./quick/261114-ej7-fix-renal-and-tests/) |
 | 261114-eyk | Fridge and pantry memory across shots and calls, suggest_meal from the whole pantry, pantry tools, text_recipe by iMessage, prompt rules (298/298 pass) | 2026-11-14 | a42f907 | [261114-eyk-pantry-and-texted-recipes](./quick/261114-eyk-pantry-and-texted-recipes/) |
 | 261114-fc6 | Grounded Gemini web lookup after USDA, USDA failures fall through, generic food names, look_at_camera never a dead end, tool failure codes in the log (350/350 pass) | 2026-11-14 | 57c12e4 | [261114-fc6-grounded-lookup-and-tool-logging](./quick/261114-fc6-grounded-lookup-and-tool-logging/) |
+| 261114-g29 | READMEs for the merged app: root README for RenaLine, shared contract rebuilt and identical in the three track READMEs, per-track merge changes and next steps (docs only) | 2026-11-14 | a24bfca | [261114-g29-readmes-for-merged-app](./quick/261114-g29-readmes-for-merged-app/) |
 
 ## Session Continuity
 
