@@ -220,11 +220,14 @@ async function executeAction(page, action) {
       break;
     }
     case 'wait': {
-      const seconds = Number(args.seconds);
-      if (!Number.isFinite(seconds) || seconds < 0 || seconds > 10) {
+      // The computer-use guide defaults wait to 1 second; long waits are capped at 10.
+      const seconds = args.seconds === undefined || args.seconds === null
+        ? 1
+        : Number(args.seconds);
+      if (!Number.isFinite(seconds) || seconds < 0) {
         return { ok: false, error: 'Wait duration is invalid' };
       }
-      await sleep(seconds * 1000);
+      await sleep(Math.min(seconds, 10) * 1000);
       break;
     }
     case 'go_back':

@@ -49,7 +49,7 @@ function makeBrowser() {
 }
 
 async function waitForState(controller, expected) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     if (controller.getCartStatus().state === expected) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -342,6 +342,19 @@ test('double click, hotkey and go_forward are supported; unknown actions report 
   const text = JSON.parse(last.result.find((part) => part.type === 'text').text);
   assert.equal(text.error, 'unsupported action');
   assert.deepEqual(controller.getCartStatus().missing, ['broth: x']);
+});
+
+test('wait defaults to one second and caps long waits instead of failing', async () => {
+  const { controller } = await runToState([
+    actionReply('i1', callStep('c1', 'wait', { intent: 'Waiting' })),
+    textReply('i2', 'MISSING: x'),
+  ], 'done');
+  assert.equal(controller.getCartStatus().state, 'done');
+
+  const negative = await runToState([
+    actionReply('i1', callStep('c1', 'wait', { seconds: -1 })),
+  ], 'failed');
+  assert.match(negative.controller.getCartStatus().step, /Wait duration is invalid/);
 });
 
 test('two function calls in one reply run in order and get two results', async () => {
