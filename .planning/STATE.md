@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Roadmap created, ready to plan Phase 1
-last_updated: "2026-11-14T03:56:57.285Z"
+last_updated: "2026-11-14T03:56:59.822Z"
 last_activity: 2026-11-14
 progress:
   total_phases: 5
@@ -52,6 +52,7 @@ Progress: [██████████] 100%
 | Phase 04 P02 | 20min | 3 tasks | 5 files |
 | Phase 05 P01 | 25min | 3 tasks | 7 files |
 | Phase 05 P02 | 40min | 3 tasks | 9 files |
+| Phase 05 P03 | 20min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,7 @@ Progress: [██████████] 100%
 - [Phase 04]: 04-02: outbound only for outbound===true with chert-bridge-* identity; outbound audio via external ParticipantAudioOutput before session.start
 - [Phase 05]: Barge-in off by default via NO_INTERRUPTION; reply watchdog guarantees an answer
 - [Phase 05]: 05-02: shopping list state folder refused unless a real directory owned by the user, tightened to 700; resume greeting carries a count only
+- [Phase 05]: 05-03: shelf best choice from pickBest; spoken built from fixed templates
 
 ### Pending Todos
 
