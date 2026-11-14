@@ -141,7 +141,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 05-01-PLAN.md — A spoken question always gets an answer: barge-in off by default, reply watchdog with one nudge per unanswered turn, six simulated banana calls (D-15 to D-18)
+- [x] 05-01-PLAN.md — A spoken question always gets an answer: barge-in off by default, reply watchdog with one nudge per unanswered turn, six simulated banana calls (D-15 to D-18)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -159,4 +159,4 @@ Plans:
 | 2. First call | 1/1 | Complete   | 2026-11-14 |
 | 3. Camera and tools | 2/2 | Complete   | 2026-11-14 |
 | 4. Browser on the call and the agent calls you | 2/2 | Complete   | 2026-11-14 |
-| 5. In the aisle | 0/3 | Planned | - |
+| 5. In the aisle | 1/3 | In Progress|  |
