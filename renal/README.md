@@ -430,6 +430,10 @@ The second argument also accepts a `check` option, a test seam that defaults to 
 
 Follow-up: the from-the-kitchen mode does not check totals yet, because kitchen foods can be judged from USDA, online or label numbers with different serving bases, or with missing phosphorus.
 
+### `dishIngredients`
+
+`dishIngredients({ dish, profile }, { ai }?)` turns a dish name into its usual ingredients: `{ ok, dish, source: 'model' | 'builtin' | 'none', ingredients: [{ name, quantity, verdict, swap, nutrients, portion, say, source, checked }], omitted? }`. The model gives names and quantities only (a schema allows nothing else, and extra fields are ignored). Every ingredient then goes through `checkFood`, and the verdict, swap, nutrients, portion and say are copied from that result only; a check that fails or runs past 4 s gives `verdict: 'unknown'`, `checked: false`. Water, oils, pepper, herbs, spices and salt are dropped, duplicates are merged, and at most `DISH_MAX_INGREDIENTS` (8) are kept, with `omitted` counting the rest. With no key, a slow model (fast model first, 4.5 s) or an empty answer, `BUILTIN_DISHES` covers ham sandwich, turkey sandwich, omelet and chicken and rice, and those ingredients are re-checked the same way. Any other dish gives `source: 'none'` and no ingredients. The dish is cleaned (80 characters, no links or quotes) and sent as quoted data; no limits and no avoid list are sent to the model. Worst case is about 8.5 s, under the 12 s tool guard. `modelMs`, `checkMs` and `check` are test seams.
+
 ### Tests
 
 `npm test` runs every `*.test.mjs` with Node's built-in runner and needs no keys or network. To run only renal's tests use `node --test renal/*.test.mjs` (on Node 24 `node --test renal/` fails because it treats the folder as a file).

@@ -63,7 +63,7 @@ const FOOD_ALIASES = new Map([
   ['egg whites', 'egg white'],
 ]);
 
-function isPantryStaple(name) {
+export function isPantryStaple(name) {
   const normalized = normalizeFoodName(name);
   return PANTRY_STAPLES.has(normalized) ||
     normalized.endsWith(' oil') ||
@@ -72,7 +72,7 @@ function isPantryStaple(name) {
     normalized === 'ground pepper';
 }
 
-function canonicalFoodName(name, catalog) {
+export function canonicalFoodName(name, catalog) {
   const normalized = normalizeFoodName(name);
   const alias = FOOD_ALIASES.get(normalized);
   if (alias) return alias;

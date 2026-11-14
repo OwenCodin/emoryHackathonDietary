@@ -126,7 +126,7 @@ describe('renal contract', () => {
     delete process.env.GOOGLE_API_KEY;
     delete process.env.USDA_API_KEY;
     try {
-      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'logFood', 'getToday']) {
+      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'dishIngredients', 'logFood', 'getToday']) {
         const p = renal[name]();
         assert.ok(p instanceof Promise, `${name} returns a Promise`);
         const r = await p;
