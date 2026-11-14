@@ -47,6 +47,18 @@ export function numberWords(number) {
   return `${numberWords(thousands)} thousand${remainder ? ` ${numberWords(remainder)}` : ''}`;
 }
 
+// Whole-phrase match: the rule name equals the name or appears in it on word boundaries.
+function phraseMatches(ruleName, name) {
+  const rule = normalizeFoodName(ruleName);
+  if (!rule || !name) return false;
+  return ` ${name} `.includes(` ${rule} `);
+}
+
+function sentenceCase(text) {
+  const trimmed = String(text).trim();
+  return trimmed ? `${trimmed[0].toUpperCase()}${trimmed.slice(1)}` : '';
+}
+
 function profileIsValid(profile) {
   return profile?.limits && NUTRIENTS.every(([key]) => isFiniteNonNegative(profile.limits[key]));
 }
@@ -84,9 +96,10 @@ export async function checkFood(input = {}) {
     const normalizedName = normalizeFoodName(name);
     const profileAvoid = (profile.avoid ?? []).map(normalizeFoodName);
     const hardRules = await readData('hard-rules.json');
-    const hardRule = hardRules.alwaysAvoid.find((entry) => normalizeFoodName(entry.name) === normalizedName);
-    const personalAvoid = profileAvoid.includes(normalizedName);
-    if (hardRule || personalAvoid) {
+    const avoidFor = (names) => {
+      const hardRule = hardRules.alwaysAvoid.find((entry) => names.some((n) => phraseMatches(entry.name, n)));
+      const personalAvoid = names.some((n) => profileAvoid.includes(n));
+      if (!hardRule && !personalAvoid) return null;
       const reason = hardRule?.reason ?? `${name} is on this patient's care-team avoid list`;
       return {
         ok: true,
@@ -96,16 +109,19 @@ export async function checkFood(input = {}) {
         reasons: [reason],
         nutrients: null,
         portion: food.grams == null ? 'not estimated' : `${food.grams} g`,
-        swap: SWAPS[normalizedName] ?? 'an unseasoned fresh alternative',
+        swap: SWAPS[names[names.length - 1]] ?? SWAPS[names[0]] ?? 'an unseasoned fresh alternative',
         source: 'rule',
       };
-    }
+    };
+    const earlyAvoid = avoidFor([normalizedName]);
+    if (earlyAvoid) return earlyAvoid;
     const isLabel = food.label !== undefined && food.label !== null;
 
     let nutrients;
     let portion;
     let source;
     let per100 = false;
+    let canonical = null;
     let countsAsFluid = /\b(soup|broth|drink|juice|cola|coffee|water|tea|ice)\b/i.test(name);
     if (isLabel) {
       const label = food.label;
@@ -122,6 +138,20 @@ export async function checkFood(input = {}) {
       const lookup = await lookupFood(food);
       if (!lookup.ok) return lookup;
       if (!lookup.found) {
+        const limitRule = hardRules.alwaysLimit.find((entry) => phraseMatches(entry.name, normalizedName));
+        if (limitRule) {
+          return {
+            ok: true,
+            food: name,
+            verdict: 'limit',
+            say: `Limit ${name}. ${sentenceCase(limitRule.reason)}.`,
+            reasons: [limitRule.reason],
+            nutrients: null,
+            portion: food.grams == null ? 'unknown' : `${food.grams} g`,
+            swap: null,
+            source: 'rule',
+          };
+        }
         return {
           ok: true,
           food: name,
@@ -133,6 +163,11 @@ export async function checkFood(input = {}) {
           swap: null,
           source: 'none',
         };
+      }
+      if (lookup.matched === 'seed' && typeof lookup.name === 'string') {
+        canonical = normalizeFoodName(lookup.name);
+        const lateAvoid = avoidFor([normalizedName, canonical]);
+        if (lateAvoid) return lateAvoid;
       }
       const knownServing = Number.isFinite(lookup.servingGrams) && lookup.servingGrams > 0;
       const grams = food.grams ?? (knownServing ? lookup.servingGrams : 100);
@@ -165,14 +200,14 @@ export async function checkFood(input = {}) {
       else if (share >= 0.1 && verdict === 'ok') verdict = 'limit';
     }
 
-    if (hardRule || personalAvoid) {
-      verdict = 'avoid';
-      source = 'rule';
-      ruleReasons.push(hardRule?.reason ?? `${name} is on this patient's care-team avoid list`);
-    }
-    const alwaysLimit = hardRules.alwaysLimit.find((entry) => normalizeFoodName(entry.name) === normalizedName);
-    if (alwaysLimit && verdict === 'ok') {
-      verdict = 'limit';
+    const ruleNames = canonical && canonical !== normalizedName ? [normalizedName, canonical] : [normalizedName];
+    const alwaysLimit = hardRules.alwaysLimit.find((entry) => ruleNames.some((n) => phraseMatches(entry.name, n)));
+    let ruleEscalated = false;
+    if (alwaysLimit) {
+      if (verdict === 'ok') {
+        verdict = 'limit';
+        ruleEscalated = true;
+      }
       source = 'rule';
       ruleReasons.push(alwaysLimit.reason);
     }
@@ -191,7 +226,7 @@ export async function checkFood(input = {}) {
     }
 
     const reasons = buildReasons(nutrients, profile, ruleReasons, countsAsFluid);
-    const swap = verdict === 'avoid' ? (SWAPS[normalizedName] ?? 'an unseasoned fresh alternative') : null;
+    const swap = verdict === 'avoid' ? ((canonical && SWAPS[canonical]) ?? SWAPS[normalizedName] ?? 'an unseasoned fresh alternative') : null;
     let say;
     if (!worst) {
       if (verdict === 'limit') {
@@ -206,6 +241,7 @@ export async function checkFood(input = {}) {
       const amount = numberWords(worst.amount);
       say = `${spokenVerdict(verdict)}, ${name} has about ${amount} milligrams of ${worst.label}${per100 ? ' in 100 grams' : ''}.`;
       if (swap) say += ` Try ${swap} instead.`;
+      else if (ruleEscalated && alwaysLimit) say += ` ${sentenceCase(alwaysLimit.reason)}.`;
       else if (verdict === 'limit') say += ' A smaller portion may fit better.';
     }
 

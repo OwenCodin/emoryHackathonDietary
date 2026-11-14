@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { after, afterEach, beforeEach } from 'node:test';
 import { checkFood, numberWords } from './check.mjs';
+import { plausibleMatch } from './nutrients.mjs';
 
 const stateDir = await mkdtemp(join(tmpdir(), 'renal-check-state-'));
 process.env.RENAL_STATE_DIR = stateDir;
@@ -106,4 +107,65 @@ test('seeded banana and star fruit keep their verdicts', async () => {
   assert.equal(banana.nutrients.potassiumMg, 422);
   const star = await checkFood({ food: { name: 'star fruit' }, profile });
   assert.equal(star.verdict, 'avoid');
+});
+
+test('cola brands resolve to the curated seed with the phosphate reason and no network', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  globalThis.fetch = failIfCalled();
+  for (const name of ['Coca-Cola', 'coca cola', 'coke', 'pepsi', 'diet coke', 'cola', 'soda']) {
+    const result = await checkFood({ food: { name }, profile });
+    assert.equal(result.ok, true, name);
+    assert.equal(result.verdict, 'limit', name);
+    assert.match(result.reasons.join(' '), /phosphate additive/i, name);
+    assert.equal(result.nutrients.phosphorusMg, 60, name);
+    assert.match(result.say, /phosphate additive/i, name);
+  }
+});
+
+test('an implausible USDA hit is rejected and never cached as a positive', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  globalThis.fetch = usdaFetch([hit('Beverages, water, bottled, non-carbonated, PEPSI, AQUAFINA', 3, 0, 2, 0)]);
+  const result = await checkFood({ food: { name: 'pepsi max' }, profile });
+  assert.equal(result.verdict, 'unknown');
+  assert.equal(result.nutrients, null);
+  assert.equal(result.source, 'none');
+  assert.match(result.say, /cannot judge/);
+  assert.doesNotMatch(result.say, /\d/);
+  const again = await checkFood({ food: { name: 'pepsi max' }, profile });
+  assert.equal(again.verdict, 'unknown');
+  assert.equal(again.nutrients, null);
+});
+
+test('the first credible USDA candidate wins', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  globalThis.fetch = usdaFetch([
+    hit('Beverages, The COCA-COLA company, Minute Maid, Lemonade', 4, 10, 5, 5),
+    hit('Plantains, green, raw', 5, 499, 4, 34),
+  ]);
+  const result = await checkFood({ food: { name: 'green plantains' }, profile });
+  assert.equal(result.ok, true);
+  assert.equal(result.nutrients.potassiumMg, 499);
+});
+
+test('plausibleMatch compares whole significant words', () => {
+  assert.equal(plausibleMatch('pepsi max', 'Beverages, water, bottled, non-carbonated, PEPSI, AQUAFINA'), false);
+  assert.equal(plausibleMatch('plantain', 'Plantains, yellow, raw'), true);
+  assert.equal(plausibleMatch('dragon fruit', 'Kiwifruit, green, raw'), false);
+  assert.equal(plausibleMatch('the', 'The thing'), false);
+});
+
+test('hard avoid rules match whole phrases inside the name', async () => {
+  globalThis.fetch = failIfCalled();
+  assert.equal((await checkFood({ food: { name: 'star fruit juice' }, profile })).verdict, 'avoid');
+  assert.equal((await checkFood({ food: { name: 'star fruit' }, profile })).verdict, 'avoid');
+  assert.equal((await checkFood({ food: { name: 'banana' }, profile })).verdict, 'limit');
+});
+
+test('cola rule matches phrases but not look-alike words', async () => {
+  globalThis.fetch = usdaFetch([]);
+  const cherry = await checkFood({ food: { name: 'cherry cola' }, profile });
+  assert.equal(cherry.verdict, 'limit');
+  assert.match(cherry.reasons.join(' '), /phosphate additive/i);
+  const colada = await checkFood({ food: { name: 'pina colada' }, profile });
+  assert.equal(colada.verdict, 'unknown');
 });
