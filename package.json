@@ -5,6 +5,7 @@
     "node": "^22.23.2 || ^24.0.0"
   },
   "scripts": {
+    "start": "node --env-file=.env.local agent/agent.mjs start",
     "test": "node --env-file-if-exists=.env.local --test"
   },
   "dependencies": {

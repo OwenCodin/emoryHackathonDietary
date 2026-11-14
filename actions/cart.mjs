@@ -481,5 +481,5 @@ export function createCartController({
 const controller = createCartController();
 
 export const startCart = (input) => controller.startCart(input);
-export const getCartStatus = () => controller.getCartStatus();
+export const getCartStatus = async () => controller.getCartStatus();
 export const stopCart = () => controller.stopCart();
