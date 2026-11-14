@@ -88,7 +88,7 @@ describe('look_at_camera', () => {
     assert.equal(r.results[0].food, 'banana');
     assert.equal(r.results[0].verdict, 'unknown');
     assert.ok(r.results[0].spoken);
-    assert.equal(r.results[0].swap, null);
+    assert.equal(r.results[0].swap, undefined);
   });
   it('unclear and failed pictures give unclear_picture', async () => {
     for (const seen of [{ ok: true, kind: 'unclear', foods: [], label: null }, { ok: false, error: 'x' }]) {
@@ -167,7 +167,7 @@ describe('debug frames', () => {
     await build({ debugFrameDir: dir }).look_at_camera.execute({});
     const files = await readdir(dir);
     assert.equal(files.length, 1);
-    assert.match(files[0], /^frame-\d+\.jpg$/);
+    assert.match(files[0], /^frame-\d+-[0-9a-f]{8}\.jpg$/);
     const other = await mkdtemp(join(tmpdir(), 'tools-test-empty-'));
     await build({ debugFrameDir: '' }).look_at_camera.execute({});
     assert.equal((await readdir(other)).length, 0);
@@ -208,19 +208,19 @@ describe('suggest_meal', () => {
 
 describe('log_meal and todays_totals', () => {
   it('log_meal needs something to log', async () => {
-    const r = await build().log_meal.execute({});
+    const r = await build().log_meal.execute({ foods: ['banana'] });
     assert.equal(r.error, 'nothing_to_log');
   });
   it('logs once, never twice', async () => {
     const { mod, calls } = rec(renal, 'logFood');
     const t = build({ renal: mod });
     await t.check_food.execute({ name: 'banana', grams: null });
-    const r = await t.log_meal.execute({});
+    const r = await t.log_meal.execute({ foods: ['banana'] });
     assert.deepEqual(r, { ok: true, logged: ['banana'] });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].patientId, 'demo');
     assert.equal(calls[0].verdict.food, 'banana');
-    assert.equal((await t.log_meal.execute({})).error, 'nothing_to_log');
+    assert.equal((await t.log_meal.execute({ foods: ['banana'] })).error, 'nothing_to_log');
     assert.equal(calls.length, 1);
   });
   it('a failed log keeps the verdicts for a retry', async () => {
@@ -228,9 +228,9 @@ describe('log_meal and todays_totals', () => {
     const { mod } = rec(renal, 'logFood', () => (fail ? bad : { ok: true }));
     const t = build({ renal: mod });
     await t.check_food.execute({ name: 'banana', grams: null });
-    clean(await t.log_meal.execute({}));
+    clean(await t.log_meal.execute({ foods: ['banana'] }));
     fail = false;
-    assert.equal((await t.log_meal.execute({})).ok, true);
+    assert.equal((await t.log_meal.execute({ foods: ['banana'] })).ok, true);
   });
   it('todays_totals returns only the three numbers each', async () => {
     const r = await build().todays_totals.execute({});
@@ -273,7 +273,7 @@ describe('cart tools', () => {
   });
   it('cart_status hides the link', async () => {
     const r = await build().cart_status.execute({});
-    assert.deepEqual(r, { ok: true, state: 'done', step: 'cart filled', added: ['unsalted chicken broth'], missing: [], total: 3.49 });
+    assert.deepEqual(r, { ok: true, state: 'done', say: 'The cart is filled and ready for you to review. I can text you the link.', step: 'cart filled', added: ['unsalted chicken broth'], missing: [], total: 3.49 });
     const j = JSON.stringify(r);
     assert.ok(!j.includes('http') && !j.includes('cartUrl'));
   });
@@ -301,7 +301,7 @@ describe('cart tools', () => {
 describe('guarding the new tools', () => {
   const cases = {
     suggest_meal: { prep: t => t.look_at_camera.execute({}), mod: 'renal', fns: ['suggestMeals'] },
-    log_meal: { prep: t => t.check_food.execute({ name: 'a', grams: null }), mod: 'renal', fns: ['logFood'] },
+    log_meal: { prep: t => t.check_food.execute({ name: 'a', grams: null }), args: { foods: ['a'] }, mod: 'renal', fns: ['logFood'] },
     todays_totals: { mod: 'renal', fns: ['getToday'] },
     start_cart: { args: { items: [{ name: 'rice', quantity: '1' }] }, mod: 'actions', fns: ['startCart'] },
     cart_status: { mod: 'actions', fns: ['getCartStatus'] },
@@ -328,5 +328,268 @@ describe('prompt', () => {
     for (const k of Object.keys(build())) assert.ok(text.includes(k), k);
     for (const w of ['spoken', 'say', 'pay', 'no_camera_picture', 'link']) assert.ok(text.includes(w), w);
     for (const w of ['camera yet', 'never claim to see food', 'could not check it']) assert.ok(!text.includes(w), w);
+  });
+});
+
+// ---- review fixes (CR-01, WR-01 to WR-08, IN-01) ----
+const manyFoods = (n, say = 'Some words about it that make the sentence fairly long indeed. And a second sentence.') =>
+  tools_ => ({ ...renal,
+    describeImage: async () => ({ ok: true, kind: 'fridge', foods: Array.from({ length: n }, (_, i) => ({ name: `food${i}`, grams: null })), label: null }),
+    checkFood: async a => verdictFor(a.food.name, a.food.name === 'food4' ? 'avoid' : 'ok', say) });
+
+describe('CR-01 look_at_camera never hides a food', () => {
+  it('puts avoid first and keeps every food that was judged', async () => {
+    const r = await build({ renal: manyFoods(6)() }).look_at_camera.execute({});
+    assert.equal(r.ok, true);
+    assert.equal(r.results[0].food, 'food4');
+    assert.equal(r.results[0].verdict, 'avoid');
+    assert.equal(r.results.length + (r.omitted ?? 0), 6);
+    assert.ok(JSON.stringify(r).length <= 900);
+  });
+  it('orders avoid, limit, unknown, ok', async () => {
+    const order = { a: 'ok', b: 'unknown', c: 'limit', d: 'avoid' };
+    const t = build({ renal: { ...renal,
+      describeImage: async () => ({ ok: true, kind: 'plate', foods: ['a', 'b', 'c', 'd'].map(name => ({ name })), label: null }),
+      checkFood: async a => verdictFor(a.food.name, order[a.food.name]) } });
+    const r = await t.look_at_camera.execute({});
+    assert.deepEqual(r.results.map(x => x.verdict), ['avoid', 'limit', 'unknown', 'ok']);
+  });
+  it('says so when foods beyond six were not judged', async () => {
+    const r = await build({ renal: manyFoods(9)() }).look_at_camera.execute({});
+    assert.equal(r.results.length, 6);
+    assert.equal(r.omitted, 3);
+    assert.match(r.say, /show me the rest/i);
+  });
+  it('long realistic text still gives a result with the avoid food, not a failure', async () => {
+    const long = 'This food has a lot of potassium for one sitting, so please be careful with the portion today. '.repeat(4);
+    const r = await build({ renal: manyFoods(6, long)() }).look_at_camera.execute({});
+    assert.equal(r.ok, true);
+    assert.ok(r.results.some(x => x.verdict === 'avoid'));
+    assert.equal(r.results.length + (r.omitted ?? 0), 6);
+  });
+});
+
+describe('WR-01 and WR-08 missing data and cart state', () => {
+  it('todays_totals without numbers is a failure', async () => {
+    for (const bad of [{ ok: true }, { ok: true, totals: { sodiumMg: 1, potassiumMg: '2', phosphorusMg: 3 }, remaining: { sodiumMg: 1, potassiumMg: 2, phosphorusMg: 3 } }, { ok: true, totals: { sodiumMg: NaN, potassiumMg: 1, phosphorusMg: 1 }, remaining: {} }]) {
+      const r = await build({ renal: { ...renal, getToday: async () => bad } }).todays_totals.execute({});
+      assert.equal(r.ok, false);
+      assert.ok(r.say);
+    }
+  });
+  it('a failed cart is not ok and has a say', async () => {
+    const failed = { ...actions, getCartStatus: async () => ({ ok: true, state: 'failed', step: 'https://x.test/?t=SECRET', added: [], missing: [] }) };
+    const r = await build({ actions: failed }).cart_status.execute({});
+    assert.equal(r.ok, false);
+    assert.ok(r.say.length > 0);
+    assert.ok(!JSON.stringify(r).includes('SECRET'));
+  });
+  it('cart_status strips links from step, caps text and omits a bad total', async () => {
+    const odd = { ...actions, getCartStatus: async () => ({ ok: true, state: 'running', step: 'adding https://x.test/?t=SECRET now ' + 'z'.repeat(200), added: Array.from({ length: 8 }, (_, i) => ({ name: `item${i}` })), missing: [], total: undefined }) };
+    const r = await build({ actions: odd }).cart_status.execute({});
+    assert.equal(r.ok, true);
+    assert.ok(!JSON.stringify(r).includes('SECRET'));
+    assert.ok(r.step.length <= 60);
+    assert.equal(r.added.length, 5);
+    assert.equal(r.addedMore, 3);
+    assert.ok(!('total' in r));
+  });
+  it('an unknown cart state is a failure', async () => {
+    const odd = { ...actions, getCartStatus: async () => ({ ok: true, state: 'weird' }) };
+    assert.equal((await build({ actions: odd }).cart_status.execute({})).ok, false);
+  });
+});
+
+describe('WR-02 log_meal logs only what was confirmed', () => {
+  const fridge = (extra = {}) => ({ ...renal,
+    describeImage: async () => ({ ok: true, kind: 'fridge', foods: [{ name: 'milk' }, { name: 'cheese' }, { name: 'apple' }], label: null }),
+    checkFood: async a => verdictFor(a.food.name), ...extra });
+  it('logs the named food only', async () => {
+    const { mod, calls } = rec(fridge(), 'logFood', () => ({ ok: true }));
+    const t = build({ renal: mod });
+    await t.look_at_camera.execute({});
+    const r = await t.log_meal.execute({ foods: ['Apple'] });
+    assert.deepEqual(r, { ok: true, logged: ['apple'] });
+    assert.equal(calls.length, 1);
+  });
+  it('an unknown food is not logged', async () => {
+    const { mod, calls } = rec(fridge(), 'logFood', () => ({ ok: true }));
+    const t = build({ renal: mod });
+    await t.look_at_camera.execute({});
+    assert.equal((await t.log_meal.execute({ foods: ['pizza'] })).error, 'nothing_to_log');
+    assert.equal(calls.length, 0);
+  });
+  it('a retry after a partial failure does not double-log', async () => {
+    let n = 0;
+    const logged = [];
+    const { mod } = rec(fridge(), 'logFood', a => { n++; if (n === 2) return bad; logged.push(a.verdict.food); return { ok: true }; });
+    const t = build({ renal: mod });
+    await t.look_at_camera.execute({});
+    clean(await t.log_meal.execute({ foods: ['milk', 'cheese'] }));
+    const r = await t.log_meal.execute({ foods: ['milk', 'cheese'] });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.logged, ['cheese']);
+    assert.deepEqual(logged, ['milk', 'cheese']);
+  });
+  it('a failed look clears the previous verdicts and foods', async () => {
+    const { mod, calls } = rec(fridge(), 'logFood', () => ({ ok: true }));
+    let seeing = true;
+    const t = build({ renal: mod, camera: { jpeg: async () => (seeing ? jpeg : null) } });
+    await t.look_at_camera.execute({});
+    seeing = false;
+    assert.equal((await t.look_at_camera.execute({})).ok, false);
+    assert.equal((await t.log_meal.execute({ foods: ['milk'] })).error, 'nothing_to_log');
+    assert.equal((await t.suggest_meal.execute({})).error, 'nothing_seen');
+    assert.equal(calls.length, 0);
+  });
+  it('check_food does not replace the fridge foods used by suggest_meal', async () => {
+    const { mod, calls } = rec(fridge(), 'suggestMeals');
+    const t = build({ renal: mod });
+    await t.look_at_camera.execute({});
+    await t.check_food.execute({ name: 'banana', grams: null });
+    await t.suggest_meal.execute({});
+    assert.deepEqual(calls[0].foods, ['milk', 'cheese', 'apple']);
+  });
+});
+
+describe('WR-04 timed-out calls leave no state behind', () => {
+  it('a late look does not set verdicts or foods', async () => {
+    let release;
+    const slow = { ...renal, describeImage: () => new Promise(r => { release = () => r({ ok: true, kind: 'plate', foods: [{ name: 'late' }], label: null }); }) };
+    const { mod, calls } = rec(slow, 'logFood', () => ({ ok: true }));
+    const t = build({ renal: mod, timeoutMs: 30 });
+    assert.equal((await t.look_at_camera.execute({})).error, 'timeout');
+    release();
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal((await t.log_meal.execute({ foods: ['late'] })).error, 'nothing_to_log');
+    assert.equal((await t.suggest_meal.execute({})).error, 'nothing_seen');
+    assert.equal(calls.length, 0);
+  });
+  it('a start_cart timeout is reported as unconfirmed, not as failed', async () => {
+    const { mod } = rec(actions, 'startCart', () => new Promise(() => {}));
+    const r = await build({ actions: mod, timeoutMs: 30 }).start_cart.execute({ items: [{ name: 'rice', quantity: '1' }] });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'cart_unconfirmed');
+    assert.match(r.say, /check/);
+  });
+});
+
+describe('WR-05 debug frames', () => {
+  it('refuses a folder inside the repository and creates nothing', async () => {
+    const { access } = await import('node:fs/promises');
+    const inside = join(import.meta.dirname, 'no-such-debug-dir');
+    await build({ debugFrameDir: inside }).look_at_camera.execute({});
+    await assert.rejects(() => access(inside));
+    await build({ debugFrameDir: 'relative-frames' }).look_at_camera.execute({});
+    await assert.rejects(() => access('relative-frames'));
+  });
+  it('writes private files in a private folder, with distinct names', async () => {
+    const { stat } = await import('node:fs/promises');
+    const fresh = join(dir, 'new-folder');
+    const t = build({ debugFrameDir: fresh });
+    await t.look_at_camera.execute({});
+    await t.look_at_camera.execute({});
+    const files = await readdir(fresh);
+    assert.equal(files.length, 2);
+    assert.equal((await stat(fresh)).mode & 0o077, 0);
+    assert.equal((await stat(join(fresh, files[0]))).mode & 0o777, 0o600);
+  });
+});
+
+describe('WR-06 text_cart_link', () => {
+  const status = over => ({ ...actions, getCartStatus: async () => ({ ok: true, state: 'done', step: '', added: [], missing: [], total: 1, cartUrl: 'https://example.com/cart', ...over }) });
+  it('only sends when the cart is done', async () => {
+    for (const state of ['running', 'waiting_for_patient', 'failed', 'idle']) {
+      const { mod, calls } = rec(status({ state }), 'sendText');
+      assert.equal((await build({ actions: mod, phone: PHONE }).text_cart_link.execute({})).error, 'no_cart_link');
+      assert.equal(calls.length, 0);
+    }
+  });
+  it('rejects a link that is not http or https', async () => {
+    for (const cartUrl of ['javascript:alert(1)', 'file:///etc/passwd', 'not a url', '']) {
+      const { mod, calls } = rec(status({ cartUrl }), 'sendText');
+      assert.equal((await build({ actions: mod, phone: PHONE }).text_cart_link.execute({})).error, 'no_cart_link');
+      assert.equal(calls.length, 0);
+    }
+  });
+  it('sends the same link once per call', async () => {
+    const { mod, calls } = rec(actions, 'sendText');
+    const t = build({ actions: mod, phone: PHONE });
+    assert.equal((await t.text_cart_link.execute({})).ok, true);
+    assert.equal((await t.text_cart_link.execute({})).error, 'link_already_sent');
+    assert.equal(calls.length, 1);
+  });
+  it('a failed send can be retried', async () => {
+    let ok = false;
+    const { mod, calls } = rec(actions, 'sendText', () => ({ ok }));
+    const t = build({ actions: mod, phone: PHONE });
+    assert.equal((await t.text_cart_link.execute({})).ok, false);
+    ok = true;
+    assert.equal((await t.text_cart_link.execute({})).ok, true);
+    assert.equal(calls.length, 2);
+  });
+});
+
+describe('WR-07 check_food input', () => {
+  it('rejects empty and over-long names and bad grams', async () => {
+    const { mod, calls } = rec(renal, 'checkFood');
+    const t = build({ renal: mod });
+    for (const a of [{ name: '' }, { name: '   ' }, { name: 'x'.repeat(81) }, { name: 5 }, { name: 'rice', grams: 0 }, { name: 'rice', grams: -3 }, { name: 'rice', grams: NaN }, { name: 'rice', grams: 5001 }, { name: 'rice', grams: '100' }]) {
+      const r = await t.check_food.execute(a);
+      assert.equal(r.ok, false, JSON.stringify(a));
+      assert.ok(r.say);
+    }
+    assert.equal(calls.length, 0);
+  });
+  it('treats missing grams as null and trims the name', async () => {
+    const { mod, calls } = rec(renal, 'checkFood');
+    assert.equal((await build({ renal: mod }).check_food.execute({ name: '  rice  ' })).ok, true);
+    assert.deepEqual(calls[0].food, { name: 'rice', grams: null });
+  });
+});
+
+describe('IN-01 spokenVerdict wording', () => {
+  it('does not split at an abbreviation', () => {
+    assert.equal(tools.spokenVerdict({ verdict: 'limit', say: 'It has approx. 420 mg of potassium. Keep it small. Third.' }), 'Small portion, it has approx. 420 mg of potassium. Keep it small.');
+  });
+  it('keeps brand capitals that appear in the food name', () => {
+    assert.equal(tools.spokenVerdict({ verdict: 'avoid', food: "Campbell's soup", say: "Campbell's soup is very salty." }), "No, Campbell's soup is very salty.");
+    assert.equal(tools.spokenVerdict({ verdict: 'ok', food: 'banana', say: 'Banana is fine.' }), 'Yes, banana is fine.');
+    assert.equal(tools.spokenVerdict({ verdict: 'ok', say: 'iPhone fan.' }), 'Yes, iPhone fan.');
+  });
+  it('does not say Yes, yes', () => {
+    assert.equal(tools.spokenVerdict({ verdict: 'ok', say: 'Yes, that is fine.' }), 'Yes, that is fine.');
+    assert.equal(tools.spokenVerdict({ verdict: 'avoid', say: 'No. Far too salty.' }), 'No, far too salty.');
+    assert.equal(tools.spokenVerdict({ verdict: 'ok', say: 'Yes.' }), 'Yes.');
+  });
+  it('shortens at a sentence or word end, never past max', () => {
+    const say = 'First sentence is here. Second sentence is also here, and it keeps going for a while longer than the limit.';
+    const out = tools.spokenVerdict({ verdict: 'ok', say }, 60);
+    assert.equal(out, 'Yes, first sentence is here.');
+    const one = tools.spokenVerdict({ verdict: 'ok', say: 'word '.repeat(60) }, 50);
+    assert.ok(one.length <= 50 && one.endsWith('.'));
+    assert.equal(tools.spokenVerdict({ verdict: 'avoid', say: 'Too salty.' }, 0), 'No.');
+  });
+});
+
+describe('WR-08 sanitising free text', () => {
+  it('removes links from module text before it reaches the model', async () => {
+    const t = build({ renal: { ...renal, checkFood: async a => ({ ...verdictFor(a.food.name, 'ok', 'See https://x.test/?t=SECRET for more. Fine.'), swap: 'https://y.test/SECRET2' }) } });
+    const r = await t.check_food.execute({ name: 'rice', grams: null });
+    assert.ok(!JSON.stringify(r).includes('SECRET'));
+  });
+});
+
+describe('WR-09 endCall and withTimeout', () => {
+  it('calls stopCart and never throws', async () => {
+    let n = 0;
+    assert.equal((await tools.endCall({ actions: { stopCart: async () => { n++; return { ok: true }; } } })).ok, true);
+    assert.equal(n, 1);
+    assert.equal((await tools.endCall({ actions: { stopCart: async () => { throw new Error('x'); } } })).ok, false);
+    assert.equal((await tools.endCall({ actions: { stopCart: () => { throw new Error('sync'); } } })).ok, false);
+  });
+  it('gives up on a hung step', async () => {
+    const r = await tools.withTimeout(() => new Promise(() => {}), 30);
+    assert.deepEqual(r, { ok: false, timedOut: true });
   });
 });

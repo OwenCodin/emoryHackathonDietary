@@ -1,28 +1,74 @@
 import { llm } from '@livekit/agents';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 // This is the only file that imports renal/ and actions/.
 import * as renalModule from '../renal/index.mjs';
 import * as actionsModule from '../actions/index.mjs';
 
 const WORDS = { ok: 'Yes', avoid: 'No', limit: 'Small portion' };
+const RANK = { avoid: 0, limit: 1, unknown: 2, ok: 3 };
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
+// Text that came from another track's module: plain characters only, no links, bounded length.
+const clean = (value, max) => {
+  const raw = typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+  return raw.replace(/https?:\/\/\S+/gi, '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+};
+
+const ABBREVIATIONS = new Set(['approx', 'appx', 'e.g', 'i.e', 'vs', 'st', 'dr', 'mr', 'mrs', 'ms', 'oz', 'tbsp', 'tsp', 'avg', 'est', 'incl', 'inc', 'co', 'fl']);
+
+// Splits at a full stop only when it ends a sentence: not after an abbreviation such as "approx.",
+// and only when the next sentence starts with a capital letter or a quote.
+function splitSentences(text) {
+  const out = [];
+  let start = 0;
+  const re = /[.!?]+["')\]]*\s+/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const end = m.index + m[0].length;
+    const lastWord = (text.slice(start, m.index).match(/([A-Za-z.]+)$/)?.[1] ?? '').toLowerCase();
+    if (m[0][0] === '.' && ABBREVIATIONS.has(lastWord)) continue;
+    if (!/[A-Z"'(\[]/.test(text[end] ?? '')) continue;
+    out.push(text.slice(start, end).trim());
+    start = end;
+  }
+  const rest = text.slice(start).trim();
+  if (rest) out.push(rest);
+  return out;
+}
+
+// Lower-case the first letter of the module's sentence so it follows "Yes, ", except for "I", acronyms,
+// words with a capital inside (iPhone) and a first word that is capitalised in the food's name (a brand).
+function lowerFirst(text, food) {
+  const first = text.match(/^[A-Za-z][A-Za-z'’-]*/)?.[0];
+  if (!first || !/^[A-Z]/.test(first)) return text;
+  if (/^I(?![A-Za-z])/.test(text) || /^[A-Z]{2}/.test(first) || /^[A-Za-z][a-z]*[A-Z]/.test(first)) return text;
+  const escaped = first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (typeof food === 'string' && new RegExp(`(^|[^A-Za-z])${escaped}([^A-Za-z]|$)`).test(food)) return text;
+  return text[0].toLowerCase() + text.slice(1);
+}
 
 // One spoken sentence per food: the verdict word first, then the module's say, at most two sentences.
-export function spokenVerdict(verdict) {
+// max caps the length; text is shortened at a sentence or word boundary, never silently dropped as a food.
+export function spokenVerdict(verdict, max = 240) {
   const word = WORDS[verdict?.verdict] ?? "I can't tell";
-  const say = typeof verdict?.say === 'string' ? verdict.say.trim() : '';
-  if (!say) return `${word}.`;
-  let text = say.split(/(?<=[.!?])\s+/).slice(0, 2).join(' ');
-  // Lower-case the first letter, except for "I", "I'm" and acronyms such as USDA.
-  if (!/^I(?![A-Za-z])/.test(text) && !/^[A-Z][A-Z]/.test(text)) text = text[0].toLowerCase() + text.slice(1);
-  let out = `${word}, ${text}`;
-  if (out.length > 240) {
-    out = out.slice(0, 240);
-    const cut = out.lastIndexOf(' ');
-    if (cut > 0) out = out.slice(0, cut);
+  // The module may already start with a verdict word; ours is the one that is said.
+  const say = clean(verdict?.say, 1000).replace(/^(yes|no|small portion|i can't tell)\s*[,.:!;-]+\s*/i, '');
+  if (!say || max <= word.length + 3) return `${word}.`;
+  const sentences = splitSentences(say);
+  for (const count of [2, 1]) {
+    const text = sentences.slice(0, count).join(' ');
+    const out = `${word}, ${lowerFirst(text, verdict?.food)}`;
+    if (out.length <= max) return out;
   }
-  return out;
+  const room = max - 1; // leave space for the closing full stop
+  const out = `${word}, ${lowerFirst(sentences[0], verdict?.food)}`.slice(0, room);
+  const cut = out.lastIndexOf(' ');
+  if (cut <= word.length + 2) return `${word}.`;
+  return `${out.slice(0, cut).replace(/[\s,;:-]+$/, '')}.`;
 }
 
 // Our own short codes and plain sentences. A module's error text is never copied into a result.
@@ -33,35 +79,58 @@ const FAILS = {
   check_failed: "I couldn't check that just now. Let's try again in a moment.",
   tool_failed: "I couldn't check that just now. Let's try again in a moment.",
   timeout: "That is taking too long. Let's try again in a moment.",
+  bad_food: 'Tell me which food you mean, in a few words.',
+  bad_amount: "I didn't catch the amount. Tell me roughly how much it is, or skip the amount.",
   nothing_seen: 'Show me your fridge or the food you have first, and then I can suggest a meal.',
   nothing_to_log: 'Tell me or show me what you ate first, and then I can log it.',
   nothing_to_buy: "I don't have anything on a shopping list yet. Tell me what you need, or ask me for a meal idea first.",
   cart_busy: "A cart is already being filled. I can tell you how it's going.",
+  cart_unconfirmed: "I asked for the cart but haven't heard back yet. Let me check how it's going before we try again.",
+  cart_failed: "The cart didn't work out. I can try again if you like.",
   no_cart_link: "The cart isn't ready yet, so there's no link to send. I can check on it for you.",
+  link_already_sent: "I've already texted you that link. Please check your messages.",
   no_phone: "I don't have a phone number to text, so I can't send the link.",
 };
-const fail = error => ({ ok: false, error, say: FAILS[error] });
+const TOO_LONG = "Done, but there's too much detail to read out. Ask me about one part at a time.";
+const fail = (error, extra = {}) => ({ ok: false, error, say: FAILS[error], ...extra });
 
+const size = value => JSON.stringify(value).length;
+
+// Shortens text and lists, and says how many list entries were left out; never drops them silently.
 function shrink(value) {
-  if (typeof value === 'string') return value.slice(0, 200);
+  if (typeof value === 'string') return value.slice(0, 160);
   if (Array.isArray(value)) return value.slice(0, 3).map(shrink);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, shrink(v)]));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = shrink(v);
+      if (Array.isArray(v) && v.length > 3) out[`${k}Omitted`] = v.length - 3;
+    }
+    return out;
+  }
   return value;
 }
-function fit(result) {
-  if (JSON.stringify(result).length <= 600) return result;
+function fit(result, limit) {
+  if (size(result) <= limit) return result;
   const small = shrink(result);
-  return JSON.stringify(small).length <= 600 ? small : fail('tool_failed');
+  if (size(small) <= limit) return small;
+  // A short safe summary: a successful action stays successful, a failure stays a failure.
+  return result.ok === true ? { ok: true, say: TOO_LONG } : fail('tool_failed');
 }
 
-function guard(fn, timeoutMs) {
+// fn receives a per-call token first. When the call times out, token.timedOut becomes true and the
+// work that is still running must not change remembered state or start anything new.
+function guard(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout') }) {
   return async (...args) => {
+    const call = { timedOut: false };
     let timer;
     try {
-      const timedOut = new Promise(resolve => { timer = setTimeout(() => resolve(fail('timeout')), timeoutMs); });
-      const result = await Promise.race([fn(...args), timedOut]);
+      const timedOut = new Promise(resolve => { timer = setTimeout(() => { call.timedOut = true; resolve(onTimeout()); }, timeoutMs); });
+      const work = Promise.resolve().then(() => fn(call, ...args));
+      work.catch(() => {}); // a late failure after the timeout is not reported twice
+      const result = await Promise.race([work, timedOut]);
       if (!result || typeof result !== 'object') return fail('tool_failed');
-      return fit(result);
+      return fit(result, limit);
     } catch {
       return fail('tool_failed');
     } finally {
@@ -70,7 +139,25 @@ function guard(fn, timeoutMs) {
   };
 }
 
-const row = v => ({ food: v.food, verdict: v.verdict, spoken: spokenVerdict(v), swap: v.swap ?? null });
+const normalVerdict = v => (Object.hasOwn(RANK, v) ? v : 'unknown');
+const norm = s => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+const isInside = (root, target) => {
+  const rel = relative(root, target);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+};
+
+// Debug frames hold what the patient showed; keep them private and out of the repository.
+async function saveDebugFrame(dir, picture) {
+  const target = resolve(dir);
+  if (isInside(REPO_ROOT, target)) { console.error('[agent] debug frame folder is inside the repository; refusing to write'); return; }
+  await mkdir(target, { recursive: true, mode: 0o700 });
+  if (isInside(REPO_ROOT, await realpath(target))) { console.error('[agent] debug frame folder resolves inside the repository; refusing to write'); return; }
+  await writeFile(join(target, `frame-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`), picture, { mode: 0o600, flag: 'wx' });
+  console.log('[agent] debug frame saved');
+}
+
+const LOOK_LIMIT = 900;
+const MEALS_LIMIT = 900;
 
 export function buildTools({
   camera,
@@ -81,66 +168,108 @@ export function buildTools({
   timeoutMs = 12000,
   phone = process.env.PATIENT_PHONE,
 } = {}) {
-  let lastFoods = []; // names from the last look or check
-  let lastVerdicts = [];
+  let lastFoods = []; // food names from the last look only; suggest_meal cooks from these
+  const candidates = new Map(); // judged foods log_meal may log: key -> { names, verdict }
   let lastMissing = []; // CartItems the last meal suggestion said are missing
+  const sentLinks = new Set(); // cart links already texted during this call
   const phoneOk = typeof phone === 'string' && /^\+[1-9]\d{6,14}$/.test(phone);
   const cut = v => String(v ?? '').trim().slice(0, 80);
-  const three = o => ({ sodiumMg: o?.sodiumMg, potassiumMg: o?.potassiumMg, phosphorusMg: o?.phosphorusMg });
+  const three = o => {
+    const v = { sodiumMg: o?.sodiumMg, potassiumMg: o?.potassiumMg, phosphorusMg: o?.phosphorusMg };
+    return Object.values(v).every(Number.isFinite) ? v : null;
+  };
+  const remember = (verdict, inputName) => {
+    const names = [norm(verdict?.food), norm(inputName)].filter(Boolean);
+    if (names.length) candidates.set(names[0], { names, verdict });
+  };
+  if (typeof debugFrameDir === 'string' && debugFrameDir) console.log('[agent] debug frames are on; they hold what the caller shows');
 
   return {
     // Anonymous tools: the object key is the tool name.
     look_at_camera: llm.tool({
-      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Call this every time they ask about something in view; each call takes a new picture.',
-      execute: guard(async () => {
+      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest.',
+      execute: guard(async call => {
+        // A new look replaces the last one, whether or not it works.
+        lastFoods = [];
+        candidates.clear();
         const picture = camera ? await camera.jpeg() : null;
         if (!picture) return fail('no_camera_picture');
         if (typeof debugFrameDir === 'string' && debugFrameDir) {
-          try {
-            await mkdir(debugFrameDir, { recursive: true });
-            await writeFile(join(debugFrameDir, `frame-${Date.now()}.jpg`), picture);
-            console.log('[agent] debug frame saved');
-          } catch { /* a failed debug write never fails the tool */ }
+          try { await saveDebugFrame(debugFrameDir, picture); } catch { /* a failed debug write never fails the tool */ }
         }
         const seen = await renal.describeImage({ jpeg: picture });
         if (!seen?.ok || seen.kind === 'unclear') return fail('unclear_picture');
         const got = await renal.getProfile({ patientId });
         if (!got?.ok) return fail('profile_unavailable');
-        const foods = seen.label?.product
+        const named = f => f && typeof f.name === 'string' && f.name.trim();
+        const all = seen.label?.product
           ? [{ name: seen.label.product, label: seen.label }]
-          : (Array.isArray(seen.foods) ? seen.foods : []).slice(0, 6);
+          : (Array.isArray(seen.foods) ? seen.foods : []).filter(named);
+        const foods = all.slice(0, 6);
+        const notChecked = all.length - foods.length;
         if (foods.length === 0) return fail('unclear_picture');
         const verdicts = await Promise.all(foods.map(async food => {
           try { return await renal.checkFood({ food, profile: got.profile }); } catch { return null; }
         }));
-        const results = [];
+        const rows = [];
         const good = [];
         verdicts.forEach((v, i) => {
-          if (v?.ok === true) { results.push(row(v)); good.push(v); }
-          else results.push({ food: String(foods[i].name), verdict: 'unknown', spoken: "I can't tell, I couldn't check that one just now." });
+          if (v?.ok === true) {
+            const verdict = normalVerdict(v.verdict);
+            rows.push({ food: clean(v.food ?? foods[i].name, 80), verdict, swap: clean(v.swap, 40), speak: max => spokenVerdict({ ...v, verdict }, max) });
+            good.push({ v, name: foods[i].name });
+          } else {
+            rows.push({ food: clean(foods[i].name, 80), verdict: 'unknown', swap: '', speak: () => "I can't tell, I couldn't check that one just now." });
+          }
         });
         if (good.length === 0) return fail('check_failed');
-        lastFoods = foods.map(f => f.name);
-        lastVerdicts = good;
-        return { ok: true, kind: seen.kind, results };
-      }, timeoutMs),
+        // The most serious verdicts come first, so a shortened result never hides an "avoid".
+        rows.sort((a, b) => RANK[a.verdict] - RANK[b.verdict]);
+        if (!call.timedOut) {
+          lastFoods = foods.map(f => clean(f.name, 80));
+          good.forEach(g => remember(g.v, g.name));
+        }
+        const build = (n, capBad, capOk, capFood) => {
+          const results = rows.slice(0, n).map(r => ({
+            food: r.food.slice(0, capFood),
+            verdict: r.verdict,
+            spoken: r.speak(r.verdict === 'ok' ? capOk : capBad),
+            ...(r.swap ? { swap: r.swap.slice(0, 40) } : {}),
+          }));
+          const omitted = rows.length - n + notChecked;
+          return { ok: true, kind: seen.kind, results, ...(omitted > 0 ? { omitted, say: `I only covered ${n} of ${n + omitted} foods. Please show me the rest.` } : {}) };
+        };
+        for (const [capBad, capOk, capFood] of [[130, 60, 40], [90, 30, 30], [60, 0, 24]]) {
+          const r = build(rows.length, capBad, capOk, capFood);
+          if (size(r) <= LOOK_LIMIT) return r;
+        }
+        for (let n = rows.length - 1; n > 1; n--) {
+          const r = build(n, 60, 0, 24);
+          if (size(r) <= LOOK_LIMIT) return r;
+        }
+        return build(1, 60, 0, 24);
+      }, { timeoutMs, limit: LOOK_LIMIT }),
     }),
     check_food: llm.tool({
-      description: 'Judge a food the caller names without showing it.',
-      parameters: z.object({ name: z.string(), grams: z.number().nullable() }),
-      execute: guard(async ({ name, grams }) => {
+      description: 'Judge a food the caller names without showing it. Pass null for grams when they gave no amount.',
+      parameters: z.object({ name: z.string().trim().min(1).max(80), grams: z.number().positive().max(5000).nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const name = typeof args.name === 'string' ? args.name.trim() : '';
+        if (!name || name.length > 80) return fail('bad_food');
+        const grams = args.grams ?? null;
+        if (grams !== null && !(typeof grams === 'number' && Number.isFinite(grams) && grams > 0 && grams <= 5000)) return fail('bad_amount');
         const got = await renal.getProfile({ patientId });
         if (!got?.ok) return fail('profile_unavailable');
         const v = await renal.checkFood({ food: { name, grams }, profile: got.profile });
         if (v?.ok !== true) return fail('check_failed');
-        lastFoods = [String(name)];
-        lastVerdicts = [v];
-        return { ok: true, ...row(v) };
-      }, timeoutMs),
+        if (!call.timedOut) remember(v, name);
+        const verdict = normalVerdict(v.verdict);
+        return { ok: true, food: clean(v.food ?? name, 80), verdict, spoken: spokenVerdict({ ...v, verdict }), swap: clean(v.swap, 60) || null };
+      }, { timeoutMs }),
     }),
     suggest_meal: llm.tool({
       description: 'Suggest meals to cook from the foods the caller last showed on camera, within their limits.',
-      execute: guard(async () => {
+      execute: guard(async call => {
         if (lastFoods.length === 0) return fail('nothing_seen');
         const got = await renal.getProfile({ patientId });
         if (!got?.ok) return fail('profile_unavailable');
@@ -148,60 +277,95 @@ export function buildTools({
         const meals = Array.isArray(r?.meals) ? r.meals : [];
         if (!r?.ok || meals.length === 0) return fail('check_failed');
         const seen = new Map();
-        for (const m of meals) for (const item of m.missing ?? []) {
-          const key = String(item?.name ?? '').trim().toLowerCase();
-          if (key && !seen.has(key)) seen.set(key, { name: String(item.name), quantity: String(item.quantity ?? '') });
+        for (const m of meals) for (const item of Array.isArray(m?.missing) ? m.missing : []) {
+          const key = clean(item?.name, 80).toLowerCase();
+          if (key && !seen.has(key)) seen.set(key, { name: clean(item.name, 80), quantity: clean(item.quantity, 80) });
         }
-        lastMissing = [...seen.values()];
+        if (!call.timedOut) lastMissing = [...seen.values()];
         return { ok: true, meals: meals.map((m, i) => ({
-          title: m.title, minutes: m.minutes, why: m.why,
-          missing: (m.missing ?? []).map(x => x.name),
-          ...(i === 0 ? { steps: (m.steps ?? []).slice(0, 3) } : {}),
+          title: clean(m?.title, 60),
+          ...(Number.isFinite(m?.minutes) ? { minutes: m.minutes } : {}),
+          why: clean(m?.why, 90),
+          missing: (Array.isArray(m?.missing) ? m.missing : []).slice(0, 4).map(x => clean(x?.name, 40)).filter(Boolean),
+          ...(i === 0 ? { steps: (Array.isArray(m?.steps) ? m.steps : []).slice(0, 3).map(s => clean(s, 70)) } : {}),
         })) };
-      }, timeoutMs),
+      }, { timeoutMs, limit: MEALS_LIMIT }),
     }),
     log_meal: llm.tool({
-      description: 'Log what the caller just ate: the foods from the last look or food check.',
-      execute: guard(async () => {
-        if (lastVerdicts.length === 0) return fail('nothing_to_log');
-        for (const verdict of lastVerdicts) {
-          const r = await renal.logFood({ patientId, verdict });
-          if (!r?.ok) return fail('tool_failed');
+      description: 'Log what the caller says they ate. Pass the names of only the foods they confirmed eating, as they were judged by look_at_camera or check_food.',
+      parameters: z.object({ foods: z.array(z.string().trim().min(1).max(80)).min(1).max(6) }),
+      execute: guard(async (call, args = {}) => {
+        const asked = (Array.isArray(args.foods) ? args.foods : []).map(norm).filter(Boolean).slice(0, 6);
+        const matched = [];
+        const notFound = [];
+        for (const want of asked) {
+          const hit = [...candidates.values()].find(c => c.names.some(n => n === want || (want.length >= 3 && n.length >= 3 && (n.includes(want) || want.includes(n)))));
+          if (!hit) notFound.push(want);
+          else if (!matched.includes(hit)) matched.push(hit);
         }
-        const logged = lastVerdicts.map(v => String(v.food));
-        lastVerdicts = [];
-        return { ok: true, logged };
-      }, timeoutMs),
+        if (matched.length === 0) return fail('nothing_to_log');
+        const logged = [];
+        for (const c of matched) {
+          if (call.timedOut) break; // the caller was told it failed: start nothing new
+          const r = await renal.logFood({ patientId, verdict: c.verdict });
+          if (!r?.ok) return fail('tool_failed');
+          // Forget a food as soon as it is logged, so a retry never logs it twice.
+          for (const [key, value] of candidates) if (value === c) candidates.delete(key);
+          logged.push(clean(c.verdict.food, 80));
+        }
+        return { ok: true, logged, ...(notFound.length ? { notFound: notFound.map(n => clean(n, 40)) } : {}) };
+      }, { timeoutMs }),
     }),
     todays_totals: llm.tool({
       description: 'How much sodium, potassium and phosphorus the caller has had today and how much is left.',
       execute: guard(async () => {
         const r = await renal.getToday({ patientId });
         if (!r?.ok) return fail('tool_failed');
-        return { ok: true, totals: three(r.totals), remaining: three(r.remaining) };
-      }, timeoutMs),
+        const totals = three(r.totals);
+        const remaining = three(r.remaining);
+        if (!totals || !remaining) return fail('tool_failed');
+        return { ok: true, totals, remaining };
+      }, { timeoutMs }),
     }),
     start_cart: llm.tool({
-      description: 'Start filling an online grocery cart with items the caller needs. Pass an empty list to use the missing items from the last meal suggestion. This never pays or checks out.',
+      description: 'Start filling an online grocery cart with items the caller needs. Pass an empty list to use the missing items from the last meal suggestion. This never pays or checks out. If it says it has not heard back, check cart_status before trying again.',
       parameters: z.object({ items: z.array(z.object({ name: z.string(), quantity: z.string() })) }),
-      execute: guard(async ({ items }) => {
-        let list = (Array.isArray(items) ? items : []).map(i => ({ name: cut(i?.name), quantity: cut(i?.quantity) })).filter(i => i.name);
+      execute: guard(async (call, args = {}) => {
+        let list = (Array.isArray(args.items) ? args.items : []).map(i => ({ name: cut(i?.name), quantity: cut(i?.quantity) })).filter(i => i.name);
         if (list.length === 0) list = lastMissing.map(i => ({ name: cut(i.name), quantity: cut(i.quantity) })).filter(i => i.name);
         list = list.slice(0, 12);
         if (list.length === 0) return fail('nothing_to_buy');
         const r = await actions.startCart({ items: list });
         if (r?.error === 'busy') return fail('cart_busy');
         if (!r?.ok) return fail('tool_failed');
-        return { ok: true, started: true, items: list.map(i => i.name) };
-      }, timeoutMs),
+        return { ok: true, started: true, items: list.slice(0, 5).map(i => i.name.slice(0, 50)), ...(list.length > 5 ? { more: list.length - 5 } : {}) };
+        // A timeout cannot cancel startCart, which may still start: report it as unconfirmed, not as failed.
+      }, { timeoutMs, onTimeout: () => fail('cart_unconfirmed') }),
     }),
     cart_status: llm.tool({
       description: 'How the grocery cart is going.',
       execute: guard(async () => {
         const s = await actions.getCartStatus();
         if (!s?.ok) return fail('tool_failed');
-        return { ok: true, state: s.state, step: s.step, added: (s.added ?? []).map(a => a.name), missing: s.missing ?? [], total: s.total };
-      }, timeoutMs),
+        const SAY = {
+          idle: 'No cart is running.',
+          running: 'The cart is still being filled.',
+          waiting_for_patient: 'The cart is paused and waiting for you.',
+          done: 'The cart is filled and ready for you to review. I can text you the link.',
+        };
+        if (s.state === 'failed') return fail('cart_failed', { state: 'failed' });
+        if (typeof s.state !== 'string' || !Object.hasOwn(SAY, s.state)) return fail('tool_failed');
+        const names = list => (Array.isArray(list) ? list : []).map(x => clean(typeof x === 'object' ? x?.name : x, 50)).filter(Boolean);
+        const added = names(s.added);
+        const missing = names(s.missing);
+        return {
+          ok: true, state: s.state, say: SAY[s.state],
+          ...(clean(s.step, 60) ? { step: clean(s.step, 60) } : {}),
+          added: added.slice(0, 5), ...(added.length > 5 ? { addedMore: added.length - 5 } : {}),
+          missing: missing.slice(0, 5), ...(missing.length > 5 ? { missingMore: missing.length - 5 } : {}),
+          ...(Number.isFinite(s.total) ? { total: s.total } : {}),
+        };
+      }, { timeoutMs }),
     }),
     text_cart_link: llm.tool({
       description: 'Text the caller a link to their filled cart so they can review it and check out themselves.',
@@ -209,11 +373,40 @@ export function buildTools({
         if (!phoneOk) return fail('no_phone');
         const s = await actions.getCartStatus();
         if (!s?.ok) return fail('tool_failed');
-        if (!s.cartUrl) return fail('no_cart_link');
-        const r = await actions.sendText({ phone, text: `Your grocery cart from your renal dietitian is ready to review: ${s.cartUrl} Nothing has been paid; please check it and check out yourself.` });
-        if (!r?.ok) return fail('tool_failed');
+        let link = null;
+        try {
+          const u = new URL(String(s.cartUrl ?? ''));
+          if ((u.protocol === 'https:' || u.protocol === 'http:') && u.href.length <= 500) link = u.href;
+        } catch { /* not a link */ }
+        if (s.state !== 'done' || !link) return fail('no_cart_link');
+        if (sentLinks.has(link)) return fail('link_already_sent');
+        // Marked before sending: if the send times out it may still arrive, and a repeat would duplicate it.
+        sentLinks.add(link);
+        let r;
+        try { r = await actions.sendText({ phone, text: `Your grocery cart from your renal dietitian is ready to review: ${link} Nothing has been paid; please check it and check out yourself.` }); }
+        catch { sentLinks.delete(link); return fail('tool_failed'); }
+        if (!r?.ok) { sentLinks.delete(link); return fail('tool_failed'); }
         return { ok: true, sent: true };
-      }, timeoutMs),
+      }, { timeoutMs }),
     }),
   };
+}
+
+// Races a promise against a timer. Resolves to { ok } and never rejects.
+export async function withTimeout(work, ms) {
+  let timer;
+  try {
+    const late = new Promise(resolve => { timer = setTimeout(() => resolve({ ok: false, timedOut: true }), ms); });
+    const done = Promise.resolve().then(work).then(() => ({ ok: true }), error => ({ ok: false, error }));
+    return await Promise.race([done, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// At call end: stop any cart so it cannot block or leak into the next call. Never throws.
+export async function endCall({ actions = actionsModule, timeoutMs = 4000 } = {}) {
+  const r = await withTimeout(() => actions.stopCart(), timeoutMs);
+  if (!r.ok) console.error(`[agent] stopCart ${r.timedOut ? 'timed out' : 'failed'}`);
+  return r;
 }
