@@ -225,14 +225,14 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 ### What to do next
 
-1. Run the cart end to end through the agent: set `GROCERY_STORE_URL` (and `INSTACART_API_KEY` for the fallback) and sign in by hand with `node actions/login.mjs`. The cart and the outbound mealtime call have not been seen working on a live call since the merge.
+1. Run the cart end to end through the agent: set `GROCERY_STORE_URL` (and `INSTACART_API_KEY` for the fallback) and sign in by hand with `node actions/login.mjs` (Kroger shows "access denied" to a sign-in from automation, so on kroger.com the cart runs as a guest; try another approved store if search results matter). The cart and the outbound mealtime call have not been seen working on a live call since the merge.
 2. Ask Chert staff: how to turn off the auto-reply the project sends to inbound texts, whether the trial line can place outbound calls, and whether photos can be received on the trial.
 3. The demo video and the write-up.
 4. Everyone: the patient texts the line before the demo call.
 
 ### Local implementation status
 
-The Track C modules are implemented, but no grocery store login has been tested yet. Set `GROCERY_STORE_URL` and sign in manually before claiming a retailer works. `agent/agent.mjs` exists and the root `npm start` runs the agent.
+The Track C modules are implemented. On 14 Nov 2026 the cart was run against the real Gemini Interactions API on https://www.kroger.com, headed, as a guest (Kroger refuses sign-in to automation), asking for unsalted butter, white rice and 3 apples. The model loop worked: about 30 actions were carried out and every `function_result` was accepted. No item was added (0 added, 0 missing, total $0.00): Kroger's search never produced results for the model, it kept retrying search and browsing categories, and the run stopped on the first item (unsalted butter) with state `failed` when a `go_back` timed out after about 200 seconds. It never reached checkout. The cart has still not been run on a live call. Set `GROCERY_STORE_URL` and test a retailer before claiming it works. `agent/agent.mjs` exists and the root `npm start` runs the agent.
 
 Reported when Track C was written: the runtime dependency audit showed three high advisories in
 `sharp@0.35.3`, which is pinned transitively by `@livekit/agents@1.8.0`.
@@ -297,13 +297,14 @@ latest = new Uint8Array(await sharp(png)
 
 **Why you cannot publish the video yourself.** Chert only shows the caller video that comes from the same participant that speaks. The browser has to travel through Track A's video track, which is why the hand-off is a frame, not a LiveKit track.
 
-**The model loop.** Google's computer-use guide is at https://ai.google.dev/gemini-api/docs/computer-use. The current implementation follows the Interactions API and enables its prompt-injection check. Real store interactions remain unverified until the user signs into a store and runs the manual test.
+**The model loop.** Google's computer-use guide is at https://ai.google.dev/gemini-api/docs/computer-use. The current implementation follows the Interactions API and enables its prompt-injection check. Seen live on 14 Nov 2026 on kroger.com: the loop runs and the API accepts the follow-up turns, but the model could not get Kroger search results, so no item was added yet (see Local implementation status).
 
-- Use `@google/genai` and the Interactions API: `ai.interactions.create({ model, input, tools: [{ type: 'computer_use', environment: 'browser' }] })`. The guide's examples use `gemini-4-hydrogen`.
-- The model replies with function calls such as `navigate { url }`, `click { x, y }`, `type { text, press_enter }`, `scroll { x, y, direction }`, `press_key { key }`, `wait { seconds }`, `go_back`, `take_screenshot`. Each also carries an `intent` string.
-- Coordinates are 0 to 999 on both axes. Convert with `x / 1000 * WIDTH` and `y / 1000 * HEIGHT` before calling Playwright.
-- After each action, send back a `function_result` with the same `call_id`, the current URL as text, and a PNG screenshot, passing `previous_interaction_id` from the last response.
-- A function call may include `safety_decision` with `require_confirmation`. Do not auto-approve. Set `state: 'waiting_for_patient'` and stop; the agent asks the patient on the call.
+- Use `@google/genai` and the Interactions API: `ai.interactions.create({ model, input, tools: [{ type: 'computer_use', environment: 'browser' }] })`. The guide's examples use `gemini-4-hydrogen`. Build the client with `new GoogleGenAI({ apiKey, apiVersion: 'v1beta' })`: on v1 an image input is rejected (`'image' is not supported ... in v1, it is available in v1beta`).
+- The reply has no `outputs`. It has `status` (`requires_action` while it wants an action, `completed` when done) and `steps`: `thought` steps, `function_call` steps (`id`, `name`, `arguments`) and `model_output` steps whose `content` holds the final text. `intent` and `safety_decision` are inside `arguments`.
+- The model replies with function calls such as `navigate { url }`, `click { x, y }`, `double_click`, `triple_click`, `move`, `type { text, press_enter }`, `scroll { x, y, direction, magnitude_in_pixels }`, `press_key { key }`, `hotkey { keys }`, `wait { seconds }`, `go_back`, `go_forward`, `take_screenshot`. Each also carries an `intent` string inside `arguments`. Actions the cart does not support get a `function_result` saying `unsupported action`.
+- Coordinates are 0 to 999 on both axes (seen live: a click for the cart icon came back as x 967, y 61, which only lands on the cart link when scaled). Convert with `x / 1000 * WIDTH` and `y / 1000 * HEIGHT` before calling Playwright.
+- After each action, send back a `function_result` with the same `call_id`, a text part `{"url":"<origin+path>"}`, and a PNG image part, passing `previous_interaction_id` from the last response. Do not send `tools` again on the follow-up (a follow-up that re-sent `tools` was rejected with a 400 safety error in a probe; the form without `tools` was accepted in the live run).
+- A function call may include `arguments.safety_decision` with `require_confirmation`. Do not auto-approve. Set `state: 'waiting_for_patient'` and stop; the agent asks the patient on the call.
 
 The `intent` strings are useful: copy the latest one into `getCartStatus().step` so the agent can narrate what is happening ("searching for unsalted chicken broth").
 
