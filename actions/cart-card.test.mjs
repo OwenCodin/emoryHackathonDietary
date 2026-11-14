@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import sharp from 'sharp';
-import { HEIGHT, WIDTH } from '../shared/video.mjs';
+import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
 import { CARD_MAX_TILES, cardLayout, cartCardSvg, downloadPicture, renderCartCard } from './cart-card.mjs';
 
 const GOOD = 'https://www.kroger.com/product/images/large/front/0001';
@@ -132,4 +132,57 @@ test('cartCardSvg shows quantity, footer, and never NaN', () => {
 
 test('cartCardSvg uses the passed total when finite', () => {
   assert.ok(cartCardSvg({ items: [item('A', 1)], total: 9.99 }).includes('Total $9.99'));
+});
+
+// ---- safe area -------------------------------------------------------------------------------
+
+const MARGIN_X = Math.floor(0.09 * WIDTH);
+const MARGIN_Y = Math.floor(0.09 * HEIGHT);
+const BG = [15, 36, 48, 255];
+const inMargin = (x, y) => x < MARGIN_X || x >= WIDTH - MARGIN_X || y < MARGIN_Y || y >= HEIGHT - MARGIN_Y;
+const px = (frame, x, y) => Array.from(frame.subarray((y * WIDTH + x) * 4, (y * WIDTH + x) * 4 + 4));
+function marginIsOnly(frame, rgba) {
+  for (let y = 0; y < HEIGHT; y++) {
+    for (let x = 0; x < WIDTH; x++) {
+      if (inMargin(x, y) && px(frame, x, y).some((v, k) => v !== rgba[k])) return false;
+    }
+  }
+  return true;
+}
+function insideHasContent(frame) {
+  for (let y = MARGIN_Y; y < HEIGHT - MARGIN_Y; y++) {
+    for (let x = MARGIN_X; x < WIDTH - MARGIN_X; x++) {
+      if (px(frame, x, y).slice(0, 3).some((v, k) => v !== BG[k])) return true;
+    }
+  }
+  return false;
+}
+
+test('cart card keeps the outer 9% background-only at the default scale', async () => {
+  const pic = await png(40, 40);
+  for (const n of [1, 3, 7]) {
+    const items = Array.from({ length: n }, (_, i) => item(`Kroger Honeycrisp Apples 4 Pack Tray ${i + 1}`, 2 + i, 1 + (i % 2), pic));
+    const frame = await renderCartCard({ storeName: 'Kroger', items, step: 'Kroger cart updated', scale: SAFE_SCALE_DEFAULT });
+    assertExact(frame);
+    assert.ok(marginIsOnly(frame, BG), `margin, ${n} items`);
+    assert.ok(insideHasContent(frame), `content, ${n} items`);
+  }
+});
+
+test('cart card photos land at the scaled positions', async () => {
+  const pic = await png(200, 120, '#336699');
+  const frame = await renderCartCard({ items: [item('Rice', 1.89, 1, pic)], scale: SAFE_SCALE_DEFAULT });
+  const a = safeArea(SAFE_SCALE_DEFAULT);
+  const { photo } = cardLayout(1)[0];
+  const cx = Math.round(a.x + (photo.x + photo.w / 2) * SAFE_SCALE_DEFAULT);
+  const cy = Math.round(a.y + (photo.y + photo.h / 2) * SAFE_SCALE_DEFAULT);
+  assert.deepEqual(px(frame, cx, cy), [51, 102, 153, 255]);
+});
+
+test('cart card at scale 1 is the old full-frame layout', async () => {
+  const svg = cartCardSvg({ items: [item('Rice', 1.89)], scale: 1 });
+  assert.ok(svg.includes('scale(1)'));
+  const frame = await renderCartCard({ items: [item('A', 1), item('B', 2), item('C', 3)], scale: 1 });
+  assertExact(frame);
+  assert.ok(!marginIsOnly(frame, BG));
 });

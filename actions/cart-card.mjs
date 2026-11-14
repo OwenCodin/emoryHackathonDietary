@@ -3,7 +3,7 @@
 // getCartFrame. Pure apart from sharp and the injected fetch. downloadPicture, cartCardSvg and
 // cardLayout never throw to their caller; renderCartCard can throw and the cart wraps it.
 import sharp from 'sharp';
-import { HEIGHT, WIDTH } from '../shared/video.mjs';
+import { HEIGHT, SAFE_SCALE, WIDTH, safeArea, safeTransform } from '../shared/video.mjs';
 import { isKrogerImageUrl } from './kroger.mjs';
 
 const PICTURE_TIMEOUT_MS = 3000;
@@ -115,6 +115,7 @@ const TILE_W = 373;
 const TILE_H = 245;
 const PAD = 14;
 const PHOTO_H = 120;
+const NAME_SIZE = 26; // larger than the old 24 so names stay readable after the safe-area inset
 
 // The rectangles for `count` tiles (at most CARD_MAX_TILES), each with its photo box.
 export function cardLayout(count) {
@@ -151,13 +152,13 @@ function nameLines(name, width) {
   const words = name.split(' ');
   let first = words[0];
   let used = 1;
-  while (used < words.length && textWidth(`${first} ${words[used]}`, 24) <= width) {
+  while (used < words.length && textWidth(`${first} ${words[used]}`, NAME_SIZE) <= width) {
     first = `${first} ${words[used]}`;
     used += 1;
   }
-  if (textWidth(first, 24) > width) return [fitText(first, { max: 24, min: 24, width }).text];
+  if (textWidth(first, NAME_SIZE) > width) return [fitText(first, { max: NAME_SIZE, min: NAME_SIZE, width }).text];
   if (used >= words.length) return [first];
-  return [first, fitText(words.slice(used).join(' '), { max: 24, min: 24, width }).text];
+  return [first, fitText(words.slice(used).join(' '), { max: NAME_SIZE, min: NAME_SIZE, width }).text];
 }
 
 function tileSvg(tile, item) {
@@ -172,20 +173,20 @@ function tileSvg(tile, item) {
     text(photo.x + photo.w / 2, photo.y + photo.h / 2 + 9, 28, PLACEHOLDER_TEXT, 'No picture', { anchor: 'middle' }),
   ];
   const nameY = photo.y + photo.h + 30;
-  lines.forEach((line, i) => parts.push(text(tile.x + PAD, nameY + i * 26, 24, LIGHT, escapeXml(line))));
+  lines.forEach((line, i) => parts.push(text(tile.x + PAD, nameY + i * 28, NAME_SIZE, LIGHT, escapeXml(line))));
   if (price) parts.push(text(tile.x + PAD, tile.y + tile.h - 14, 28, WHITE, escapeXml(price), { weight: 700 }));
   parts.push('</g>');
   return parts.join('');
 }
 
 // The whole card as SVG text, without photos (renderCartCard composites those over the placeholders).
-export function cartCardSvg({ storeName = 'Kroger', items = [], step = '', total } = {}) {
+export function cartCardSvg({ storeName = 'Kroger', items = [], step = '', total, scale = SAFE_SCALE } = {}) {
   const list = normalise(items);
   const sum = list.reduce((acc, i) => acc + (i.price ?? 0), 0);
   const shownTotal = typeof total === 'number' && Number.isFinite(total) ? total : sum;
   const store = cleanText(storeName, 30) || 'Kroger';
   const title = fitText(`Your ${store} cart`, { max: 48, min: 30, width: 700, bold: true });
-  const stepText = fitText(cleanText(step, 120), { max: 28, min: 20, width: 1160 });
+  const stepText = fitText(cleanText(step, 120), { max: 30, min: 24, width: 1160 });
   const overflow = list.length > CARD_MAX_TILES;
   const shown = overflow ? list.slice(0, CARD_MAX_TILES - 1) : list;
   const layout = cardLayout(overflow ? CARD_MAX_TILES : list.length);
@@ -193,6 +194,7 @@ export function cartCardSvg({ storeName = 'Kroger', items = [], step = '', total
   const out = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}">`,
     `<rect width="${WIDTH}" height="${HEIGHT}" fill="${BACKGROUND}"/>`,
+    `<g transform="${safeTransform(scale)}">`,
     text(60, 78, title.size, WHITE, escapeXml(title.text), { weight: 700 }),
     text(1220, 78, 44, shownTotal > 0 || list.length ? TOTAL_COLOR : WHITE, escapeXml(`Total ${money(shownTotal)}`), { weight: 700, anchor: 'end' }),
   ];
@@ -206,7 +208,7 @@ export function cartCardSvg({ storeName = 'Kroger', items = [], step = '', total
       + '</g>',
     );
   }
-  out.push(text(WIDTH / 2, 692, 30, SOFT, escapeXml(FOOTER), { anchor: 'middle' }), '</svg>');
+  out.push(text(WIDTH / 2, 692, 32, SOFT, escapeXml(FOOTER), { anchor: 'middle' }), '</g></svg>');
   return out.join('');
 }
 
@@ -224,17 +226,23 @@ async function preparePhoto(picture, box) {
 }
 
 // Renders the card to a fresh exact-size RGBA Uint8Array. Throws on failure (the cart catches it).
-export async function renderCartCard({ storeName, items, step, total } = {}) {
+export async function renderCartCard({ storeName, items, step, total, scale = SAFE_SCALE } = {}) {
+  const a = safeArea(scale);
   const list = normalise(items);
-  const svg = cartCardSvg({ storeName, items: list, step, total });
+  const svg = cartCardSvg({ storeName, items: list, step, total, scale });
   const overflow = list.length > CARD_MAX_TILES;
   const shown = overflow ? list.slice(0, CARD_MAX_TILES - 1) : list;
   const layout = cardLayout(overflow ? CARD_MAX_TILES : list.length);
 
-  const photos = await Promise.all(shown.map((item, i) => preparePhoto(item.picture, layout[i].photo)));
+  // Photos are placed with the same mapping as the SVG group: frame = safe origin + design * scale.
+  const boxes = shown.map((_, i) => {
+    const p = layout[i].photo;
+    return { left: Math.round(a.x + p.x * scale), top: Math.round(a.y + p.y * scale), w: Math.round(p.w * scale), h: Math.round(p.h * scale) };
+  });
+  const photos = await Promise.all(shown.map((item, i) => preparePhoto(item.picture, boxes[i])));
   const composites = [];
   photos.forEach((input, i) => {
-    if (input) composites.push({ input, left: layout[i].photo.x, top: layout[i].photo.y });
+    if (input) composites.push({ input, left: boxes[i].left, top: boxes[i].top });
   });
 
   let timer;
