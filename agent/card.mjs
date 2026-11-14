@@ -3,7 +3,7 @@
 // cleanText -> fitText -> escapeXml, in that order, and the builders read only the fields of the
 // display object listed below (never a name, phone number or patient id).
 import sharp from 'sharp';
-import { HEIGHT, WIDTH } from '../shared/video.mjs';
+import { HEIGHT, SAFE_SCALE, WIDTH, safeArea, safeTransform } from '../shared/video.mjs';
 
 const FONT = 'Helvetica Neue, Helvetica, Arial, sans-serif';
 const BACKGROUND = '#0F2430';
@@ -114,17 +114,19 @@ function icon(kind, color, x, y, size, id) {
   return `${open}${body}</g>`;
 }
 
-const open = () => `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}"><rect width="${WIDTH}" height="${HEIGHT}" fill="${BACKGROUND}"/>`;
+// The background fills the whole frame; everything else sits in one group inside the safe area.
+const open = scale => `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}"><rect width="${WIDTH}" height="${HEIGHT}" fill="${BACKGROUND}"/><g transform="${safeTransform(scale)}">`;
+const close = '</g></svg>';
 const footer = () => text(WIDTH / 2, 645, 36, SOFT, escapeXml("Follows your care team's limits"), { anchor: 'middle' });
 const wordmark = () => text(60, 108, 44, WHITE, 'RenaLine', { weight: 800 });
 
-export function brandSvg() {
+export function brandSvg({ scale = SAFE_SCALE } = {}) {
   return [
-    open(),
+    open(scale),
     text(WIDTH / 2, 300, 128, WHITE, 'RenaLine', { weight: 800, anchor: 'middle' }),
     text(WIDTH / 2, 380, 56, SOFT, 'Your renal dietitian', { anchor: 'middle' }),
     footer(),
-    '</svg>',
+    close,
   ].join('');
 }
 
@@ -135,12 +137,12 @@ function onlineTag() {
     + text(1220 - w / 2, 105, 32, SOFT, label, { weight: 700, anchor: 'middle' });
 }
 
-export function cardSvg(display) {
+export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   const items = Array.isArray(display?.items) ? display.items.filter(i => i && typeof i === 'object') : [];
   const unjudged = display?.unjudged === true;
-  if (items.length === 0 && !unjudged) return brandSvg();
+  if (items.length === 0 && !unjudged) return brandSvg({ scale });
   const more = Number.isInteger(display?.more) && display.more > 0 ? display.more : 0;
-  const parts = [open(), wordmark()];
+  const parts = [open(scale), wordmark()];
   if (display?.online === true) parts.push(onlineTag());
 
   if (unjudged) {
@@ -180,17 +182,31 @@ export function cardSvg(display) {
     const left = Math.max(0, items.length - 3) + more;
     if (left > 0) parts.push(text(60, 470, 44, SOFT, escapeXml(`+${left} more`)));
   }
-  parts.push(footer(), '</svg>');
+  parts.push(footer(), close);
   return parts.join('');
 }
 
 // ---- voice wave -------------------------------------------------------------------------------
 
-function fillRect(pixels, x0, y0, x1, y1, [r, g, b]) {
-  const xa = Math.max(0, Math.min(WIDTH, Math.round(x0)));
-  const xb = Math.max(0, Math.min(WIDTH, Math.round(x1)));
-  const ya = Math.max(WAVE.top, Math.min(WAVE.bottom, Math.round(y0)));
-  const yb = Math.max(WAVE.top, Math.min(WAVE.bottom, Math.round(y1)));
+// The wave band in frame pixels, after the safe-area mapping.
+export function waveBand(scale = SAFE_SCALE) {
+  const a = safeArea(scale);
+  return {
+    top: Math.floor(a.y + WAVE.top * scale),
+    bottom: Math.ceil(a.y + WAVE.bottom * scale),
+    left: Math.floor(a.x + WAVE_LEFT * scale),
+    right: Math.ceil(a.x + (WAVE_LEFT + WAVE_SPAN) * scale),
+  };
+}
+
+// x0..y1 are in design space; they are mapped to frame space before rounding.
+function fillRect(pixels, x0, y0, x1, y1, [r, g, b], scale) {
+  const a = safeArea(scale);
+  const band = waveBand(scale);
+  const xa = Math.max(0, Math.min(WIDTH, Math.round(a.x + x0 * scale)));
+  const xb = Math.max(0, Math.min(WIDTH, Math.round(a.x + x1 * scale)));
+  const ya = Math.max(band.top, Math.min(band.bottom, Math.round(a.y + y0 * scale)));
+  const yb = Math.max(band.top, Math.min(band.bottom, Math.round(a.y + y1 * scale)));
   for (let y = ya; y < yb; y++) {
     for (let x = xa; x < xb; x++) {
       const i = (y * WIDTH + x) * 4;
@@ -200,19 +216,19 @@ function fillRect(pixels, x0, y0, x1, y1, [r, g, b]) {
 }
 
 // Mutates the RGBA buffer in place, only inside the wave band.
-export function paintWave(pixels, tick, speaking) {
+export function paintWave(pixels, tick, speaking, scale = SAFE_SCALE) {
   const t = Number.isFinite(tick) ? tick : 0;
   if (speaking) {
     for (let i = 0; i < WAVE.bars; i++) {
       const level = Math.abs(Math.sin(t * 0.55 + i * 0.7)) * (0.35 + 0.65 * Math.abs(Math.sin(t * 0.23 + i * 1.3)));
       const h = 10 + level * 66;
       const x = WAVE_LEFT + i * (WAVE.barWidth + WAVE.gap);
-      fillRect(pixels, x, WAVE.center - h / 2, x + WAVE.barWidth, WAVE.center + h / 2, WAVE.color);
+      fillRect(pixels, x, WAVE.center - h / 2, x + WAVE.barWidth, WAVE.center + h / 2, WAVE.color, scale);
     }
   } else {
-    fillRect(pixels, WAVE_LEFT, WAVE.center - WAVE.flat / 2, WAVE_LEFT + WAVE_SPAN, WAVE.center + WAVE.flat / 2, WAVE.color);
+    fillRect(pixels, WAVE_LEFT, WAVE.center - WAVE.flat / 2, WAVE_LEFT + WAVE_SPAN, WAVE.center + WAVE.flat / 2, WAVE.color, scale);
     const dotX = WAVE_LEFT + ((Math.abs(Math.floor(t)) * 9) % (WAVE_SPAN - 14));
-    fillRect(pixels, dotX, WAVE.center - 7, dotX + 14, WAVE.center + 7, [255, 255, 255]);
+    fillRect(pixels, dotX, WAVE.center - 7, dotX + 14, WAVE.center + 7, [255, 255, 255], scale);
   }
 }
 
