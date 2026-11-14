@@ -145,7 +145,9 @@ function fromScratchPrompt(profile, count, lines) {
   ].join('\n');
 }
 
-async function proposeMeals(contents, injected) {
+// fastFirst: the from-scratch prompt is long, and the primary model took about 25 s on it live while the
+// fallback model answered in about 3 s. Every proposal is re-checked in code, so the quick model goes first there.
+async function proposeMeals(contents, injected, { fastFirst = false } = {}) {
   if (!injected && !process.env.GOOGLE_API_KEY) return FALLBACK_MEALS;
   try {
     let ai = injected;
@@ -155,10 +157,15 @@ async function proposeMeals(contents, injected) {
     }
     const result = await generateJsonWithFallback({
       ai,
-      models: [
-        process.env.RENAL_MEALS_MODEL || 'gemini-3.8-flash',
-        process.env.RENAL_MEALS_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
-      ],
+      models: fastFirst
+        ? [
+          process.env.RENAL_MEALS_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
+          process.env.RENAL_MEALS_MODEL || 'gemini-3.8-flash',
+        ]
+        : [
+          process.env.RENAL_MEALS_MODEL || 'gemini-3.8-flash',
+          process.env.RENAL_MEALS_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
+        ],
       buildRequest: (model, signal) => ({
         model,
         contents,
@@ -278,7 +285,7 @@ async function suggestFromScratch({ profile, requestedCount, catalog, check, ai 
     `${name}: ${result.portion}, sodium ${result.nutrients.sodiumMg} mg, potassium ${result.nutrients.potassiumMg} mg, phosphorus ${result.nutrients.phosphorusMg} mg`);
 
   const proposalCount = Math.min(requestedCount + 2, 5);
-  const proposals = (await proposeMeals(fromScratchPrompt(profile, proposalCount, lines), ai))
+  const proposals = (await proposeMeals(fromScratchPrompt(profile, proposalCount, lines), ai, { fastFirst: true }))
     .filter(validMeal)
     .slice(0, proposalCount);
 
