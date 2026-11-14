@@ -8,13 +8,14 @@ If you change anything in this section, change it in `agent/README.md`, `renal/R
 
 ### The product in one paragraph
 
-A renal dietitian you can FaceTime. A kidney or dialysis patient calls the line, points the camera at a food label, plate, fridge or store shelf, and hears whether it fits their sodium, potassium, phosphorus and fluid limits. The agent can also call the patient at mealtimes and fill a grocery cart in a browser that is shown on the call. There is no app.
+RenaLine is a renal dietitian you can FaceTime. (The repo is still called `emoryHackathonDietary`.) A kidney or dialysis patient calls the line, points the camera at a food label, plate, fridge or store shelf, and hears whether it fits their sodium, potassium, phosphorus and fluid limits. The agent can also call the patient at mealtimes and fill a grocery cart in a browser that is shown on the call. There is no app.
 
 ### Stack and layout
 
 - Node 24 (22.23.2 or later also works), ES modules, files end in `.mjs`.
 - One `package.json` and one `.env.local` at the repo root. Each track owns one folder and does not edit the others.
 - Pinned, do not upgrade: `@livekit/agents` 1.8.0, `@livekit/agents-plugin-google` 1.8.0, `@livekit/rtc-node` 0.13.35. These are the versions Chert's starter ships with. The 1.10.0 packages need `rtc-node` 1.x, which Chert's starter code has not been run against.
+- The `overrides` pin (`glob` ^14.0.2 under `@livekit/throws-transformer`) came with Track C's merge and must stay.
 
 ```
 package.json         one package for the whole repo
@@ -26,7 +27,7 @@ renal/               Track B  the renal brain: profile, image reading, verdicts,
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video
 ```
 
-Root `package.json` scripts and dependencies:
+Root `package.json`:
 
 ```json
 {
@@ -46,30 +47,49 @@ Root `package.json` scripts and dependencies:
     "playwright": "^1.65.1",
     "sharp": "^0.35.5",
     "zod": "^4.1.8"
+  },
+  "overrides": {
+    "@livekit/throws-transformer": {
+      "glob": "^14.0.2"
+    }
   }
 }
 ```
 
-`.gitignore` must contain `node_modules/`, `.env`, `.env.*`, `!.env.example`, `*.log`, `.DS_Store` and `actions/.browser-profile/` (that folder holds a logged-in store session).
+`.gitignore` contains `node_modules/`, `.env`, `.env.*`, `!.env.example`, `*.log`, `.DS_Store` and `actions/.browser-profile/` (that folder holds a logged-in store session).
 
 ### Environment variables
 
-| Variable | Used by | What it is |
-|---|---|---|
-| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | A, C | One LiveKit Cloud project. All three values from the same project. |
-| `AGENT_NAME` | A, C | The name the agent registers with, for example `renal-dietitian`. |
-| `GOOGLE_API_KEY` | A, B, C | Gemini API key. The LiveKit plugin reads exactly this name; pass it explicitly to `new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY })`. |
-| `USDA_API_KEY` | B | FoodData Central key (free, from api.data.gov). `DEMO_KEY` works but is heavily rate limited. |
-| `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Project API key (`ftk_...`, created on the Chert Developer page), project UUID and line UUID. |
-| `PATIENT_PHONE` | C | The demo patient's phone in international form, for example `+15551234567`. Must be a phone verified for the Chert project. |
+Every key in `.env.example` is listed here. Required means the feature it serves does not work without it. Keys go in `.env.local` only. Never paste them in chat, commit them, or print them.
 
-Keys go in `.env.local` only. Never paste them in chat, commit them, or print them.
+| Variable | Used by | Required? | What it is and the default |
+|---|---|---|---|
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | A, C | Optional | One LiveKit Cloud project, all three from the same project. Leave the `YOUR_` placeholders as they are to use Chert rooms through `chert dev`. |
+| `AGENT_NAME` | A, C | Optional | The name the agent registers with. Code default `renal-dietitian`. |
+| `GOOGLE_API_KEY` | A, B, C | Required | Gemini API key. The LiveKit plugin reads exactly this name. Google Search grounding for the online lookup needs billing enabled on this key. |
+| `GEMINI_LIVE_MODEL` | A | Optional | Gemini Live voice model. Empty means `gemini-3.8-live`. |
+| `RENAL_VISION_MODEL`, `RENAL_VISION_FALLBACK_MODEL` | B | Optional | Models for reading pictures. Empty means `gemini-3.8-flash` and fallback `gemini-3.5-flash-lite`. The fallback starts when the primary errors or has not answered in 2.5 s. |
+| `RENAL_MEALS_MODEL`, `RENAL_MEALS_FALLBACK_MODEL` | B | Optional | Same for meal ideas. Same defaults. |
+| `RENAL_LOOKUP_MODEL` | B | Optional | Model for the Google Search grounded nutrition lookup. Empty means `gemini-3.5-flash-lite`. |
+| `RENAL_LOOKUP_FALLBACK_MODEL` | B | Optional | Fallback model for that lookup. Empty means no fallback. |
+| `PLAYGROUND` | A | Optional | `1` makes the camera accept video from any non-agent participant, for LiveKit playground tests. Leave empty for real calls. |
+| `AGENT_DEBUG_FRAME_DIR` | A | Optional | A folder outside this repo where each camera picture sent to `describeImage` is also saved. Empty saves nothing. The pictures show what the caller shows, so keep them out of git. |
+| `AGENT_FAKE_CART` | A | Optional | `1` shows a built-in magenta test frame as the cart, for the simulated proof only. Leave empty for real calls. |
+| `AGENT_ALLOW_BARGE_IN` | A | Optional | `1` lets the caller interrupt the agent mid-reply. Empty keeps replies uninterrupted. |
+| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only). Empty uses a folder in the system temp directory. |
+| `AGENT_CALL_WARN_SECONDS` | A | Optional | Seconds after the greeting before the agent warns the call will end soon. Empty means 240. |
+| `USDA_API_KEY` | B | Optional | FoodData Central key from api.data.gov. `DEMO_KEY` works but allows 10 requests an hour; a personal key allows 3600 an hour. |
+| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json`. Empty uses `renal/data`. Tests use a temp folder. |
+| `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Required for texts and outbound calls | Project API key (`ftk_...`, from the Chert Developer page), project id and line id. |
+| `PATIENT_PHONE` | A, C | Required for texts and outbound calls | The patient's phone in international form, for example `+1XXXXXXXXXX`. If it is empty, `text_cart_link` and `text_recipe` fail with `no_phone`. |
+| `GROCERY_STORE_URL` | C | Required for the cart | HTTPS URL of a supported grocery retailer. |
+| `INSTACART_API_KEY` | C | Optional | Instacart shopping-list fallback when the store blocks automation. |
 
 ### Rules for every function that crosses a track boundary
 
 1. `async`, takes one plain object, returns one plain object. The one exception is `getCartFrame`, which is synchronous because it is called 15 times a second.
 2. Never throws. On failure it returns `{ ok: false, error: 'short reason' }`. On success the object has `ok: true`.
-3. Returns within its time budget, because a person is waiting on a live call: `checkFood` 3 s, `describeImage` 6 s, `suggestMeals` 6 s, `startCart` and `callPatient` return as soon as the work has started.
+3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
 4. Works with no network where it can (cached or seeded data), so the demo survives bad wifi.
 
 ### Types
@@ -98,11 +118,18 @@ Keys go in `.env.local` only. Never paste them in chat, commit them, or print th
   nutrients: { sodiumMg: 1, potassiumMg: 422, phosphorusMg: 26 },   // for the portion judged, or null
   portion: '1 medium (118 g)',
   swap: 'an apple' ,                                                // or null
-  source: 'label' | 'usda' | 'rule' | 'none' }
+  source: 'label' | 'usda' | 'web' | 'rule' | 'none' }
 
 // CartItem: one thing to buy.
 { name: 'unsalted chicken broth', quantity: '1 carton' }
 ```
+
+Notes on `Verdict`:
+
+- `source` is `'label'` for numbers printed on a label, `'usda'` for the built-in list and USDA matches, `'web'` for the online lookup, `'rule'` when a hard rule decided it, and `'none'` when nothing was found.
+- `portion` can read `'100 g (no typical serving size known)'`. Reasons and portion can say "judged as <food>" when a food was matched by its plain name.
+- A `'web'` verdict's `say` ends with "That is from what I found online, not from your care team's list."
+- Food names seen on a plate, fridge or shelf are generic (no brands). A label keeps its printed product name.
 
 ### The hand-offs
 
@@ -113,11 +140,13 @@ Track A imports everything below and exports nothing. B and C do not import each
 | Function | Returns |
 |---|---|
 | `getProfile({ patientId })` | `{ ok, profile }` |
-| `describeImage({ jpeg })` where `jpeg` is a `Buffer` | a `Seen` |
-| `checkFood({ food, profile })` | a `Verdict` |
-| `suggestMeals({ foods, profile, count })` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
+| `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
+| `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
+| `suggestMeals({ foods, profile, count }, { ai }?)` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
 | `logFood({ patientId, verdict })` | `{ ok }` |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
+
+The optional second argument `{ ai }` is an injected Gemini client. It is a test seam only; the agent never passes it.
 
 `actions/index.mjs` (Track C)
 
@@ -128,7 +157,9 @@ Track A imports everything below and exports nothing. B and C do not import each
 | `getCartFrame()` (synchronous) | A `Uint8Array` of exactly `WIDTH * HEIGHT * 4` RGBA bytes showing the browser, or `null` when no cart is running. |
 | `stopCart()` | `{ ok }` |
 | `callPatient({ phone, reason })` | `{ ok, callId }` once Chert has accepted the request |
-| `sendText({ phone, text })` | `{ ok }` |
+| `sendText({ phone, text })` | `{ ok }`. Refuses any recipient other than `PATIENT_PHONE`. |
+
+The agent log prints each tool result as `[agent] tool <name> ok=true|false [error=<code>]`.
 
 ### What is verified and what is not
 
@@ -140,18 +171,33 @@ Checked on 13 November 2026 by reading the installed packages, Chert's docs and 
 - `livekit-server-sdk` 2.19.3 sets the token's `nbf` to now, so a `ttl` of two hours or less meets Chert's bridge-token rule.
 - The USDA search endpoint returns sodium (id 1093), potassium (1092) and phosphorus (1091) per 100 g.
 
-Not verified, because it needs keys or a real call. Each is somebody's first task:
+Seen in live testing on 14 November 2026:
 
-- Caller camera delivery ("caller capture") is a separate opt-in per Chert line. If it is off on our line, the agent cannot see anything. Track A asks Chert staff and tests this first.
-- Which Gemini Live model the 1.8.0 plugin can drive, and whether the greeting works with it. Track A.
-- Whether our trial line may place outbound calls. Track C asks Chert staff.
-- The exact Gemini model IDs. Google's docs on 13 November list `gemini-3.8-live` for voice, `gemini-3.8-flash` as the stable fast model, and `gemini-4-hydrogen` in the computer-use examples. Confirm each in AI Studio before relying on it.
+- A real call runs with `npm start` in one terminal and `npx @trychert/facetime@0.1.0-beta.20 dev --agent renal-dietitian --minutes 30` in another. One `chert dev` session holds the team's single line at a time.
+- The caller's camera now reaches the agent. With `AGENT_DEBUG_FRAME_DIR` set, the saved frames show what the caller shows.
+- iMessage through Chert on the trial line: the agent can only reply. A send is refused with HTTP 403 `shared_reply_window_closed` until the patient's phone has joined the project and has texted the line a message with words in it within the last 24 hours. After that a send returned `{"state":"sent"}`.
+- The shared USDA `DEMO_KEY` allows 10 requests an hour and ran out during testing.
+- `gemini-3.8-flash` was overloaded all day (503s, timeouts). Vision and meals fall back to `gemini-3.5-flash-lite` after 2.5 s. Google Search grounding needs billing on the Gemini key; without it every grounded request returned 429 "exceeded your current quota".
+
+The Live voice model defaults to `gemini-3.8-live` when `GEMINI_LIVE_MODEL` is empty (see `agent/agent.mjs`).
+
+Not verified yet:
+
+- The grocery cart on a live call.
+- The outbound mealtime call, and whether the trial allows outbound calls.
+- `text_cart_link` and `text_recipe` from a live call. Only a direct API send worked.
+- Pantry memory on a live call (tested with fakes only).
+- The online lookup live with billing on.
+- Receiving photos by iMessage (parked: photo-only messages did not show up through the API on the trial project).
+- Turning off the auto-reply Chert sends to inbound texts on the project.
 
 ### Shared limits
 
-- One Chert line, one call at a time, 5 minutes per call, 50 FaceTime minutes in total on the trial. About one minute is already used. Budget: 25 for Track A, 15 for integration, 9 for recording the demo. Say in the team chat before you place a call.
-- The trial ends 24 or 48 hours after activation (Chert's CLI and setup doc disagree); activation was about 6:30pm on Friday 13 November. Check the billing page.
-- Only one computer runs `chert dev` (Track A's). If no agent is connected for 3 hours the line is released and the number can change, so keep it running.
+- One Chert line, one call at a time. One `chert dev` session holds the line, so only one person can be on it. Say in the team chat before you place a call.
+- Chert trial: 50 FaceTime minutes in total (about 33 left at 16:20 UTC on 14 November), 5 minutes per call. The trial ends 15 November 2026 23:12 UTC. Spend minutes only on scripted test calls and the demo recording.
+- If no agent is connected for 3 hours the line is released and the number can change.
+- The USDA `DEMO_KEY` allows only 10 requests an hour. Use a personal key.
+- The online lookup needs billing enabled on the Gemini key.
 - The agent gives guidance inside limits a care team set. It says so on the call, never changes the limits, and never pays for anything.
 
 ### Checkpoints
@@ -169,39 +215,65 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 ## Track A in detail
 
+### What changed in your module during the merge
+
+- The real `renal/` and `actions/` replaced the stubs. `agent/tools.mjs` is still the only file that imports them.
+- The agent tests now run on deterministic fakes (`agent/fake-modules.mjs`, not the real modules). `agent/contract.test.mjs` checks the real renal and actions contracts.
+- Pantry memory (`agent/memory.mjs`): the agent remembers food names between shots and calls, per patient, and the file expires after 2 hours. New tools: `pantry_list`, `remove_from_pantry`, `clear_pantry` and `text_recipe`.
+- `look_at_camera` gained an optional `place` argument (`home` or `store`) and the failure codes `vision_failed`, `unclear_picture` and `no_food_seen`. It no longer returns `check_failed`. A look that saw foods is always `ok: true`, with `unjudged: true` when none could be checked, `online: true` when a verdict came from the online lookup, and `remembered: true` when foods were added to the pantry.
+- `agent/toollog.mjs` formats the log line `[agent] tool <name> ok=true|false [error=<code>]`. The code must match `^[a-z_]{1,40}$`, otherwise it logs `other`. Other values: `none` (failed with no code), `tool_exception` (the tool threw), `bad_output` (not an object), and the tool name `unknown_tool` for an invalid name.
+- The prompt (`agent/prompt.mjs`) has rules for the kitchen tour (fridge, then cupboards, one shot at a time) and for texting a recipe only when the caller agrees.
+- Seen on live calls on 14 November: the agent called `check_food` and `look_at_camera`, and a fridge frame (1280 by 720) was read as kind `fridge` with two foods. Pantry memory and `text_recipe` are tested with fakes only; the texting path was proven by a direct API send, not yet from a live call.
+
+### What to do next
+
+1. Run a scripted live test call: fridge, cupboard, "what can I cook", text me the recipe, and a Coke by name. The patient phone must have joined the project and texted the line within 24 hours first (see "Texting the patient" in the root README). Spend minutes only on scripted calls.
+2. Fix what the calls reveal.
+3. Decide whether a store-shelf look should name brands. Today shelf looks return plain food names without brands (open decision).
+4. Everyone: the patient texts the line before the demo call.
+
 ### What you build
 
 | File | Purpose |
 |---|---|
-| `agent/agent.mjs` | Entry point. Starts from Chert's video starter. |
-| `agent/greet.mjs`, `agent/chert-rooms.mjs` | Copied unchanged from Chert's video starter. |
+| `agent/agent.mjs` | Entry point: joins the room, greets, runs the Gemini Live session, switches video between the face and the cart, logs each tool result. |
+| `agent/chert-rooms.mjs`, `agent/greet.mjs` | Chert's starter code: run the agent the way `chert dev` needs it, and greet once when `bridge_ready` arrives. |
 | `agent/face.mjs` | The picture shown when no cart is running. |
 | `agent/camera.mjs` | Keeps the caller's latest video frame and turns it into a JPEG on request. |
-| `agent/tools.mjs` | The tools the voice model can call. The only place B and C are imported. |
+| `agent/tools.mjs` | The tools the voice model can call. The only place `renal/` and `actions/` are imported. |
 | `agent/prompt.mjs` | The dietitian's instructions and greetings. |
+| `agent/memory.mjs` | Per-patient shopping list and pantry kept between calls (food names only, 2-hour expiry). |
+| `agent/toollog.mjs` | Formats the per-tool log line. |
+| `agent/turns.mjs` | Turn handling for noisy calls: barge-in switch, reply watchdog, time-warning delay. |
+| `agent/video.mjs` | Picks which picture goes out on each frame tick (the cart frame when one is offered). |
+| `agent/outbound.mjs` | Validates the job metadata for outbound calls. |
+| `agent/fake-modules.mjs` | Test fixtures: fakes of `renal/` and `actions/`. |
+| `agent/sim/` | A simulated Chert call (see "Testing without spending FaceTime minutes"). |
 
 ### Order of work
 
-1. **Scaffold (by Friday 10pm).** Outside the repo, run `npx @trychert/facetime@0.1.0-beta.20 new starter --video` and copy `agent.mjs`, `greet.mjs`, `chert-rooms.mjs` and `face.mjs` into `agent/`. Read the starter's `AGENTS.md` once; it lists Chert's rules and error codes. At the repo root create `package.json` from the shared contract, `.env.example` and `.gitignore`, plus `shared/video.mjs` and stub `renal/index.mjs` and `actions/index.mjs` that return canned objects of the shapes in the contract. Push to `main`.
-2. **Ask Chert staff two questions before writing more code.** "Is caller capture enabled on our line?" and "Which line do we use if not?" Without caller capture the agent is blind and the plan changes.
-3. **First call with the starter untouched** (it uses OpenAI Realtime and needs `OPENAI_API_KEY`), if anyone on the team has an OpenAI key. This proves the line, LiveKit and `chert dev` before you change anything. If nobody has a key, skip to step 4.
-4. **Switch the voice to Gemini** (see "Voice model" below). Call again. The greeting must be heard.
-5. **Camera in** (`camera.mjs`). Prove a frame arrives by saving one JPEG to disk during a call and opening it.
-6. **Tools** against the stubs, then against B's real functions as they merge.
-7. **Video out switch**: face when idle, `getCartFrame()` when it returns frames.
-8. **Outbound entry path** for twist 3, with Track C.
-9. **In-aisle behaviour** for twist 4 (prompt and tool behaviour; see below).
+This is the original plan. Everything in it is built; see the Status section of the root README for what has been seen on a live call.
+
+1. **Scaffold** from Chert's video starter (`npx @trychert/facetime@0.1.0-beta.20 new starter --video`, run outside the repo). Built.
+2. **Ask Chert staff about caller capture.** The caller's camera now reaches the agent (14 November), so this is answered for our line.
+3. **First call with the starter untouched.** Superseded: the agent runs on Gemini Live.
+4. **Switch the voice to Gemini.** Built (see "Voice model").
+5. **Camera in** (`camera.mjs`). Built; debug frames show what the caller shows.
+6. **Tools** against `renal/` and `actions/`. Built.
+7. **Video out switch** (face or cart). Built.
+8. **Outbound entry path.** Built; not seen on a live call.
+9. **In-aisle behaviour.** Built as prompt and tool behaviour; not tried in a store.
 
 ### Running it
 
 ```sh
 npm install
-npm start                                  # terminal 1, repo root
-npx @trychert/facetime@0.1.0-beta.20 doctor   # terminal 2, repo root
-npx @trychert/facetime@0.1.0-beta.20 dev      # terminal 2; wait for the waiting-room message
+npm start                                                                            # terminal 1, repo root
+npx @trychert/facetime@0.1.0-beta.20 doctor                                          # terminal 2, repo root
+npx @trychert/facetime@0.1.0-beta.20 dev --agent renal-dietitian --minutes 30        # terminal 2; wait for the waiting-room message
 ```
 
-Call the line with FaceTime Video. After any code change restart both terminals; a waiting room can hold old code. Stop `chert dev` with Ctrl+C only, never by killing the process, or the line stays held.
+Both terminals stay running. Call the line with FaceTime Video. After any code change restart both. Stop `chert dev` with Ctrl+C only, never by killing the process, or the line stays held. To save the frames the agent looks at, set `AGENT_DEBUG_FRAME_DIR` to a folder outside the repo; the frames show what the caller shows, so keep them out of git.
 
 ### Rules Chert enforces
 
@@ -212,149 +284,59 @@ Call the line with FaceTime Video. After any code change restart both terminals;
 
 ### Voice model
 
-Replace the OpenAI import and model in the starter:
+`agent/agent.mjs` uses `google.realtime.RealtimeModel` with the model from `GEMINI_LIVE_MODEL`, or `gemini-3.8-live` when it is empty, and the voice `Puck`. The plugin reads `GOOGLE_API_KEY`.
 
-```js
-import * as google from '@livekit/agents-plugin-google';
-
-const session = new voice.AgentSession({
-  llm: new google.realtime.RealtimeModel({ model: 'gemini-3.8-live', voice: 'Puck' }),
-});
-```
-
-The plugin reads `GOOGLE_API_KEY`. Voice names it accepts include `Puck`, `Kore`, `Aoede`, `Charon`.
-
-This is the least certain part of the whole project, so test it in this order and stop at the first that works:
-
-1. `gemini-3.8-live`. Google's docs call it the default voice model, but plugin 1.8.0 predates it.
-2. `gemini-3.1-flash-live-preview`. Known to the plugin, but for any model whose name contains `3.1` the plugin throws on `session.generateReply(...)`. The greeting in `agent.mjs` uses exactly that call, so with this model the greeting must be replaced: put "Start the call by greeting the caller" in the instructions and check that the model speaks within 10 seconds of `bridge_ready`. If it stays silent the call is dropped.
-3. Keep the starter's OpenAI Realtime voice. Chert has tested it. Gemini still does the vision and the shopping, which is what the Gemini track is judged on.
-
-Do not spend more than two hours on this choice.
+The older notes below are still true as background. Plugin 1.8.0 predates `gemini-3.8-live`. For any model whose name contains `3.1` the plugin throws on `session.generateReply(...)`, so with such a model the greeting would need to come from the instructions instead. I have not checked from the repo which model ran on the live calls; do not assume one.
 
 ### Camera in
 
-The starter ignores the caller's camera (`AutoSubscribe.AUDIO_ONLY`). Change `ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY)` to `ctx.connect()` so video is subscribed, keep `videoEnabled: false` in `inputOptions` (the voice model cannot use frames), and register the watcher before `ctx.connect()`:
-
-```js
-// agent/camera.mjs
-import { RoomEvent, TrackKind, VideoBufferType, VideoStream } from '@livekit/rtc-node';
-import sharp from 'sharp';
-
-export function watchCaller(room) {
-  let latest = null;            // { frame, at }
-  let generation = 0;
-
-  const start = track => {
-    const mine = ++generation;
-    const reader = new VideoStream(track).getReader();
-    (async () => {
-      try {
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done || mine !== generation) break;
-          latest = { frame: value.frame, at: Date.now() };
-        }
-      } catch { /* track ended */ }
-      if (mine === generation) latest = null;
-    })();
-  };
-
-  room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
-    if (track.kind === TrackKind.KIND_VIDEO && participant.identity.startsWith('chert-bridge-')) start(track);
-  });
-  room.on(RoomEvent.TrackUnsubscribed, track => {
-    if (track.kind === TrackKind.KIND_VIDEO) { generation++; latest = null; }
-  });
-
-  return {
-    // A JPEG of what the caller is showing now, or null if there is no fresh frame.
-    async jpeg(maxAgeMs = 1500) {
-      if (!latest || Date.now() - latest.at > maxAgeMs) return null;
-      const rgba = latest.frame.convert(VideoBufferType.RGBA);
-      return sharp(Buffer.from(rgba.data), { raw: { width: rgba.width, height: rgba.height, channels: 4 } })
-        .jpeg({ quality: 85 }).toBuffer();
-    },
-  };
-}
-```
-
-This is written against the installed type definitions and has not been run on a call. Chert's docs name the caller's tracks `facetime-remote-audio` and `facetime-remote-video`, published by the participant `chert-bridge-<call id>`. They also warn that the captured picture may include FaceTime's own controls or self-preview, not a clean camera feed, so look at a saved frame before trusting it. A muted camera must return `null`, never an old frame.
+`agent/camera.mjs` exports `watchCaller(room, options)`. It keeps the latest frame from the caller's video track (the participant `chert-bridge-<call id>`, or any non-agent participant when `PLAYGROUND=1`) and returns a JPEG on request. A muted camera or a stale frame returns `null`, never an old picture. `agent/agent.mjs` connects with `ctx.connect()` so video is subscribed and keeps `videoEnabled: false` in `inputOptions` (the voice model cannot use frames). Chert's docs warn that the captured picture may include FaceTime's own controls or self-preview, so look at a saved debug frame before trusting a change.
 
 ### Tools
 
-```js
-// agent/tools.mjs
-import { llm } from '@livekit/agents';
-import { z } from 'zod';
-import { checkFood, describeImage, getProfile, getToday, logFood, suggestMeals } from '../renal/index.mjs';
-import { getCartStatus, sendText, startCart } from '../actions/index.mjs';
+The object key in `agent/tools.mjs` is the tool name. Everything a tool returns is read by the voice model, so results are small and every failure carries a fixed spoken `say` from `tools.mjs`, never a module's own error text. Every tool is guarded: a tool that takes more than 12 s returns `timeout`, and one that throws returns `tool_failed`.
 
-export function buildTools({ camera, patientId }) {
-  let lastFoods = [];      // names from the last look, for suggest_meal
-  let lastVerdicts = [];   // for log_meal
-  return {
-    look_at_camera: llm.tool({
-      description: 'Look at what the caller is showing right now (a label, plate, fridge or shelf) and judge it against their limits. Use whenever they ask about something in view.',
-      execute: async () => {
-        const jpeg = await camera.jpeg();
-        if (!jpeg) return { ok: false, error: 'no camera picture; ask the caller to turn the camera on and hold still' };
-        const seen = await describeImage({ jpeg });
-        if (!seen.ok || seen.kind === 'unclear') return { ok: false, error: 'could not make it out; ask them to hold it closer' };
-        const { profile } = await getProfile({ patientId });
-        const foods = seen.label ? [{ name: seen.label.product, label: seen.label }] : seen.foods.slice(0, 6);
-        lastFoods = foods.map(food => food.name);
-        lastVerdicts = await Promise.all(foods.map(food => checkFood({ food, profile })));
-        return { ok: true, kind: seen.kind, results: lastVerdicts.map(({ food, verdict, say, swap }) => ({ food, verdict, say, swap })) };
-      },
-    }),
-    check_food: llm.tool({
-      description: 'Judge a food the caller names without showing it.',
-      parameters: z.object({ name: z.string(), grams: z.number().nullable() }),
-      execute: async ({ name, grams }) => {
-        const { profile } = await getProfile({ patientId });
-        return checkFood({ food: { name, grams }, profile });
-      },
-    }),
-    // suggest_meal, log_meal, todays_totals, start_cart, cart_status and text_cart_link follow the same pattern.
-  };
-}
-```
+| Tool | What it does | Failure codes |
+|---|---|---|
+| `look_at_camera` (optional `place`: `home` or `store`) | Reads the caller's camera, judges each food seen, remembers fridge and shelf foods | `no_camera_picture`, `vision_failed`, `unclear_picture`, `no_food_seen` |
+| `check_food` | Judges a food the caller names | `bad_food`, `bad_amount`, `profile_unavailable`, `check_failed` |
+| `suggest_meal` | Suggests a meal from everything remembered from the kitchen | `nothing_seen`, `profile_unavailable`, `check_failed` |
+| `log_meal` | Logs what was eaten | `nothing_to_log`, `tool_failed` |
+| `todays_totals` | Today's totals and what is left | `tool_failed` |
+| `start_cart` | Starts the grocery cart | `nothing_to_buy`, `cart_busy`, `tool_failed`, `cart_unconfirmed` (timeout) |
+| `cart_status` | Reports the cart | `cart_failed`, `tool_failed` |
+| `text_cart_link` | Texts the cart link to the patient phone | `no_phone`, `no_cart_link`, `link_already_sent`, `tool_failed` |
+| `add_to_shopping_list`, `shopping_list`, `mark_item` | The shopping list kept between calls | `bad_items`, `bad_item`, `memory_unavailable` |
+| `pantry_list`, `remove_from_pantry`, `clear_pantry` | What the agent remembers from the kitchen | `bad_items`, `not_in_pantry`, `timeout` |
+| `text_recipe` | Texts one suggested recipe | `no_phone`, `no_recipe`, `which_recipe`, `recipe_already_sent`, `text_failed`, `text_unconfirmed` |
 
-Pass them with `new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo' }) })`. The object key is the tool name. Return small objects: everything a tool returns is read by the voice model, and a long result slows the reply.
-
-Whether Gemini Live calls tools reliably through plugin 1.8.0 is untested. Check it with `check_food` (no camera needed) straight after the first Gemini call works.
+Any tool can also return `timeout` or `tool_failed` from the guard. Whether Gemini Live calls tools reliably through plugin 1.8.0 was untested on 13 November; on 14 November live calls the agent called `check_food` and `look_at_camera`.
 
 ### Video out
 
-Use `WIDTH`, `HEIGHT`, `FPS` from `shared/video.mjs` for the `VideoSource`, not the starter's 640 by 360. In the frame timer:
-
-```js
-const cart = getCartFrame();                       // Uint8Array or null, from Track C
-const pixels = cart ?? drawFace(tick++, speaking);
-source.captureFrame(new VideoFrame(pixels, WIDTH, HEIGHT, VideoBufferType.RGBA));
-```
-
-`drawFace` loops over every pixel in JavaScript. At 1280 by 720 that is about 14 million pixel writes a second; if the agent's voice stutters, draw the face once into a few cached frames and reuse them, or lower `WIDTH` and `HEIGHT` in the one shared file and tell Track C. A phone held upright shows a wide picture small, so check on a real call that cart text is readable.
+Use `WIDTH`, `HEIGHT`, `FPS` from `shared/video.mjs` for the `VideoSource`. In the frame tick the agent takes Track C's `getCartFrame()` when it returns a frame of exactly the right length, and its own face otherwise (`agent/video.mjs`). `drawFace` loops over every pixel in JavaScript; at 1280 by 720 that is about 14 million pixel writes a second, so if the agent's voice stutters, cache a few frames or lower `WIDTH` and `HEIGHT` in the one shared file and tell Track C. Whether cart text is readable on a phone is not checked on a live call.
 
 ### Outbound calls (twist 3)
 
-Track C's `callPatient` creates a room and dispatches your agent into it with job metadata `{"outbound": true, "reason": "...", "bridgeIdentity": "chert-bridge-out-..."}`. Read it with `JSON.parse(ctx.job.metadata || '{}')`. When `outbound` is true your entry must behave differently from the inbound path:
+Track C's `callPatient` creates a room and dispatches your agent into it with job metadata `{"outbound": true, "reason": "...", "bridgeIdentity": "chert-bridge-out-..."}`. `agent/outbound.mjs` validates it. When `outbound` is true the entry must behave differently from the inbound path:
 
-- Do not wait for a participant. Chert requires the agent to be in the room, publishing its audio and video tracks, before it dials. Start the session at once with `participantIdentity` set to `bridgeIdentity`.
-- Stay silent until the room metadata gets `chert_bridge_ready` (Track C writes it when Chert reports the call was answered). `greet.mjs` then fires as usual. Use a check-in greeting: "It's dinner time. Show me your plate."
+- Do not wait for a participant. Chert requires the agent to be in the room, publishing its audio and video tracks, before it dials.
+- Stay silent until the room metadata gets `chert_bridge_ready`. `greet.mjs` then fires as usual with a check-in greeting.
+
+This path has not been seen on a live call, and whether the trial line may place outbound calls is unknown.
 
 ### In the aisle (twist 4)
 
-- Calls end at 5 minutes on the trial. Keep the shopping list and what has been approved in memory keyed by patient, so a second call picks up where the first stopped, and have the agent say at about four minutes that it will need a call back.
-- On a `shelf` picture, compare the products in view and name the best one by position or brand.
-- Stores are loud. Keep replies to one sentence and repeat the verdict word first: "Yes", "No", or "Small portion".
+- Calls end at 5 minutes on the trial. The shopping list and the pantry are kept per patient between calls, and the agent warns about the time limit after the greeting (default 240 seconds, `AGENT_CALL_WARN_SECONDS`).
+- On a `shelf` picture the agent compares the products in view. Shelf looks now return plain food names without brands.
+- Stores are loud. Keep replies short and say the verdict word first.
 
 ### Testing without spending FaceTime minutes
 
-- `renal` and `actions` stubs let every tool run with no network.
-- Connect to the agent from LiveKit's Agents Playground with your microphone and webcam. The agent registers under a name, so it only joins if the playground dispatches that name; look for an agent-name setting there. In the playground the other participant is not named `chert-bridge-...` and no `bridge_ready` arrives, so behind an environment flag such as `PLAYGROUND=1` accept any non-agent participant's video and let the caller speak first. Remove nothing from the real path.
-- Real FaceTime calls are for checkpoints only: greeting, camera frame, video out, hangup, then a second call to prove cleanup.
+- `npm test` needs no keys and no network. The agent tests use `agent/fake-modules.mjs`.
+- `agent/sim/` holds a simulated Chert call, a developer tool that is not part of `npm test`: `sim-call.mjs` creates a LiveKit room, joins as `chert-bridge-sim`, dispatches the agent, publishes a silent caller microphone (and optionally a picture or spoken text on macOS) and measures greeting timing, silence before the signal and video size. `fake-cart.mjs` is the magenta test cart used with `AGENT_FAKE_CART=1`. Read the header comments in `sim-call.mjs` for the flags. It needs LiveKit keys and an already running agent.
+- Connect to the agent from LiveKit's Agents Playground with your microphone and webcam. The agent registers under a name, so look for an agent-name setting there. Set `PLAYGROUND=1` so the camera accepts any non-agent participant's video.
+- Real FaceTime calls are for scripted checks only: greeting, camera frame, video out, hangup, then a second call to prove cleanup.
 
 ### Done means
 

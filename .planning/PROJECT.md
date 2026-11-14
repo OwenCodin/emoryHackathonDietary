@@ -14,11 +14,11 @@ A kidney patient can FaceTime the agent, point the camera at food, and hear a co
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ Root scaffold, shared video constants and contract-shaped stubs for `renal/` and `actions/` (SCAF-01 to SCAF-04) — Phase 1: Scaffold and stubs
 
 ### Active
 
-- [ ] Patient can FaceTime the agent's line and have a spoken conversation with an agent that sees their camera
+- [ ] Patient can FaceTime the agent's line and have a spoken conversation with an agent that can look at their camera on request (snapshot, not continuous video)
 - [ ] Agent knows the patient's renal limits (sodium, potassium, phosphorus, fluid) and any goals, set up before the call
 - [ ] Patient can show a food label, plate or fridge and get a yes / no / "this instead" answer tied to their limits
 - [ ] Agent can propose a meal from what it sees in the fridge that fits the patient's limits
@@ -58,7 +58,18 @@ A kidney patient can FaceTime the agent, point the camera at food, and hear a co
 
 **Demo.** The team wants an impressive demo video using Higgsfield for cinematic story shots around real product footage. Generated footage must not stand in for the product working. Whether the demo is a submitted video, a live pitch or both is not yet known.
 
+**Team split (decided 13 November).** Three tracks, one folder each, joined by the shared contract that opens `agent/README.md`, `renal/README.md` and `actions/README.md`: Track A the call (`agent/`), Track B the renal brain (`renal/`), Track C reaching out and shopping (`actions/`). This planning directory lives on the `agent` branch and its requirements and roadmap cover Track A only; Tracks B and C are built by teammates on their own branches and reach Track A through the contract's functions, stubbed until they merge.
+
+**Findings from reading the installed packages and Chert's docs (13 November).**
+- Chert's starter is Node (ES modules) on `@livekit/agents` 1.8.0, `@livekit/rtc-node` 0.13.35. Those versions are pinned.
+- In `@livekit/agents-plugin-google` (1.8.0 and 1.10.0) the Gemini voice model discards video frames. The agent therefore reads the camera as snapshots: grab the caller's latest frame, send it to Gemini through Track B's `describeImage`.
+- Seeing the caller ("caller capture") is a separate per-line opt-in at Chert. It must be confirmed with Chert staff for the team's line.
+- The caller only sees video published by the participant that speaks, so the shopping browser is shown through the agent's own video track; Track C supplies frames.
+- Outbound calls need a prepared LiveKit room with the agent already publishing, and a line enabled for outbound.
+
 **Open questions.**
+- Is caller capture enabled on the team's line?
+- Which Gemini Live model works with plugin 1.8.0, including the greeting? Fallback is the starter's OpenAI Realtime voice.
 - Does the free trial allow outbound calls, and to which numbers?
 - Which Gemini model handles live video and speech inside a LiveKit agent?
 - Trial validity: the CLI says 24 hours from activation, the setup doc says 48 hours for trials started by 18 November 2026.
@@ -87,6 +98,10 @@ A kidney patient can FaceTime the agent, point the camera at food, and hear a co
 | Agent stops at a filled cart and asks before buying | Safety and honesty; mirrors how consumer shopping agents behave | — Pending |
 | Higgsfield for story shots only, real recordings for the product | Polished demo without faking functionality | — Pending |
 | Limits entered at setup, not read from lab sheets | Twist 2 not selected | — Pending |
+| Three tracks (agent, renal, actions) joined by a shared contract; this plan covers Track A | Three people working in parallel on separate branches | — Pending |
+| Camera is read as on-demand snapshots, not live video | The Node Gemini voice plugin discards video frames | — Pending |
+| Keep Chert's pinned LiveKit versions (1.8.0 / rtc-node 0.13.35) | Newer packages need rtc-node 1.x, untested with Chert's starter | — Pending |
+| Browser frames go through the agent's video track | Chert shows video only from the speaking participant | — Pending |
 
 ## Evolution
 
@@ -106,4 +121,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-13 after initialization*
+*Last updated: 2026-11-13 after Phase 1 (scaffold and stubs)*

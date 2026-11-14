@@ -1,0 +1,14 @@
+{
+  "demo": {
+    "id": "demo",
+    "name": "Sam",
+    "limits": {
+      "sodiumMg": 2000,
+      "potassiumMg": 2000,
+      "phosphorusMg": 1000,
+      "fluidMl": 1000
+    },
+    "avoid": ["star fruit", "salt substitute"],
+    "setBy": "care team"
+  }
+}
