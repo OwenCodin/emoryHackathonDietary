@@ -170,7 +170,13 @@ const agent = defineAgent({
       await ctx.room.localParticipant.publishTrack(track, { source: TrackSource.SOURCE_CAMERA });
       timer = setInterval(frame, 1000 / FPS);
       // Not awaited: it resolves only once someone subscribes.
-      audioOut?.start(audioAbort.signal).catch(error => console.error(`[agent] audio publish failed ${error?.name ?? 'Error'}`));
+      // A call with no agent audio is dropped by Chert anyway, so a failed start ends the job rather than carrying on silently.
+      audioOut?.start(audioAbort.signal).catch(error => {
+        if (audioAbort.signal.aborted) return; // closed on shutdown, not a failure
+        console.error(`[agent] outbound audio failed ${error?.name ?? 'Error'}`);
+        markFailed(error);
+        ctx.shutdown('outbound_audio_failed');
+      });
       await session.start({
         room: ctx.room,
         agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo' }) }),
