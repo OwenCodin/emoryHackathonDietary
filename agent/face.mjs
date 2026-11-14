@@ -5,7 +5,7 @@ import { HEIGHT, SAFE_SCALE, WIDTH, safeArea } from '../shared/video.mjs';
 
 const SCALE = HEIGHT / 360;
 
-const BACKGROUND = [16, 40, 52], FACE = [141, 224, 196], INK = [16, 40, 52], ACCENT = [255, 200, 118];
+const BACKGROUND = [16, 40, 52], SKIN = [220, 165, 137], HAIR = [37, 32, 39], INK = [52, 40, 42], ACCENT = [255, 200, 118];
 
 /**
  * The per-pixel renderer. `blink` is a boolean, `mouth` is the mouth half-height in pixels (already scaled) and
@@ -14,18 +14,49 @@ const BACKGROUND = [16, 40, 52], FACE = [141, 224, 196], INK = [16, 40, 52], ACC
 export function renderFace({ blink, mouth, bar, scale = SAFE_SCALE }) {
   const pixels = new Uint8Array(WIDTH * HEIGHT * 4);
   const a = safeArea(scale);
-  const cx = WIDTH / 2, cy = HEIGHT / 2 - 10 * SCALE, radius = HEIGHT * 0.36;
+  const cx = WIDTH / 2, cy = HEIGHT / 2 - 18 * SCALE;
+  const ellipse = (x, y, x0, y0, rx, ry) => ((x - x0) / rx) ** 2 + ((y - y0) / ry) ** 2 < 1;
   for (let fy = 0; fy < HEIGHT; fy++) {
     for (let fx = 0; fx < WIDTH; fx++) {
       const x = (fx - a.x) / scale, y = (fy - a.y) / scale; // design coordinates
       let color = BACKGROUND;
-      if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) color = BACKGROUND;
-      else {
-      if ((x - cx) ** 2 + (y - cy) ** 2 < radius ** 2) color = FACE;
-      const eye = Math.abs(x - (cx - 45 * SCALE)) < 10 * SCALE || Math.abs(x - (cx + 45 * SCALE)) < 10 * SCALE;
-      if (eye && Math.abs(y - (cy - 35 * SCALE)) < (blink ? 2 : 14) * SCALE) color = INK;
-      if (((x - cx) / (48 * SCALE)) ** 2 + ((y - (cy + 45 * SCALE)) / mouth) ** 2 < 1) color = INK;
-      if (bar !== null && y > HEIGHT - 22 * SCALE && y < HEIGHT - 12 * SCALE && x > bar && x < bar + 40 * SCALE) color = ACCENT;
+      if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+        const face = ellipse(x, y, cx, cy, 176 * SCALE, 231 * SCALE);
+        const inHair = ellipse(x, y, cx, cy - 25 * SCALE, 204 * SCALE, 251 * SCALE);
+        const shoulders = ellipse(x, y, cx, HEIGHT + 18 * SCALE, 300 * SCALE, 242 * SCALE);
+        if (shoulders) color = [211, 228, 218];
+        if (shoulders && Math.abs(x - cx) < 103 * SCALE && y > cy + 185 * SCALE) color = [48, 132, 124];
+        if (ellipse(x, y, cx, cy + 204 * SCALE, 59 * SCALE, 91 * SCALE)) color = SKIN;
+        if (inHair) color = HAIR;
+        if (ellipse(x, y, cx - 171 * SCALE, cy + 31 * SCALE, 27 * SCALE, 47 * SCALE)
+          || ellipse(x, y, cx + 171 * SCALE, cy + 31 * SCALE, 27 * SCALE, 47 * SCALE)) color = SKIN;
+        if (face) {
+          const shade = Math.max(0, Math.min(20, Math.round((cy - y) / (231 * SCALE) * 10 + (cx - x) / (176 * SCALE) * 8)));
+          color = [Math.min(255, SKIN[0] + shade), Math.min(255, SKIN[1] + shade), Math.min(255, SKIN[2] + shade)];
+        }
+        const dx = Math.abs(x - cx);
+        const hairline = y < cy - (125 - dx * 0.18) * SCALE && inHair;
+        const sideHair = dx > 147 * SCALE && dx < 203 * SCALE && y > cy - 126 * SCALE && y < cy + 154 * SCALE;
+        if (hairline || sideHair) color = HAIR;
+
+        const eyeY = cy - 32 * SCALE;
+        const eyeX = 56 * SCALE;
+        const leftEye = ellipse(x, y, cx - eyeX, eyeY, 26 * SCALE, (blink ? 3 : 15) * SCALE);
+        const rightEye = ellipse(x, y, cx + eyeX, eyeY, 26 * SCALE, (blink ? 3 : 15) * SCALE);
+        if ((leftEye || rightEye) && !blink) color = [250, 244, 235];
+        if (!blink && (ellipse(x, y, cx - eyeX, eyeY, 7 * SCALE, 10 * SCALE)
+          || ellipse(x, y, cx + eyeX, eyeY, 7 * SCALE, 10 * SCALE))) color = [81, 117, 110];
+        if (!blink && (ellipse(x, y, cx - eyeX, eyeY, 3 * SCALE, 6 * SCALE)
+          || ellipse(x, y, cx + eyeX, eyeY, 3 * SCALE, 6 * SCALE))) color = INK;
+        const leftBrow = ellipse(x, y, cx - eyeX, cy - 63 * SCALE, 36 * SCALE, 7 * SCALE);
+        const rightBrow = ellipse(x, y, cx + eyeX, cy - 63 * SCALE, 36 * SCALE, 7 * SCALE);
+        if (leftBrow || rightBrow) color = [91, 62, 56];
+        if (Math.abs(x - cx) < 6 * SCALE && y > cy - 8 * SCALE && y < cy + 73 * SCALE) color = [177, 115, 96];
+        const mouthRx = 25 * SCALE, mouthRy = Math.max(2 * SCALE, mouth);
+        if (ellipse(x, y, cx, cy + 111 * SCALE, mouthRx + 5 * SCALE, mouthRy + 4 * SCALE)) color = [155, 83, 87];
+        if (ellipse(x, y, cx, cy + 111 * SCALE, mouthRx, mouthRy)) color = INK;
+        if (ellipse(x, y, cx, cy + 111 * SCALE + mouthRy * 0.55, 11 * SCALE, 2 * SCALE)) color = [205, 116, 117];
+        if (bar !== null && y > HEIGHT - 22 * SCALE && y < HEIGHT - 12 * SCALE && x > bar && x < bar + 40 * SCALE) color = ACCENT;
       }
       const i = (fy * WIDTH + fx) * 4;
       pixels[i] = color[0]; pixels[i + 1] = color[1]; pixels[i + 2] = color[2]; pixels[i + 3] = 255;
