@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
-import test from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { after } from 'node:test';
 import {
   checkFood,
   describeImage,
@@ -9,6 +11,14 @@ import {
   logFood,
   suggestMeals,
 } from './index.mjs';
+
+// Keep diary and USDA cache writes out of the committed renal/data files.
+const stateDir = await mkdtemp(join(tmpdir(), 'renal-state-'));
+process.env.RENAL_STATE_DIR = stateDir;
+after(async () => {
+  delete process.env.RENAL_STATE_DIR;
+  await rm(stateDir, { recursive: true, force: true });
+});
 
 const profile = {
   id: 'demo',
@@ -142,9 +152,7 @@ test('suggests and verifies seeded meals offline', async () => {
 });
 
 test('persists diary entries and computes today totals', async () => {
-  const diaryPath = new URL('./data/diary.json', import.meta.url);
-  const original = await readFile(diaryPath, 'utf8');
-  try {
+  {
     const logged = await logFood({
       patientId: 'demo',
       verdict: {
@@ -161,8 +169,6 @@ test('persists diary entries and computes today totals', async () => {
     assert.equal(today.totals.sodiumMg, 2);
     assert.equal(today.totals.potassiumMg, 194);
     assert.equal(today.remaining.potassiumMg, profile.limits.potassiumMg - 194);
-  } finally {
-    await writeFile(diaryPath, original, 'utf8');
   }
 });
 

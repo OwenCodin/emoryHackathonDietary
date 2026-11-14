@@ -3,6 +3,15 @@ import { errorResult, isFiniteNonNegative, readData, writeData } from './data.mj
 const NUTRIENT_KEYS = ['sodiumMg', 'potassiumMg', 'phosphorusMg'];
 let pendingWrite = Promise.resolve();
 
+async function readDiary() {
+  try {
+    return await readData('diary.json');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { days: {} };
+    throw error;
+  }
+}
+
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -31,7 +40,7 @@ export async function logFood(input = {}) {
 
   try {
     await enqueueWrite(async () => {
-      const diary = await readData('diary.json');
+      const diary = await readDiary();
       const day = todayKey();
       diary.days ??= {};
       diary.days[day] ??= {};
@@ -59,7 +68,7 @@ export async function getToday(input = {}) {
   if (typeof patientId !== 'string' || !patientId.trim()) return { ok: false, error: 'patientId is required' };
   try {
     await pendingWrite;
-    const diary = await readData('diary.json');
+    const diary = await readDiary();
     const items = diary.days?.[todayKey()]?.[patientId] ?? [];
     const totals = Object.fromEntries(NUTRIENT_KEYS.map((key) => [
       key,
