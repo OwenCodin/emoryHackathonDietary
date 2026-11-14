@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 export const MAX_AGE_MS = 7200000; // 2 hours
 export const MAX_ITEMS = 50;
+export const PANTRY_MAX = 40;
 const MAX_FILE_BYTES = 65536;
 const MAX_FUTURE_MS = 60000;
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -38,7 +39,45 @@ export function defaultStateDir(env = process.env) {
   return typeof set === 'string' && set.trim() ? resolve(set) : join(tmpdir(), 'renal-agent-state');
 }
 
-const emptyState = () => ({ needed: [], approved: [], rejected: [], updatedAt: null });
+const emptyState = () => ({ needed: [], approved: [], rejected: [], pantry: [], updatedAt: null });
+
+// Pure helper shared with tools.mjs: adds cleaned names to a pantry list without case-insensitive duplicates;
+// when full, the oldest entry is dropped so the newest shot always counts.
+export function mergePantry(list, names, max = PANTRY_MAX) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const name = cleanName(raw);
+    if (name && !seen.has(name.toLowerCase())) { seen.add(name.toLowerCase()); out.push(name); }
+  }
+  const added = [];
+  const dropped = [];
+  for (const raw of Array.isArray(names) ? names : []) {
+    const name = cleanName(raw);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    while (out.length >= max && out.length > 0) {
+      const old = out.shift();
+      seen.delete(old.toLowerCase());
+      dropped.push(old);
+    }
+    seen.add(key);
+    out.push(name);
+    added.push(name);
+  }
+  return { list: out, added, dropped };
+}
+
+// Stored names that match one wanted name: exact (case-insensitive) first, else containment with >= 3 characters each.
+export function matchPantry(list, wanted) {
+  const w = cleanName(wanted).toLowerCase();
+  const items = Array.isArray(list) ? list : [];
+  if (!w) return [];
+  const exact = items.filter(x => String(x).toLowerCase() === w);
+  if (exact.length) return exact;
+  if (w.length < 3) return [];
+  return items.filter(x => { const l = String(x).toLowerCase(); return l.length >= 3 && (l.includes(w) || w.includes(l)); });
+}
 
 // Cleaned, case-insensitively de-duplicated, capped list.
 function cleanList(list) {
@@ -97,14 +136,15 @@ export function createMemory({ patientId = 'demo', dir = defaultStateDir(), now 
       if (!Number.isFinite(at)) return emptyState();
       const t = now();
       if (t - at > maxAgeMs || at - t > MAX_FUTURE_MS) return emptyState();
-      return { needed: cleanList(data.needed), approved: cleanList(data.approved), rejected: cleanList(data.rejected), updatedAt: at };
+      if (data.pantry !== undefined && !Array.isArray(data.pantry)) return emptyState();
+      return { needed: cleanList(data.needed), approved: cleanList(data.approved), rejected: cleanList(data.rejected), pantry: mergePantry([], data.pantry ?? []).list, updatedAt: at };
     } catch {
       return emptyState();
     }
   }
 
   async function writeState(state) {
-    const body = { needed: cleanList(state.needed), approved: cleanList(state.approved), rejected: cleanList(state.rejected), updatedAt: now() };
+    const body = { needed: cleanList(state.needed), approved: cleanList(state.approved), rejected: cleanList(state.rejected), pantry: mergePantry([], state.pantry ?? []).list, updatedAt: now() };
     const tmp = join(folder, `.${id}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
     try {
       await writeFile(tmp, JSON.stringify(body), { mode: 0o600, flag: 'wx' });
@@ -150,6 +190,50 @@ export function createMemory({ patientId = 'demo', dir = defaultStateDir(), now 
           const w = await writeState(state);
           if (!w.ok) return w;
           return { ok: true, added, skipped, state: w.state };
+        } catch { return { ok: false, error: 'unavailable' }; }
+      });
+    },
+    addPantry(names) {
+      return serial(async () => {
+        try {
+          if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+          const state = await readState();
+          const m = mergePantry(state.pantry, names);
+          state.pantry = m.list;
+          const w = await writeState(state);
+          if (!w.ok) return w;
+          return { ok: true, added: m.added, dropped: m.dropped, state: w.state };
+        } catch { return { ok: false, error: 'unavailable' }; }
+      });
+    },
+    removePantry(names) {
+      return serial(async () => {
+        try {
+          if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+          const state = await readState();
+          const removed = [];
+          const notFound = [];
+          for (const raw of Array.isArray(names) ? names : []) {
+            const hits = matchPantry(state.pantry, raw);
+            if (!hits.length) { notFound.push(cleanName(raw)); continue; }
+            for (const h of hits) if (!removed.includes(h)) removed.push(h);
+            state.pantry = state.pantry.filter(x => !hits.includes(x));
+          }
+          const w = await writeState(state);
+          if (!w.ok) return w;
+          return { ok: true, removed, notFound, state: w.state };
+        } catch { return { ok: false, error: 'unavailable' }; }
+      });
+    },
+    clearPantry() {
+      return serial(async () => {
+        try {
+          if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+          const state = await readState();
+          state.pantry = [];
+          const w = await writeState(state);
+          if (!w.ok) return w;
+          return { ok: true, state: w.state };
         } catch { return { ok: false, error: 'unavailable' }; }
       });
     },
