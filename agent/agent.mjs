@@ -2,10 +2,13 @@ import { fileURLToPath } from 'node:url';
 import { defineAgent, voice } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
 import { LocalVideoTrack, TrackSource, VideoBufferType, VideoFrame, VideoSource } from '@livekit/rtc-node';
-import { drawFace } from './face.mjs';
+import { createFaceFrames } from './face.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
 import { buildTools, endCall, withTimeout } from './tools.mjs';
+import { getCartFrame } from '../actions/index.mjs';
+import { createVideoPicker } from './video.mjs';
+import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
 import { greeting, instructions } from './prompt.mjs';
@@ -28,9 +31,18 @@ const agent = defineAgent({
     const source = new VideoSource(WIDTH, HEIGHT);
     const track = LocalVideoTrack.createVideoTrack('agent-video', source);
     let tick = 0, speaking = false, timer = null;
+    // Track C's browser frame while a cart runs (exact size or nothing), the cached face otherwise.
+    const faces = createFaceFrames();
+    const fakeCart = process.env.AGENT_FAKE_CART === '1' ? createFakeCart() : null;
+    if (fakeCart) console.log('[agent] video: fake cart provider on (simulated proof only)');
+    const picker = createVideoPicker({
+      getCartFrame: fakeCart ? fakeCart.getCartFrame : getCartFrame,
+      drawOwnPicture: () => faces.frame(tick++, speaking),
+      expectedLength: WIDTH * HEIGHT * 4,
+    });
     // A failed frame must never take the call down: the timer callback has no caller to catch for it.
     const frame = () => {
-      try { source.captureFrame(new VideoFrame(drawFace(tick++, speaking), WIDTH, HEIGHT, VideoBufferType.RGBA)); }
+      try { source.captureFrame(new VideoFrame(picker.next(), WIDTH, HEIGHT, VideoBufferType.RGBA)); }
       catch (error) { console.error('[agent] video frame failed', error); }
     };
 
@@ -121,6 +133,7 @@ const agent = defineAgent({
       throw error; // the shutdown callbacks above close the timer, track, source and session
     }
     console.log(`[agent] session started model=${model} setup_ms=${Date.now() - joinedAt}`);
+    fakeCart?.start();
     markReady();
   },
 });
