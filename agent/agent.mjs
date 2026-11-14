@@ -18,19 +18,18 @@ const agent = defineAgent({
     const caller = await ctx.waitForParticipant();
     console.log(`[agent] call joined caller=${caller.identity}`);
 
+    const joinedAt = Date.now();
+
     // Video: one camera track, published by this agent. The Mac shows video only
     // from the participant that speaks, so the picture and the voice stay together.
     const source = new VideoSource(WIDTH, HEIGHT);
     const track = LocalVideoTrack.createVideoTrack('agent-video', source);
-    let tick = 0, speaking = false;
+    let tick = 0, speaking = false, timer = null;
     // A failed frame must never take the call down: the timer callback has no caller to catch for it.
     const frame = () => {
       try { source.captureFrame(new VideoFrame(drawFace(tick++, speaking), WIDTH, HEIGHT, VideoBufferType.RGBA)); }
       catch (error) { console.error('[agent] video frame failed', error); }
     };
-    frame();
-    await ctx.room.localParticipant.publishTrack(track, { source: TrackSource.SOURCE_CAMERA });
-    const timer = setInterval(frame, 1000 / FPS);
 
     const model = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live';
     const session = new voice.AgentSession({
@@ -48,38 +47,69 @@ const agent = defineAgent({
         });
       } catch { /* logging must never break the call */ }
     });
+    // Model and connection errors: error name and message only (never request or caller content).
+    session.on(voice.AgentSessionEventTypes.Error, event => {
+      try {
+        const e = event?.error;
+        console.error(`[agent] session error name=${e?.name ?? 'Error'} message=${String(e?.error?.message ?? e?.message ?? 'unknown').slice(0, 200)}`);
+      } catch { /* logging must never break the call */ }
+    });
+
+    // Registered before anything is opened, so a throw while publishing or starting still cleans up.
     ctx.addShutdownCallback(async () => {
       console.log('[agent] call ended');
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
       // Close each resource even if an earlier one fails.
       for (const close of [() => session.close(), () => track.close(), () => source.close()]) {
         try { await close(); } catch (error) { console.error('[agent] shutdown step failed', error); }
       }
     });
-    await session.start({
-      room: ctx.room,
-      agent: new voice.Agent({ instructions, tools: buildTools({ patientId: 'demo' }) }),
-      record: false,
-      inputOptions: {
-        participantIdentity: caller.identity,
-        audioEnabled: true,
-        videoEnabled: false,
-        textEnabled: false,
-        closeOnDisconnect: true,
-        deleteRoomOnClose: false,
-      },
-      outputOptions: { audioEnabled: true, transcriptionEnabled: false },
-    });
-    console.log(`[agent] session started model=${model}`);
+
     // Greet once when chert dev reports that FaceTime is ready (bridge_ready in the
     // room metadata): the Mac ends the call if it hears nothing within 10 seconds
     // of that. Participant arrival alone is not readiness, so there is no greeting
     // on it. Without the signal there is no greeting, and the caller speaks first.
-    const stopGreeting = greetOnBridgeReady(ctx.room, () => {
-      console.log('[agent] greeting requested');
-      return session.generateReply({ instructions: greeting });
+    // The listener is registered now so the signal is never missed while setup runs;
+    // the greeting itself waits for the session to be started.
+    let markReady, markFailed;
+    const sessionReady = new Promise((resolve, reject) => { markReady = resolve; markFailed = reject; });
+    sessionReady.catch(() => {}); // reported by the greeting, or by the entry error below
+    const stopGreeting = greetOnBridgeReady(ctx.room, async () => {
+      const requestedAt = Date.now();
+      try {
+        await sessionReady;
+        console.log(`[agent] greeting requested waited_ms=${Date.now() - requestedAt}`);
+        await session.generateReply({ instructions: greeting });
+      } catch (error) {
+        console.error(`[agent] greeting failed ${error?.name ?? 'Error'}: ${String(error?.message ?? 'unknown').slice(0, 200)}`);
+      }
     });
     ctx.addShutdownCallback(async () => stopGreeting());
+
+    try {
+      frame();
+      await ctx.room.localParticipant.publishTrack(track, { source: TrackSource.SOURCE_CAMERA });
+      timer = setInterval(frame, 1000 / FPS);
+      await session.start({
+        room: ctx.room,
+        agent: new voice.Agent({ instructions, tools: buildTools({ patientId: 'demo' }) }),
+        record: false,
+        inputOptions: {
+          participantIdentity: caller.identity,
+          audioEnabled: true,
+          videoEnabled: false,
+          textEnabled: false,
+          closeOnDisconnect: true,
+          deleteRoomOnClose: false,
+        },
+        outputOptions: { audioEnabled: true, transcriptionEnabled: false },
+      });
+    } catch (error) {
+      markFailed(error);
+      throw error; // the shutdown callbacks above close the timer, track, source and session
+    }
+    console.log(`[agent] session started model=${model} setup_ms=${Date.now() - joinedAt}`);
+    markReady();
   },
 });
 
