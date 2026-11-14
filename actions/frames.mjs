@@ -24,6 +24,13 @@ export function getCartFrame() {
   return cartActive ? latestFrame : null;
 }
 
+// Stores a ready-made frame (the Kroger cart card). Only an exact-size Uint8Array is accepted.
+export function setCartFrame(rgba) {
+  if (!(rgba instanceof Uint8Array) || rgba.byteLength !== WIDTH * HEIGHT * 4) return false;
+  latestFrame = rgba;
+  return true;
+}
+
 export function setCartFrameActive(active) {
   cartActive = active;
   if (!active) latestFrame = null;

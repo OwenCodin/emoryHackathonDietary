@@ -11,7 +11,9 @@ import {
   createKrogerClient,
   createTokenStore,
   defaultTokenDir,
+  isKrogerImageUrl,
   parseQuantity,
+  pickImageUrl,
   readKrogerConfig,
 } from './kroger.mjs';
 
@@ -245,4 +247,54 @@ test('token store refuses a folder inside the repo', async () => {
 test('no secret appears in any result', () => {
   const text = allResults.join('\n');
   for (const s of SECRETS) assert.ok(!text.includes(s), `leaked ${s}`);
+});
+
+const K = 'https://www.kroger.com/product/images/';
+const img = (size, url, extra = {}) => ({ perspective: 'front', ...extra, sizes: [{ size, url }] });
+
+test('isKrogerImageUrl accepts only https www.kroger.com product pictures', () => {
+  assert.equal(isKrogerImageUrl(`${K}large/front/0001`), true);
+  for (const bad of [
+    'http://www.kroger.com/product/images/x',
+    'https://kroger.com/product/images/x',
+    'https://www.kroger.com.evil.example/product/images/x',
+    'https://www.kroger.com@evil.example/product/images/x',
+    'https://user:pw@www.kroger.com/product/images/x',
+    'https://www.kroger.com:8443/product/images/x',
+    'https://evil.example/product/images/x',
+    'https://www.kroger.com/cart',
+    'not a url',
+    '',
+    null,
+    undefined,
+    42,
+    {},
+  ]) {
+    assert.equal(isKrogerImageUrl(bad), false, String(bad));
+  }
+});
+
+test('pickImageUrl prefers featured front large and never returns an off-host URL', () => {
+  const featured = {
+    images: [
+      img('large', `${K}large/front/other`),
+      img('xlarge', `${K}xlarge/front/f`, { featured: true }),
+      { perspective: 'front', featured: true, sizes: [{ size: 'large', url: `${K}large/front/f` }, { size: 'medium', url: `${K}medium/front/f` }] },
+    ],
+  };
+  assert.equal(pickImageUrl(featured), `${K}xlarge/front/f`);
+  assert.equal(pickImageUrl({ images: [{ perspective: 'front', featured: true, sizes: [{ size: 'xlarge', url: `${K}x` }, { size: 'medium', url: `${K}m` }, { size: 'large', url: `${K}l` }] }] }), `${K}l`);
+  assert.equal(pickImageUrl({ images: [{ perspective: 'front', featured: true, sizes: [{ size: 'xlarge', url: `${K}x` }, { size: 'medium', url: `${K}m` }] }] }), `${K}m`);
+  assert.equal(pickImageUrl({ images: [{ perspective: 'front', featured: true, sizes: [{ size: 'xlarge', url: `${K}x` }] }] }), `${K}x`);
+  assert.equal(pickImageUrl({ images: [{ perspective: 'front', featured: true, sizes: [{ size: 'thumbnail', url: `${K}t` }] }] }), `${K}t`);
+  // no featured: first front
+  assert.equal(pickImageUrl({ images: [{ perspective: 'back', sizes: [{ size: 'large', url: `${K}back` }] }, img('large', `${K}front`)] }), `${K}front`);
+  // no front: first image
+  assert.equal(pickImageUrl({ images: [{ perspective: 'back', sizes: [{ size: 'large', url: `${K}back` }] }] }), `${K}back`);
+  // off-host preferred url is skipped
+  assert.equal(pickImageUrl({ images: [{ perspective: 'front', featured: true, sizes: [{ size: 'large', url: 'https://evil.example/product/images/a' }, { size: 'medium', url: `${K}m` }] }] }), `${K}m`);
+  assert.equal(pickImageUrl({ images: [img('large', 'https://evil.example/product/images/a')] }), null);
+  for (const bad of [null, undefined, {}, { images: 'x' }, { images: [] }, { images: [null, 3, { sizes: 'x' }] }]) {
+    assert.equal(pickImageUrl(bad), null);
+  }
 });

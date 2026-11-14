@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import sharp from 'sharp';
 import { createCartController } from './cart.mjs';
+import { downloadPicture } from './cart-card.mjs';
 import { createKrogerClient } from './kroger.mjs';
 
 const png = await sharp({
@@ -402,8 +403,27 @@ test('a blocked call anywhere in a multi-call reply stops all of them', async ()
 const KROGER_CONFIG = { clientId: 'test-client', clientSecret: 'test-secret', locationId: '01100695', tokenDir: '/unused' };
 const LOGIN = 'node --env-file=.env.local actions/kroger-login.mjs';
 
-function krogerProduct(upc, description, price) {
-  return { upc, description, items: [{ price: { regular: price } }] };
+function krogerProduct(upc, description, price, images) {
+  return {
+    upc,
+    description,
+    items: [{ price: { regular: price } }],
+    images: images ?? [{ perspective: 'front', featured: true, sizes: [{ size: 'large', url: `https://www.kroger.com/product/images/large/front/${upc}` }] }],
+  };
+}
+
+const FRAME_BYTES = 1280 * 720 * 4;
+const URL_ALLOWED = [
+  'https://api.kroger.com/v1/connect/oauth2/token',
+  'https://api.kroger.com/v1/products',
+  'https://api.kroger.com/v1/cart/add',
+  'https://www.kroger.com/product/images/',
+];
+function assertUrlsAllowed(urls) {
+  for (const u of urls) {
+    assert.ok(URL_ALLOWED.some((p) => u.startsWith(p)), `unexpected URL ${u}`);
+    assert.ok(!/checkout|order|payment/i.test(u), `forbidden URL ${u}`);
+  }
 }
 
 const defaultSearch = (term) => ({
@@ -417,9 +437,22 @@ const defaultSearch = (term) => ({
 
 function makeKrogerController({ stored = { refreshToken: 'test-refresh' }, search = defaultSearch, add, refreshStatus = 200, openContext } = {}) {
   const calls = [];
+  const urls = [];
+  const frames = { published: [], active: [] };
+  const timers = { set: [], cleared: [] };
   let controller;
   const fetchImpl = async (url, init = {}) => {
     const u = new URL(url);
+    urls.push(String(url));
+    if (u.hostname === 'www.kroger.com' && u.pathname.startsWith('/product/images/')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'image/png' }),
+        arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+      };
+    }
+    assert.equal(u.hostname, 'api.kroger.com');
     calls.push({ path: u.pathname, body: init.body });
     let status = 200;
     let body = {};
@@ -443,8 +476,20 @@ function makeKrogerController({ stored = { refreshToken: 'test-refresh' }, searc
       tokenStore: { load: async () => stored, save: async () => ({ ok: true }) },
       fetchImpl,
     }),
+    fetchPicture: (url) => downloadPicture(url, { fetchImpl }),
+    publishFrame: (f) => {
+      frames.published.push(f);
+      return f instanceof Uint8Array && f.byteLength === FRAME_BYTES;
+    },
+    activateFrame: (a) => { frames.active.push(a); },
+    setTimer: (fn, ms) => {
+      const handle = { fn, ms, unrefCalled: false, unref() { this.unrefCalled = true; } };
+      timers.set.push(handle);
+      return handle;
+    },
+    clearTimer: (handle) => { timers.cleared.push(handle); },
   });
-  return { controller, calls };
+  return { controller, calls, urls, frames, timers };
 }
 
 test('browser path is used when there is no Kroger config', async () => {
@@ -550,5 +595,140 @@ test('stopCart during the kroger run goes idle with no further requests', async 
   await stopper;
   assert.equal(controller.getCartStatus().step, 'Cart stopped');
   assert.equal(calls.filter((c) => c.path === '/v1/cart/add').length, 1);
+});
+
+// ---- Kroger cart card ----
+
+const TWO_ITEMS = [{ name: 'unsalted butter', quantity: '2' }, { name: 'apples', quantity: '3 apples' }];
+
+test('kroger path publishes the card after each add and holds it for 20 s', async () => {
+  const { controller, frames, timers, urls } = makeKrogerController();
+  await controller.startCart({ items: TWO_ITEMS });
+  await waitForState(controller, 'done');
+  assert.equal(frames.published.length, 3);
+  for (const f of frames.published) assert.equal(f.byteLength, FRAME_BYTES);
+  assert.ok(frames.active.includes(true));
+  assert.equal(timers.set.length, 1);
+  assert.equal(timers.set[0].ms, 20000);
+  assert.equal(timers.set[0].unrefCalled, true);
+  assert.equal(frames.active.includes(false), false);
+
+  assert.deepEqual(controller.getCartStatus(), {
+    ok: true,
+    state: 'done',
+    step: 'Kroger cart updated',
+    added: [
+      { name: 'Kroger® Unsalted Butter Sticks', price: 7.18 },
+      { name: 'Honeycrisp Apple', price: 3.3 },
+    ],
+    missing: [],
+    total: 10.48,
+    cartUrl: 'https://www.kroger.com/cart',
+  });
+
+  timers.set[0].fn();
+  assert.equal(frames.active.at(-1), false);
+  assert.ok(urls.some((u) => u.startsWith('https://www.kroger.com/product/images/')));
+  assertUrlsAllowed(urls);
+});
+
+test('kroger path with nothing added shows no card', async () => {
+  const { controller, frames, timers, urls } = makeKrogerController({
+    search: () => ({ status: 200, body: { data: [] } }),
+  });
+  await controller.startCart({ items: TWO_ITEMS });
+  await waitForState(controller, 'done');
+  assert.equal(frames.published.length, 0);
+  assert.equal(frames.active.length, 0);
+  assert.equal(timers.set.length, 0);
+  assertUrlsAllowed(urls);
+});
+
+test('stopCart during the kroger run publishes no more frames and schedules no hold', async () => {
+  let stopper;
+  let adds = 0;
+  const { controller, frames, timers } = makeKrogerController({
+    add: (body, c) => {
+      if (++adds === 2) stopper = c.stopCart();
+      return { status: 204 };
+    },
+  });
+  await controller.startCart({ items: TWO_ITEMS });
+  await waitForState(controller, 'idle');
+  await stopper;
+  assert.equal(controller.getCartStatus().step, 'Cart stopped');
+  assert.equal(frames.published.length, 1);
+  assert.equal(frames.active.at(-1), false);
+  assert.equal(timers.set.length, 0);
+});
+
+test('stopCart after done while the hold is pending removes the card at once', async () => {
+  const { controller, frames, timers } = makeKrogerController();
+  await controller.startCart({ items: TWO_ITEMS });
+  await waitForState(controller, 'done');
+  const hold = timers.set[0];
+  await controller.stopCart();
+  assert.equal(frames.active.at(-1), false);
+  assert.ok(timers.cleared.includes(hold));
+});
+
+test('a new startCart clears a pending hold before its first publish', async () => {
+  const { controller, frames, timers } = makeKrogerController();
+  await controller.startCart({ items: TWO_ITEMS });
+  await waitForState(controller, 'done');
+  const hold = timers.set[0];
+  const before = frames.published.length;
+  await controller.startCart({ items: [{ name: 'apples', quantity: '1' }] });
+  assert.ok(timers.cleared.includes(hold));
+  assert.equal(frames.active.at(-1), false);
+  assert.equal(frames.published.length, before);
+  await waitForState(controller, 'done');
+  assert.ok(frames.published.length > before);
+  assert.equal(frames.active.at(-1), true);
+});
+
+test('kroger 401 mid-run still shows the card from the first add', async () => {
+  let adds = 0;
+  const { controller, frames, timers } = makeKrogerController({
+    add: () => (++adds === 1 ? { status: 204 } : { status: 401 }),
+  });
+  await controller.startCart({ items: TWO_ITEMS });
+  await waitForState(controller, 'failed');
+  assert.equal(frames.published.length, 1);
+  assert.equal(timers.set.length, 1);
+  assert.equal(timers.set[0].ms, 20000);
+});
+
+test('a picture on another host is never fetched and gets a placeholder', async () => {
+  const offHost = [{ perspective: 'front', featured: true, sizes: [{ size: 'large', url: 'https://images.example.com/x.jpg' }] }];
+  const { controller, frames, urls } = makeKrogerController({
+    search: () => ({ status: 200, body: { data: [krogerProduct('9', 'Plain Broth', 2, offHost)] } }),
+  });
+  await controller.startCart({ items: [{ name: 'broth', quantity: '1' }] });
+  await waitForState(controller, 'done');
+  assert.equal(frames.published.length, 2);
+  assert.equal(urls.some((u) => u.includes('images.example.com')), false);
+  assert.equal(urls.some((u) => u.startsWith('https://www.kroger.com/product/images/')), false);
+  assertUrlsAllowed(urls);
+});
+
+test('a failing picture fetcher or renderer never fails the run', async () => {
+  const broken = createCartController({
+    getKrogerConfig: () => KROGER_CONFIG,
+    createKroger: () => ({
+      getUserToken: async () => ({ ok: true, token: 't' }),
+      searchProducts: async () => ({ ok: true, products: [krogerProduct('1', 'Plain Broth', 2)] }),
+      addToCart: async () => ({ ok: true }),
+    }),
+    fetchPicture: () => Promise.reject(new Error('boom')),
+    renderCard: async () => { throw new Error('render boom'); },
+    publishFrame: () => true,
+    activateFrame: () => {},
+    setTimer: () => ({ unref() {} }),
+    clearTimer: () => {},
+  });
+  await broken.startCart({ items: [{ name: 'broth', quantity: '1' }] });
+  await waitForState(broken, 'done');
+  assert.equal(broken.getCartStatus().added.length, 1);
 });
 

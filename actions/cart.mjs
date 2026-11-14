@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { HEIGHT, WIDTH } from '../shared/video.mjs';
 import {
   captureCartFrame,
+  setCartFrame,
   setCartFrameActive,
 } from './frames.mjs';
+import { downloadPicture, renderCartCard } from './cart-card.mjs';
 import {
   getStoreUrl,
   isAllowedStoreUrl,
@@ -19,8 +21,12 @@ import {
   createKrogerClient,
   createTokenStore,
   parseQuantity,
+  pickImageUrl,
   readKrogerConfig,
 } from './kroger.mjs';
+
+// How long the Kroger cart card stays on the call after the run ends.
+const CARD_HOLD_MS = 20_000;
 
 const KROGER_LOGIN_COMMAND = 'node --env-file=.env.local actions/kroger-login.mjs';
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -296,9 +302,18 @@ export function createCartController({
     ...config,
     tokenStore: createTokenStore({ dir: config.tokenDir }),
   }),
+  publishFrame = setCartFrame,
+  renderCard = renderCartCard,
+  fetchPicture = (url) => downloadPicture(url),
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+  cardHoldMs = CARD_HOLD_MS,
 } = {}) {
   let context = null;
   let runPromise = null;
+  let holdTimer = null;
+  let cardShown = false;
+  let cardItems = [];
   let status = {
     state: 'idle',
     step: '',
@@ -313,9 +328,53 @@ export function createCartController({
     status = { ...status, state: 'failed', step };
   }
 
+  function clearHold() {
+    if (holdTimer) {
+      clearTimer(holdTimer);
+      holdTimer = null;
+    }
+  }
+
+  // Removes the cart card now and cancels any pending hold.
+  function hideCard() {
+    clearHold();
+    if (cardShown) {
+      cardShown = false;
+      activateFrame(false);
+    }
+  }
+
+  // Keeps the final card up for cardHoldMs, then gives the picture back to the agent.
+  function scheduleHold() {
+    clearHold();
+    holdTimer = setTimer(() => {
+      holdTimer = null;
+      if (cardShown) {
+        cardShown = false;
+        activateFrame(false);
+      }
+    }, cardHoldMs);
+    holdTimer?.unref?.();
+  }
+
+  // The card is decoration: any failure here is swallowed and never fails the run.
+  async function showCard(step) {
+    try {
+      const rgba = await renderCard({ storeName: 'Kroger', items: cardItems, step, total: status.total });
+      if (stopRequested) return;
+      if (publishFrame(rgba)) {
+        activateFrame(true);
+        cardShown = true;
+      }
+    } catch {
+      // no card
+    }
+  }
+
   // Kroger public API path: no browser, no Gemini. Never throws.
   async function runKroger(items, config) {
     const startedAt = now();
+    cardItems = [];
     const expired = `Kroger sign-in expired: run ${KROGER_LOGIN_COMMAND} again`;
     try {
       const kroger = createKroger(config);
@@ -346,6 +405,16 @@ export function createCartController({
         }
         status = { ...status, step: `Adding ${item.name} to the Kroger cart` };
         const quantity = parseQuantity(item.quantity);
+        // The picture download overlaps the add, so it costs no extra time.
+        const imageUrl = pickImageUrl(found.products.find((p) => p?.upc === product.upc));
+        let picturePromise = Promise.resolve(null);
+        if (imageUrl) {
+          try {
+            picturePromise = Promise.resolve(fetchPicture(imageUrl)).catch(() => null);
+          } catch {
+            picturePromise = Promise.resolve(null);
+          }
+        }
         const added = await kroger.addToCart({ upc: product.upc, quantity }, auth.token);
         if (stopRequested) break;
         if (!added.ok) {
@@ -359,12 +428,18 @@ export function createCartController({
         const price = round2(product.unitPrice * quantity);
         status.added.push({ name: product.description, price });
         status.total = round2(status.total + price);
+        if (!stopRequested) {
+          const picture = await picturePromise;
+          cardItems.push({ name: product.description, price, quantity, picture });
+          await showCard(status.step);
+        }
       }
       if (stopRequested) {
         status = { ...status, state: 'idle', step: 'Cart stopped' };
       } else if (status.added.length === 0) {
         status = { ...status, state: 'done', step: 'No items could be added to the Kroger cart', cartUrl: null };
       } else {
+        await showCard('Kroger cart updated');
         status = { ...status, state: 'done', step: 'Kroger cart updated', cartUrl: KROGER_CART_URL };
       }
     } catch {
@@ -372,6 +447,8 @@ export function createCartController({
       else fail('Kroger cart failed');
     } finally {
       runPromise = null;
+      if (stopRequested) hideCard();
+      else if (cardShown) scheduleHold();
     }
   }
 
@@ -594,6 +671,7 @@ export function createCartController({
     const error = validateItems(items);
     if (error) return { ok: false, error };
 
+    hideCard();
     status = {
       state: 'running',
       step: 'Starting cart',
@@ -613,6 +691,7 @@ export function createCartController({
 
   async function stopCart() {
     stopRequested = true;
+    hideCard();
     if (context) {
       try {
         await context.close();
