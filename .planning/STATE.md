@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Roadmap created, ready to plan Phase 1
-last_updated: "2026-11-14T03:18:42.001Z"
+last_updated: "2026-11-14T03:18:44.185Z"
 last_activity: 2026-11-14
 progress:
   total_phases: 5
@@ -48,6 +48,7 @@ Progress: [████████░░] 83%
 | Phase 02 P01 | 20min | 3 tasks | 3 files |
 | Phase 03 P01 | 45min | 3 tasks | 12 files |
 | Phase 03 P02 | 30min | 2 tasks | 3 files |
+| Phase 04 P01 | 25min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,7 @@ Progress: [████████░░] 83%
 - [Phase 02]: Keep gemini-3.8-live default; agent logs only caller identity, model, tool name+ok
 - [Phase 03]: 03-01: jpeg() drops frames that arrive while muted; tool failures use only our own error codes
 - [Phase 03]: text_cart_link has no parameters; destination only PATIENT_PHONE validated as E.164
+- [Phase 04]: Fake cart provider only when AGENT_FAKE_CART is exactly 1; cached face frames with painted moving bar
 
 ### Pending Todos
 
