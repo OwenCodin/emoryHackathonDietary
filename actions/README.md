@@ -8,13 +8,14 @@ If you change anything in this section, change it in `agent/README.md`, `renal/R
 
 ### The product in one paragraph
 
-A renal dietitian you can FaceTime. A kidney or dialysis patient calls the line, points the camera at a food label, plate, fridge or store shelf, and hears whether it fits their sodium, potassium, phosphorus and fluid limits. The agent can also call the patient at mealtimes and fill a grocery cart in a browser that is shown on the call. There is no app.
+RenaLine is a renal dietitian you can FaceTime. (The repo is still called `emoryHackathonDietary`.) A kidney or dialysis patient calls the line, points the camera at a food label, plate, fridge or store shelf, and hears whether it fits their sodium, potassium, phosphorus and fluid limits. The agent can also call the patient at mealtimes and fill a grocery cart in a browser that is shown on the call. There is no app.
 
 ### Stack and layout
 
 - Node 24 (22.23.2 or later also works), ES modules, files end in `.mjs`.
 - One `package.json` and one `.env.local` at the repo root. Each track owns one folder and does not edit the others.
 - Pinned, do not upgrade: `@livekit/agents` 1.8.0, `@livekit/agents-plugin-google` 1.8.0, `@livekit/rtc-node` 0.13.35. These are the versions Chert's starter ships with. The 1.10.0 packages need `rtc-node` 1.x, which Chert's starter code has not been run against.
+- The `overrides` pin (`glob` ^14.0.2 under `@livekit/throws-transformer`) came with Track C's merge and must stay.
 
 ```
 package.json         one package for the whole repo
@@ -26,7 +27,7 @@ renal/               Track B  the renal brain: profile, image reading, verdicts,
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video
 ```
 
-Root `package.json` scripts and dependencies:
+Root `package.json`:
 
 ```json
 {
@@ -46,32 +47,49 @@ Root `package.json` scripts and dependencies:
     "playwright": "^1.65.1",
     "sharp": "^0.35.5",
     "zod": "^4.1.8"
+  },
+  "overrides": {
+    "@livekit/throws-transformer": {
+      "glob": "^14.0.2"
+    }
   }
 }
 ```
 
-`.gitignore` must contain `node_modules/`, `.env`, `.env.*`, `!.env.example`, `*.log`, `.DS_Store` and `actions/.browser-profile/` (that folder holds a logged-in store session).
+`.gitignore` contains `node_modules/`, `.env`, `.env.*`, `!.env.example`, `*.log`, `.DS_Store` and `actions/.browser-profile/` (that folder holds a logged-in store session).
 
 ### Environment variables
 
-| Variable | Used by | What it is |
-|---|---|---|
-| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | A, C | One LiveKit Cloud project. All three values from the same project. |
-| `AGENT_NAME` | A, C | The name the agent registers with, for example `renal-dietitian`. |
-| `GOOGLE_API_KEY` | A, B, C | Gemini API key. The LiveKit plugin reads exactly this name; pass it explicitly to `new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY })`. |
-| `USDA_API_KEY` | B | FoodData Central key (free, from api.data.gov). `DEMO_KEY` works but is heavily rate limited. |
-| `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Project API key (`ftk_...`, created on the Chert Developer page), project UUID and line UUID. |
-| `PATIENT_PHONE` | C | The demo patient's phone in international form, for example `+15551234567`. Must be a phone verified for the Chert project. |
-| `GROCERY_STORE_URL` | C | HTTPS URL for the selected Walmart, Kroger, Instacart or Amazon store. |
-| `INSTACART_API_KEY` | C | Optional Instacart Developer Platform key used only when a store blocks browser automation. |
+Every key in `.env.example` is listed here. Required means the feature it serves does not work without it. Keys go in `.env.local` only. Never paste them in chat, commit them, or print them.
 
-Keys go in `.env.local` only. Never paste them in chat, commit them, or print them.
+| Variable | Used by | Required? | What it is and the default |
+|---|---|---|---|
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | A, C | Optional | One LiveKit Cloud project, all three from the same project. Leave the `YOUR_` placeholders as they are to use Chert rooms through `chert dev`. |
+| `AGENT_NAME` | A, C | Optional | The name the agent registers with. Code default `renal-dietitian`. |
+| `GOOGLE_API_KEY` | A, B, C | Required | Gemini API key. The LiveKit plugin reads exactly this name. Google Search grounding for the online lookup needs billing enabled on this key. |
+| `GEMINI_LIVE_MODEL` | A | Optional | Gemini Live voice model. Empty means `gemini-3.8-live`. |
+| `RENAL_VISION_MODEL`, `RENAL_VISION_FALLBACK_MODEL` | B | Optional | Models for reading pictures. Empty means `gemini-3.8-flash` and fallback `gemini-3.5-flash-lite`. The fallback starts when the primary errors or has not answered in 2.5 s. |
+| `RENAL_MEALS_MODEL`, `RENAL_MEALS_FALLBACK_MODEL` | B | Optional | Same for meal ideas. Same defaults. |
+| `RENAL_LOOKUP_MODEL` | B | Optional | Model for the Google Search grounded nutrition lookup. Empty means `gemini-3.5-flash-lite`. |
+| `RENAL_LOOKUP_FALLBACK_MODEL` | B | Optional | Fallback model for that lookup. Empty means no fallback. |
+| `PLAYGROUND` | A | Optional | `1` makes the camera accept video from any non-agent participant, for LiveKit playground tests. Leave empty for real calls. |
+| `AGENT_DEBUG_FRAME_DIR` | A | Optional | A folder outside this repo where each camera picture sent to `describeImage` is also saved. Empty saves nothing. The pictures show what the caller shows, so keep them out of git. |
+| `AGENT_FAKE_CART` | A | Optional | `1` shows a built-in magenta test frame as the cart, for the simulated proof only. Leave empty for real calls. |
+| `AGENT_ALLOW_BARGE_IN` | A | Optional | `1` lets the caller interrupt the agent mid-reply. Empty keeps replies uninterrupted. |
+| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only). Empty uses a folder in the system temp directory. |
+| `AGENT_CALL_WARN_SECONDS` | A | Optional | Seconds after the greeting before the agent warns the call will end soon. Empty means 240. |
+| `USDA_API_KEY` | B | Optional | FoodData Central key from api.data.gov. `DEMO_KEY` works but allows 10 requests an hour; a personal key allows 3600 an hour. |
+| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json`. Empty uses `renal/data`. Tests use a temp folder. |
+| `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Required for texts and outbound calls | Project API key (`ftk_...`, from the Chert Developer page), project id and line id. |
+| `PATIENT_PHONE` | A, C | Required for texts and outbound calls | The patient's phone in international form, for example `+1XXXXXXXXXX`. If it is empty, `text_cart_link` and `text_recipe` fail with `no_phone`. |
+| `GROCERY_STORE_URL` | C | Required for the cart | HTTPS URL of a supported grocery retailer. |
+| `INSTACART_API_KEY` | C | Optional | Instacart shopping-list fallback when the store blocks automation. |
 
 ### Rules for every function that crosses a track boundary
 
 1. `async`, takes one plain object, returns one plain object. The one exception is `getCartFrame`, which is synchronous because it is called 15 times a second.
 2. Never throws. On failure it returns `{ ok: false, error: 'short reason' }`. On success the object has `ok: true`.
-3. Returns within its time budget, because a person is waiting on a live call: `checkFood` 3 s, `describeImage` 6 s, `suggestMeals` 6 s, `startCart` and `callPatient` return as soon as the work has started.
+3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
 4. Works with no network where it can (cached or seeded data), so the demo survives bad wifi.
 
 ### Types
@@ -100,11 +118,18 @@ Keys go in `.env.local` only. Never paste them in chat, commit them, or print th
   nutrients: { sodiumMg: 1, potassiumMg: 422, phosphorusMg: 26 },   // for the portion judged, or null
   portion: '1 medium (118 g)',
   swap: 'an apple' ,                                                // or null
-  source: 'label' | 'usda' | 'rule' | 'none' }
+  source: 'label' | 'usda' | 'web' | 'rule' | 'none' }
 
 // CartItem: one thing to buy.
 { name: 'unsalted chicken broth', quantity: '1 carton' }
 ```
+
+Notes on `Verdict`:
+
+- `source` is `'label'` for numbers printed on a label, `'usda'` for the built-in list and USDA matches, `'web'` for the online lookup, `'rule'` when a hard rule decided it, and `'none'` when nothing was found.
+- `portion` can read `'100 g (no typical serving size known)'`. Reasons and portion can say "judged as <food>" when a food was matched by its plain name.
+- A `'web'` verdict's `say` ends with "That is from what I found online, not from your care team's list."
+- Food names seen on a plate, fridge or shelf are generic (no brands). A label keeps its printed product name.
 
 ### The hand-offs
 
@@ -115,11 +140,13 @@ Track A imports everything below and exports nothing. B and C do not import each
 | Function | Returns |
 |---|---|
 | `getProfile({ patientId })` | `{ ok, profile }` |
-| `describeImage({ jpeg })` where `jpeg` is a `Buffer` | a `Seen` |
-| `checkFood({ food, profile })` | a `Verdict` |
-| `suggestMeals({ foods, profile, count })` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
+| `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
+| `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
+| `suggestMeals({ foods, profile, count }, { ai }?)` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
 | `logFood({ patientId, verdict })` | `{ ok }` |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
+
+The optional second argument `{ ai }` is an injected Gemini client. It is a test seam only; the agent never passes it.
 
 `actions/index.mjs` (Track C)
 
@@ -130,7 +157,9 @@ Track A imports everything below and exports nothing. B and C do not import each
 | `getCartFrame()` (synchronous) | A `Uint8Array` of exactly `WIDTH * HEIGHT * 4` RGBA bytes showing the browser, or `null` when no cart is running. |
 | `stopCart()` | `{ ok }` |
 | `callPatient({ phone, reason })` | `{ ok, callId }` once Chert has accepted the request |
-| `sendText({ phone, text })` | `{ ok }` |
+| `sendText({ phone, text })` | `{ ok }`. Refuses any recipient other than `PATIENT_PHONE`. |
+
+The agent log prints each tool result as `[agent] tool <name> ok=true|false [error=<code>]`.
 
 ### What is verified and what is not
 
@@ -142,18 +171,33 @@ Checked on 13 November 2026 by reading the installed packages, Chert's docs and 
 - `livekit-server-sdk` 2.19.3 sets the token's `nbf` to now, so a `ttl` of two hours or less meets Chert's bridge-token rule.
 - The USDA search endpoint returns sodium (id 1093), potassium (1092) and phosphorus (1091) per 100 g.
 
-Not verified, because it needs keys or a real call. Each is somebody's first task:
+Seen in live testing on 14 November 2026:
 
-- Caller camera delivery ("caller capture") is a separate opt-in per Chert line. If it is off on our line, the agent cannot see anything. Track A asks Chert staff and tests this first.
-- Which Gemini Live model the 1.8.0 plugin can drive, and whether the greeting works with it. Track A.
-- Whether our trial line may place outbound calls. Track C asks Chert staff.
-- The exact Gemini model IDs. Google's docs on 13 November list `gemini-3.8-live` for voice, `gemini-3.8-flash` as the stable fast model, and `gemini-4-hydrogen` in the computer-use examples. Confirm each in AI Studio before relying on it.
+- A real call runs with `npm start` in one terminal and `npx @trychert/facetime@0.1.0-beta.20 dev --agent renal-dietitian --minutes 30` in another. One `chert dev` session holds the team's single line at a time.
+- The caller's camera now reaches the agent. With `AGENT_DEBUG_FRAME_DIR` set, the saved frames show what the caller shows.
+- iMessage through Chert on the trial line: the agent can only reply. A send is refused with HTTP 403 `shared_reply_window_closed` until the patient's phone has joined the project and has texted the line a message with words in it within the last 24 hours. After that a send returned `{"state":"sent"}`.
+- The shared USDA `DEMO_KEY` allows 10 requests an hour and ran out during testing.
+- `gemini-3.8-flash` was overloaded all day (503s, timeouts). Vision and meals fall back to `gemini-3.5-flash-lite` after 2.5 s. Google Search grounding needs billing on the Gemini key; without it every grounded request returned 429 "exceeded your current quota".
+
+The Live voice model defaults to `gemini-3.8-live` when `GEMINI_LIVE_MODEL` is empty (see `agent/agent.mjs`).
+
+Not verified yet:
+
+- The grocery cart on a live call.
+- The outbound mealtime call, and whether the trial allows outbound calls.
+- `text_cart_link` and `text_recipe` from a live call. Only a direct API send worked.
+- Pantry memory on a live call (tested with fakes only).
+- The online lookup live with billing on.
+- Receiving photos by iMessage (parked: photo-only messages did not show up through the API on the trial project).
+- Turning off the auto-reply Chert sends to inbound texts on the project.
 
 ### Shared limits
 
-- One Chert line, one call at a time, 5 minutes per call, 50 FaceTime minutes in total on the trial. About one minute is already used. Budget: 25 for Track A, 15 for integration, 9 for recording the demo. Say in the team chat before you place a call.
-- The trial ends 24 or 48 hours after activation (Chert's CLI and setup doc disagree); activation was about 6:30pm on Friday 13 November. Check the billing page.
-- Only one computer runs `chert dev` (Track A's). If no agent is connected for 3 hours the line is released and the number can change, so keep it running.
+- One Chert line, one call at a time. One `chert dev` session holds the line, so only one person can be on it. Say in the team chat before you place a call.
+- Chert trial: 50 FaceTime minutes in total (about 33 left at 16:20 UTC on 14 November), 5 minutes per call. The trial ends 15 November 2026 23:12 UTC. Spend minutes only on scripted test calls and the demo recording.
+- If no agent is connected for 3 hours the line is released and the number can change.
+- The USDA `DEMO_KEY` allows only 10 requests an hour. Use a personal key.
+- The online lookup needs billing enabled on the Gemini key.
 - The agent gives guidance inside limits a care team set. It says so on the call, never changes the limits, and never pays for anything.
 
 ### Checkpoints
@@ -171,19 +215,31 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 ## Track C in detail
 
+### What changed in your module during the merge
+
+- Nothing in `actions/` changed. The merge took `actions/` unchanged from `origin/main`. Check with `git log --oneline origin/main..HEAD -- actions`, which prints nothing.
+- The merge appended `GROCERY_STORE_URL` and `INSTACART_API_KEY` to `.env.example` and the `overrides` pin (`glob` ^14.0.2 under `@livekit/throws-transformer`) to `package.json`. Both must stay.
+- `agent/contract.test.mjs` now holds an "actions contract" block that tests your functions through the real module.
+- The agent now calls `sendText` from `text_recipe` as well as `text_cart_link`, so every text the patient gets goes through your function. `sendText` refuses any recipient other than `PATIENT_PHONE`.
+- `agent/agent.mjs` exists and `npm start` runs the agent, so the cart and calls can be tried through the real agent.
+
+### What to do next
+
+1. Run the cart end to end through the agent: set `GROCERY_STORE_URL` (and `INSTACART_API_KEY` for the fallback) and sign in by hand with `node actions/login.mjs`. The cart and the outbound mealtime call have not been seen working on a live call since the merge.
+2. Ask Chert staff: how to turn off the auto-reply the project sends to inbound texts, whether the trial line can place outbound calls, and whether photos can be received on the trial.
+3. The demo video and the write-up.
+4. Everyone: the patient texts the line before the demo call.
+
 ### Local implementation status
 
-The Track C modules are implemented locally, but no grocery store login has
-been tested yet. Set `GROCERY_STORE_URL` and sign in manually before claiming a
-retailer works. The current repository still has no `agent/agent.mjs`, so its
-root `npm start` flow is not available until Track A is implemented.
+The Track C modules are implemented, but no grocery store login has been tested yet. Set `GROCERY_STORE_URL` and sign in manually before claiming a retailer works. `agent/agent.mjs` exists and the root `npm start` runs the agent.
 
-The current runtime dependency audit reports three high advisories in
+Reported when Track C was written: the runtime dependency audit showed three high advisories in
 `sharp@0.35.3`, which is pinned transitively by `@livekit/agents@1.8.0`.
 Upgrading the LiveKit stack is outside this track and conflicts with the
 compatibility pin above; the Track C screenshot converter uses the root
 `sharp@0.35.5` dependency. Revisit the transitive advisory when the pinned
-LiveKit stack can be upgraded safely.
+LiveKit stack can be upgraded safely. I have not re-run the audit.
 
 ### What you build
 
@@ -276,10 +332,24 @@ X-Chert-Project-Id: $CHERT_PROJECT_ID
 Idempotency-Key: <unique, 8 to 200 characters>
 Content-Type: application/json
 
-{ "line_id": "$CHERT_LINE_ID", "recipient": "+15551234567", "text": "Your cart is ready: https://..." }
+{ "line_id": "$CHERT_LINE_ID", "recipient": "$PATIENT_PHONE", "text": "Your cart is ready: https://..." }
 ```
 
-On the trial the agent can only reply: the phone must have texted the line within the last 24 hours, and there is a cap of 50 messages an hour. Before the demo, have the patient phone text the line. If a send comes back with state `unknown`, read the message list again; do not retry with a new idempotency key or it may send twice.
+`sendText` only sends to `PATIENT_PHONE`; any other recipient returns `Recipient must be the configured verified patient number`.
+
+Seen on the trial line on 14 November:
+
+- The agent can only reply. A send is refused with HTTP 403 `shared_reply_window_closed` ("On a free trial the agent only replies: this phone has not texted in the last 24 hours") until two things are true. First, the patient's phone has joined the project by texting the project's join phrase to the line (Chert shows the phrase for the project; it is not written here). Second, the phone has texted the line a message with words in it within the last 24 hours. After that a send returned `{"state":"sent"}`.
+- `GET /shared-messages` lists the project's messages with the fields `id`, `line_id`, `direction` (`inbound` or `outbound`), `state`, `masked_recipient`, `created_at` and `text`, so inbound texts can be read by polling.
+- Photo-only iMessages did not appear in that list, and the trial project has no attachment field or per-message endpoint. Receiving photos is not available and is parked.
+- Something on Chert's side auto-replies "Hi there! How can I help you today?" to inbound texts on the project. How to turn it off is an open question for Chert staff.
+- `PATIENT_PHONE` must be set in `.env.local`, or the agent's `text_cart_link` and `text_recipe` fail with `no_phone`.
+
+What the agent sees: a non-2xx reply makes `sendText` return `Chert rejected the message (HTTP 403)`, so `text_recipe` reports `text_failed`. An unknown outcome returns `Send outcome is unknown; inspect Chert before retrying`, which `text_recipe` reports as `text_unconfirmed`.
+
+Earlier notes from Chert's setup doc: there is a cap of 50 messages an hour. If a send comes back with state `unknown`, read the message list again; do not retry with a new idempotency key or it may send twice.
+
+The texting path was proven by a direct API send from the command line, not yet from a live call.
 
 ### `callPatient` (twist 3)
 
@@ -304,16 +374,16 @@ Chert dials out and joins a LiveKit room that you prepare. The agent must alread
    token.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true });
    const participantToken = await token.toJwt();
    ```
-5. Create the call at `https://app.trychert.com/api/v1/calls` using the project API key. The call request is retried at most once with the same idempotency key if its outcome is uncertain.
+5. Create the call at `https://app.trychert.com/api/v1/calls` (the host `actions/outbound.mjs` uses) with the project API key. The call request is retried at most once with the same idempotency key if its outcome is uncertain.
    ```
-   POST https://facetime.trychert.com/api/v1/calls
+   POST https://app.trychert.com/api/v1/calls
    Authorization: Bearer $CHERT_API_KEY
    X-Chert-Project-Id: $CHERT_PROJECT_ID
    Idempotency-Key: <unique, 8 to 200 characters>
    Content-Type: application/json
 
    { "direction": "outbound", "mode": "customer_managed", "line_id": "$CHERT_LINE_ID",
-     "destination": "+15551234567", "destination_type": "phone",
+     "destination": "$PATIENT_PHONE", "destination_type": "phone",
      "media": { "audio": true, "video": true },
      "livekit_url": "$LIVEKIT_URL", "participant_token": "<the token>",
      "remote_participant_identity": "<the agent's identity in the room>" }
