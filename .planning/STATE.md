@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Roadmap created, ready to plan Phase 1
-last_updated: "2026-11-14T03:50:03.622Z"
+last_updated: "2026-11-14T03:50:06.115Z"
 last_activity: 2026-11-14
 progress:
   total_phases: 5
@@ -50,6 +50,7 @@ Progress: [████████░░] 78%
 | Phase 03 P02 | 30min | 2 tasks | 3 files |
 | Phase 04 P01 | 25min | 3 tasks | 8 files |
 | Phase 04 P02 | 20min | 3 tasks | 5 files |
+| Phase 05 P01 | 25min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,7 @@ Progress: [████████░░] 78%
 - [Phase 03]: text_cart_link has no parameters; destination only PATIENT_PHONE validated as E.164
 - [Phase 04]: Fake cart provider only when AGENT_FAKE_CART is exactly 1; cached face frames with painted moving bar
 - [Phase 04]: 04-02: outbound only for outbound===true with chert-bridge-* identity; outbound audio via external ParticipantAudioOutput before session.start
+- [Phase 05]: Barge-in off by default via NO_INTERRUPTION; reply watchdog guarantees an answer
 
 ### Pending Todos
 
