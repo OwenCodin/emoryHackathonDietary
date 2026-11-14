@@ -25,7 +25,7 @@ Built and tested with fakes, not yet proven on a live call:
 - Pantry memory and `text_recipe`.
 - `text_cart_link` from a call. The texting path was proven only by a direct API send.
 - The grocery cart, and the outbound mealtime call. They have not been seen working on a live call since the merge.
-- The online lookup with billing on for the Gemini key.
+- The online lookup as part of a call. It ran from the command line with billing on, but no caller has heard an online answer yet.
 
 Parked: receiving photos by iMessage.
 
