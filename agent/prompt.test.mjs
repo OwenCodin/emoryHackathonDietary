@@ -55,6 +55,7 @@ describe('timeWarning', () => {
   it('asks for a call back and mentions the list', () => {
     assert.ok(timeWarning.includes('call back'));
     assert.ok(timeWarning.includes('shopping list'));
+    assert.ok(timeWarning.includes('kitchen'));
   });
 });
 
@@ -63,5 +64,16 @@ describe('store rules', () => {
     const { instructions } = await import('./prompt.mjs');
     for (const s of ['In a store', 'one sentence', 'best', 'shelf', 'not in a tool result']) assert.ok(instructions.includes(s), s);
     assert.ok(greeting.startsWith('Greet the caller in one or two short sentences: say you are an AI renal dietitian'));
+  });
+});
+
+describe('kitchen and recipe rules', () => {
+  it('carries the kitchen tour, remember, text and pantry rules', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    for (const w of ['fridge', 'pantry or cupboards', 'place home', 'place store', 'remember', 'suggest_meal', 'text_recipe', 'only when they agree', 'pantry_list', 'remove_from_pantry', 'clear_pantry']) assert.ok(instructions.includes(w), w);
+  });
+  it('keeps the existing rules', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    for (const w of ['one or two short sentences', 'Never invent or estimate nutrient numbers', 'care team', 'Never pay', 'ask them to show the fridge']) assert.ok(instructions.includes(w), w);
   });
 });
