@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14
+Last activity: 2026-11-14 - Completed quick task 261114-ecm: merge all three tracks into merge/all-tracks
 
 Progress: [██████████] 100%
 
@@ -84,6 +84,12 @@ None yet.
 - Trial may end 24 or 48 hours after activation (about 6:30pm Friday 13 November); check the billing page
 - LiveKit and Gemini keys must be put in `.env.local` by the person, not an agent
 - Outbound calls on the trial line are unconfirmed (Track C asks Chert)
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 261114-ecm | Merge all three tracks into integration branch merge/all-tracks (origin/main + origin/track-b/renal); 248 tests, 12 stub-era failures, not pushed | 2026-11-14 | 4791f8a | [261114-ecm-merge-all-tracks](./quick/261114-ecm-merge-all-tracks/) |
 
 ## Session Continuity
 
