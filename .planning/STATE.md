@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-lep: safe area for the call video
+Last activity: 2026-11-14 - Completed quick task 261114-leq: new-patient setup on the first call
 
 Progress: [██████████] 100%
 
@@ -106,6 +106,7 @@ None yet.
 | 261114-kvi | Meal ideas from scratch within the renal limits: suggestMeals fromScratch (built-in foods only, every ingredient judged from real numbers, summed sodium, potassium and phosphorus each within one third of the daily limit, totals returned), suggest_meal from_scratch, no_safe_meal, shared contract row updated in all three READMEs (483/483 pass). Live: Gemini meals in about 3.2 s after putting the quick model first (763acc5) | 2026-11-14 | 050d5f8 | [261114-kvi-meal-ideas-from-scratch-within-the-renal](./quick/261114-kvi-meal-ideas-from-scratch-within-the-renal/) |
 | fast | From-scratch meals: when no proposed dish passes, the built-in meals go through the same checks before no_safe_meal (a live call got no_safe_meal) (484/484 pass) | 2026-11-14 | 910b62e | - |
 | 261114-lep | Safe area for the call video: all content (brand screen, verdict cards, voice wave, drawn face, Kroger cart card, browser cart frame) drawn inside the centre 80% of the frame, VIDEO_SAFE_SCALE to tune it (505/505 pass). Rendered pictures checked; not yet seen on a phone | 2026-11-14 | a566c56 | [261114-lep-safe-area-so-the-call-video-is-not-cut-o](./quick/261114-lep-safe-area-so-the-call-video-is-not-cut-o/) |
+| 261114-leq | New-patient setup on the first call: saved profile store in renal (limits as read out by the caller, validated, never the built-in demo limits), seven setup tools with a two-step limit confirmation enforced in code, agent preferences (voice menu, reply style, language, name) applied at the start of the next call, reset and skip switches, shared contract updated in all three READMEs (557/557 pass). Simulated run about 164 s; not yet run on a call | 2026-11-14 | 1e0c8a3 | [261114-leq-new-patient-onboarding-call-with-agent-p](./quick/261114-leq-new-patient-onboarding-call-with-agent-p/) |
 
 ## Session Continuity
 
