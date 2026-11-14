@@ -11,6 +11,7 @@
 // started with AGENT_FAKE_CART=1.
 // --outbound simulates Track C's callPatient: dispatches the agent with outbound metadata before the bridge joins and
 // checks that the agent already publishes audio and video.
+// --expect-speech-after N checks that the agent spoke at or after N seconds from ready (RESULT.speech lists the speech segments).
 // With --say or --image listening ends at the earlier of ready + SECONDS and 44 s after the call started.
 // Exit 0 only if every call passes all checks; otherwise exit 1 naming the failed checks.
 import { existsSync } from 'node:fs';
@@ -24,7 +25,7 @@ import { HEIGHT, WIDTH } from '../../shared/video.mjs';
 import { followsFaceCartFace, isMagenta } from './fake-cart.mjs';
 import { MAX_SPEECH_CHARS, speechPcm } from './speech.mjs';
 
-const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch] [--outbound]';
+const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch] [--outbound] [--expect-speech-after N]';
 
 function intArg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -46,6 +47,8 @@ function textArgs(name) {
   });
   return out;
 }
+const EXPECT_AFTER = intArg('--expect-speech-after', 0);
+if (EXPECT_AFTER && EXPECT_AFTER >= SECONDS) { console.log(USAGE); process.exit(1); }
 const SAYS = textArgs('--say');
 const IMAGES = textArgs('--image');
 if (IMAGES.length > 1 || (IMAGES.length === 1 && !existsSync(IMAGES[0]))) { console.log(USAGE); process.exit(1); }
@@ -83,7 +86,7 @@ async function runCall(n) {
   const roomName = `sim-${Date.now()}-${n}`;
   const room = new Room();
   let micTimer = null, camTimer = null, camTrack = null, camSource = null, mic = null, source = null, framesSent = 0;
-  const stats = { audioFrames: 0, loudFrames: 0, firstLoudAt: null, peak: 0, lastLoudAt: 0, videoFrames: 0, videoSize: null, agentIdentity: null, timeline: [] };
+  const stats = { audioFrames: 0, loudFrames: 0, firstLoudAt: null, peak: 0, lastLoudAt: 0, videoFrames: 0, videoSize: null, agentIdentity: null, timeline: [], segments: [] };
   try {
     await rooms.createRoom({ name: roomName, emptyTimeout: 60 });
     activeRoom = roomName;
@@ -105,7 +108,11 @@ async function runCall(n) {
             if (peak > stats.peak) stats.peak = peak;
             if (peak > 500) {
               stats.loudFrames++;
-              stats.lastLoudAt = Date.now();
+              const nowMs = Date.now();
+              stats.lastLoudAt = nowMs;
+              const last = stats.segments[stats.segments.length - 1];
+              if (last && nowMs - last.end <= 700) last.end = nowMs;
+              else if (stats.segments.length < 40) stats.segments.push({ start: nowMs, end: nowMs });
               if (!stats.firstLoudAt) { stats.firstLoudAt = Date.now(); log('agent audio is audible'); }
             }
           }
@@ -254,6 +261,8 @@ async function runCall(n) {
       audioFrames: stats.audioFrames, peak: stats.peak,
       videoFrames: stats.videoFrames, videoSize: stats.videoSize,
     };
+    result.speech = stats.segments.slice(0, 20).map(s => [Number(((s.start - readyAt) / 1000).toFixed(1)), Number(((s.end - readyAt) / 1000).toFixed(1))]);
+    if (EXPECT_AFTER) result.spokeAfterMark = result.speech.some(s => s[0] >= EXPECT_AFTER);
     result.callSeconds = Number(((listenEndAt - t0) / 1000).toFixed(1));
     if (OUTBOUND) {
       result.agentPublishedBeforeBridge = stats.agentPublishedBeforeBridge === true;
@@ -279,10 +288,11 @@ async function runCall(n) {
       if (picture && framesSent < 5) failed.push('imagePublished');
       if (SAYS.length > 0 && (replies.length < SAYS.length || replies.some(r => !r.replied))) failed.push('repliedToSay');
     }
+    if (EXPECT_AFTER && !result.spokeAfterMark) failed.push('spokeAfterMark');
     if (EXPECT_CART && !result.cartSwitch) failed.push('cartSwitch');
     if (OUTBOUND && result.agentPublishedBeforeBridge !== true) failed.push('agentPublishedBeforeBridge');
     if (OUTBOUND && result.agentAudioTracksAtEnd !== 1) failed.push('oneAgentAudioTrack');
-    if ((SCRIPTED || EXPECT_CART || OUTBOUND) && result.callSeconds > 45) failed.push('callUnder45s');
+    if ((SCRIPTED || EXPECT_CART || OUTBOUND || EXPECT_AFTER) && result.callSeconds > 45) failed.push('callUnder45s');
     result.failed = failed;
     result.pass = failed.length === 0;
     return result;

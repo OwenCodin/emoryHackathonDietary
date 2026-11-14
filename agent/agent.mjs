@@ -12,8 +12,9 @@ import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
 import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata } from './outbound.mjs';
-import { checkinGreeting, greeting, instructions, replyNudge } from './prompt.mjs';
-import { bargeInConfig, createReplyWatchdog } from './turns.mjs';
+import { chooseGreeting, instructions, replyNudge, timeWarning } from './prompt.mjs';
+import { bargeInConfig, callWarnMs, createReplyWatchdog } from './turns.mjs';
+import { createMemory } from './memory.mjs';
 
 
 const agent = defineAgent({
@@ -143,6 +144,21 @@ const agent = defineAgent({
       }
     };
 
+    // Shopping list kept between calls (one small file per patient, outside the repo).
+    const memory = createMemory({ patientId: 'demo' });
+
+    // Time warning: once, a little before the trial's call limit. Armed with the greeting, cleared on shutdown.
+    const warnNow = async () => {
+      try {
+        if (closing) return;
+        console.log('[agent] time warning requested');
+        await session.generateReply({ instructions: timeWarning });
+      } catch (error) {
+        try { console.error(`[agent] time warning failed ${error?.name ?? 'Error'}`); } catch { /* ignore */ }
+      }
+    };
+    const warning = createDeadline({ ms: callWarnMs(process.env.AGENT_CALL_WARN_SECONDS), onExpire: () => { void warnNow(); } });
+
     // Registered before anything is opened, so a throw while publishing or starting still cleans up.
     ctx.addShutdownCallback(async () => {
       console.log('[agent] call ended');
@@ -150,6 +166,7 @@ const agent = defineAgent({
       watchdog.disarm();
       if (nudgeTimer) clearInterval(nudgeTimer);
       answerDeadline?.clear();
+      warning.clear();
       if (onBridgeJoined) ctx.room.off('participantConnected', onBridgeJoined);
       if (timer) clearInterval(timer);
       // Close each resource even if an earlier one fails or hangs: every step has its own time limit.
@@ -186,9 +203,18 @@ const agent = defineAgent({
         if (closing) return;
         watchdog.arm();
         nudgeTimer = setInterval(() => { void checkNudge(); }, 500);
-        const kind = call ? 'checkin' : 'inbound';
+        warning.arm();
+        let remembered = null;
+        if (!call) {
+          // Never let a slow read delay the greeting (the Mac ends the call after 10 s of silence).
+          let t;
+          const slow = new Promise(resolve => { t = setTimeout(() => resolve(null), 1000); });
+          try { remembered = await Promise.race([memory.load(), slow]); } catch { remembered = null; } finally { clearTimeout(t); }
+          if (remembered && remembered.ok === false) console.log('[agent] shopping list memory unavailable');
+        }
+        const { kind, instructions: opening } = chooseGreeting({ outbound: Boolean(call), remembered });
         console.log(`[agent] greeting requested kind=${kind} waited_ms=${Date.now() - requestedAt}`);
-        await session.generateReply({ instructions: call ? checkinGreeting : greeting });
+        await session.generateReply({ instructions: opening });
       } catch (error) {
         console.error(`[agent] greeting failed ${error?.name ?? 'Error'}: ${String(error?.message ?? 'unknown').slice(0, 200)}`);
       }
@@ -209,7 +235,7 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo', onToolActivity: delta => watchdog.toolActivity(delta) }) }),
+        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo', memory, onToolActivity: delta => watchdog.toolActivity(delta) }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,

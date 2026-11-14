@@ -19,3 +19,23 @@ export const checkinGreeting = `Greet the caller in one or two short sentences: 
 
 // Fixed text for the reply watchdog (never built from caller or model text).
 export const replyNudge = `The caller finished speaking and has not had an answer yet. Answer their last question now in one or two short sentences, calling a tool if it needs one. If you did not catch a question, ask them briefly to repeat it.`;
+
+// Returning caller with a fresh remembered list: a count only, never an item name (stored names came from the model).
+export function resumeGreeting(state) {
+  const raw = Array.isArray(state?.needed) ? state.needed.length : 0;
+  const n = Math.max(0, Math.min(50, Math.trunc(raw)));
+  const left = n === 0 ? 'everything on it is done' : n === 1 ? '1 item is still left on it' : `${n} items are still left on it`;
+  return `Greet the caller in one or two short sentences: say you are an AI renal dietitian that follows the limits set by their care team and does not replace them. Then say in one short sentence that you remember their shopping list and that ${left}, and ask what they want to check next.`;
+}
+
+export function chooseGreeting({ outbound, remembered } = {}) {
+  if (outbound) return { kind: 'checkin', instructions: checkinGreeting };
+  const s = remembered?.ok === true ? remembered.state : null;
+  if (s && ((Array.isArray(s.needed) && s.needed.length > 0) || (Array.isArray(s.approved) && s.approved.length > 0))) {
+    return { kind: 'resume', instructions: resumeGreeting(s) };
+  }
+  return { kind: 'inbound', instructions: greeting };
+}
+
+// Said once, shortly before the trial's call limit.
+export const timeWarning = `In one short sentence, tell the caller that this call will end in about a minute because of a time limit, ask them to call back, and say you will remember their shopping list.`;
