@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-g29: READMEs for the merged app
+Last activity: 2026-11-14 - Completed quick task 261114-gnr: nameless labels, kitchen basics, verdict wording
 
 Progress: [██████████] 100%
 
@@ -94,6 +94,7 @@ None yet.
 | 261114-eyk | Fridge and pantry memory across shots and calls, suggest_meal from the whole pantry, pantry tools, text_recipe by iMessage, prompt rules (298/298 pass) | 2026-11-14 | a42f907 | [261114-eyk-pantry-and-texted-recipes](./quick/261114-eyk-pantry-and-texted-recipes/) |
 | 261114-fc6 | Grounded Gemini web lookup after USDA, USDA failures fall through, generic food names, look_at_camera never a dead end, tool failure codes in the log (350/350 pass) | 2026-11-14 | 57c12e4 | [261114-fc6-grounded-lookup-and-tool-logging](./quick/261114-fc6-grounded-lookup-and-tool-logging/) |
 | 261114-g29 | READMEs for the merged app: root README for RenaLine, shared contract rebuilt and identical in the three track READMEs, per-track merge changes and next steps (docs only) | 2026-11-14 | a24bfca | [261114-g29-readmes-for-merged-app](./quick/261114-g29-readmes-for-merged-app/) |
+| 261114-gnr | Judge a nutrition label that shows no product name, label_unreadable code, kitchen basics kept off the shopping list, no doubled verdict word, whole sentences in camera results (368/368 pass) | 2026-11-14 | 7d38d55 | [261114-gnr-label-without-product-name](./quick/261114-gnr-label-without-product-name/) |
 
 ## Session Continuity
 
