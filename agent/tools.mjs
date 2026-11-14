@@ -109,6 +109,9 @@ const FAILS = {
 };
 // renal/check.mjs composes "Okay, this product has about N milligrams of sodium." from this name.
 const UNNAMED_PRODUCT = 'this product';
+// Exact normalized names only. Salt is deliberately absent: a renal recipe should not call for salt, and hiding it
+// would hide a bad recipe. Salt-free seasoning is a real shopping item.
+const KITCHEN_BASICS = new Set(['water', 'tap water', 'ice', 'black pepper', 'pepper', 'cooking oil', 'oil', 'olive oil', 'vegetable oil']);
 const TOO_LONG = "Done, but there's too much detail to read out. Ask me about one part at a time.";
 const fail = (error, extra = {}) => ({ ok: false, error, say: FAILS[error], ...extra });
 
@@ -433,7 +436,7 @@ export function buildTools({
         const seen = new Map();
         for (const m of meals) for (const item of Array.isArray(m?.missing) ? m.missing : []) {
           const key = clean(item?.name, 80).toLowerCase();
-          if (key && !seen.has(key)) seen.set(key, { name: clean(item.name, 80), quantity: clean(item.quantity, 80) });
+          if (key && !KITCHEN_BASICS.has(key) && !seen.has(key)) seen.set(key, { name: clean(item.name, 80), quantity: clean(item.quantity, 80) });
         }
         if (!call.timedOut) {
           lastMissing = [...seen.values()];
