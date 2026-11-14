@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-i1o: empty-kitchen message; merged origin/renal locally
+Last activity: 2026-11-14 - Completed quick task 261114-jcl: cart against the real Gemini Interactions API
 
 Progress: [██████████] 100%
 
@@ -97,6 +97,7 @@ None yet.
 | 261114-gnr | Judge a nutrition label that shows no product name, label_unreadable code, kitchen basics kept off the shopping list, no doubled verdict word, whole sentences in camera results (368/368 pass) | 2026-11-14 | 7d38d55 | [261114-gnr-label-without-product-name](./quick/261114-gnr-label-without-product-name/) |
 | 261114-h5e | Verdict card video in place of the starter face: RenaLine idle screen, verdict cards from structured tool results, voice wave, fallback to the drawn face (401/401 pass) | 2026-11-14 | 4ccd74e | [261114-h5e-verdict-card-video](./quick/261114-h5e-verdict-card-video/) |
 | 261114-i1o | suggest_meal asks to see the cupboards (not_enough_food) when Track B's meal code finds too little to cook; merged origin/renal locally first (410/410 pass) | 2026-11-14 | 0deb27d | [261114-i1o-empty-kitchen-message](./quick/261114-i1o-empty-kitchen-message/) |
+| 261114-jcl | Cart against the real Gemini Interactions API: v1beta client, actions and final text read from `steps`, 0-999 coordinates confirmed, extra action names, wait default (421/421 pass). Live: kroger.com returns an empty search page to the automated browser, so nothing was added there | 2026-11-14 | 6def87f | [261114-jcl-cart-works-against-the-real-gemini-inter](./quick/261114-jcl-cart-works-against-the-real-gemini-inter/) |
 
 ## Session Continuity
 
