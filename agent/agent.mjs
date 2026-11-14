@@ -5,14 +5,15 @@ import { LocalVideoTrack, TrackPublishOptions, TrackSource, VideoBufferType, Vid
 import { createScreen } from './screen.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
-import { buildTools, endCall, withTimeout } from './tools.mjs';
+import { buildTools, endCall, setupStatus, withTimeout } from './tools.mjs';
 import { getCartFrame } from '../actions/index.mjs';
 import { createVideoPicker } from './video.mjs';
 import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
 import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata } from './outbound.mjs';
-import { chooseGreeting, instructions, replyNudge, timeWarning } from './prompt.mjs';
+import { buildInstructions, chooseGreeting, replyNudge, timeWarning } from './prompt.mjs';
+import { readPreferences, realtimeOptions } from './prefs.mjs';
 import { bargeInConfig, callWarnMs, createReplyWatchdog, turnHandlingConfig } from './turns.mjs';
 import { createMemory } from './memory.mjs';
 import { toolLogLine } from './toollog.mjs';
@@ -90,13 +91,21 @@ const agent = defineAgent({
     const realtimeInputConfig = bargeInConfig(process.env);
     const turnHandling = turnHandlingConfig(process.env);
     console.log(realtimeInputConfig ? '[agent] barge-in off' : '[agent] barge-in on');
+    // Shopping list kept between calls (one small file per patient, outside the repo).
+    const memory = createMemory({ patientId: 'demo' });
+    // The voice, reply length and language chosen in first-call setup apply from the start of the call.
+    const prefs = await readPreferences(memory);
+    // A caller with no finished setup is set up on an inbound call (AGENT_SKIP_ONBOARDING=1 turns that off).
+    const setupDue = !call && process.env.AGENT_SKIP_ONBOARDING !== '1' && (await setupStatus({ patientId: 'demo' })).needsSetup;
+    console.log(`[agent] setup due=${setupDue}`);
     const session = new voice.AgentSession({
-      llm: new google.realtime.RealtimeModel({ model, voice: 'Puck', ...(realtimeInputConfig ? { realtimeInputConfig } : {}) }),
+      llm: new google.realtime.RealtimeModel(realtimeOptions({ model, prefs, realtimeInputConfig })),
       ...(turnHandling ? { turnHandling } : {}),
     });
     // Reply watchdog: after the caller has said something, the agent must be heard; otherwise one nudge (see turns.mjs).
     const watchdog = createReplyWatchdog();
     let nudgeTimer = null, closing = false;
+    let heardAt = 0, heardAny = false; // when the caller last spoke (time only), for confirm_limits
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => {
       try { speaking = event.newState === 'speaking'; watchdog.agentState(event.newState); } catch { /* never breaks the call */ }
     });
@@ -104,6 +113,7 @@ const agent = defineAgent({
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, event => {
       try {
         const length = typeof event?.transcript === 'string' ? event.transcript.trim().length : 0;
+        if (length > 0) { heardAt = Date.now(); heardAny = true; }
         watchdog.heard({ itemId: event?.itemId ?? null, isFinal: event?.isFinal === true, length });
       } catch { /* never breaks the call */ }
     });
@@ -150,9 +160,6 @@ const agent = defineAgent({
         try { console.error(`[agent] reply nudge failed ${error?.name ?? 'Error'}`); } catch { /* ignore */ }
       }
     };
-
-    // Shopping list kept between calls (one small file per patient, outside the repo).
-    const memory = createMemory({ patientId: 'demo' });
 
     // Time warning: once, a little before the trial's call limit. Armed with the greeting, cleared on shutdown.
     // When it falls due it waits for an idle moment (watchdog.warnReady: up to 20 s, then it is said anyway), and
@@ -240,7 +247,7 @@ const agent = defineAgent({
           try { remembered = await Promise.race([memory.load(), slow]); } catch { remembered = null; } finally { clearTimeout(t); }
           if (remembered && remembered.ok === false) console.log('[agent] shopping list memory unavailable');
         }
-        const { kind, instructions: opening } = chooseGreeting({ outbound: Boolean(call), remembered });
+        const { kind, instructions: opening } = chooseGreeting({ outbound: Boolean(call), remembered, setupDue });
         console.log(`[agent] greeting requested kind=${kind} waited_ms=${Date.now() - requestedAt}`);
         await session.generateReply({ instructions: opening });
       } catch (error) {
@@ -263,7 +270,7 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo', memory, onToolActivity: delta => watchdog.toolActivity(delta), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
+        agent: new voice.Agent({ instructions: buildInstructions(prefs), tools: buildTools({ camera, patientId: 'demo', memory, setupDue, callerHeardAfter: t => (heardAny ? heardAt > t : null), onToolActivity: delta => watchdog.toolActivity(delta), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,
