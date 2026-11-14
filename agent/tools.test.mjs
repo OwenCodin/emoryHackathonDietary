@@ -1242,3 +1242,16 @@ describe('quick 261114-gnr: kitchen basics stay off the shopping list', async ()
     assert.deepEqual((await t.shopping_list.execute({})).needed, ['salt']);
   });
 });
+
+describe('look_at_camera keeps whole sentences when they fit', () => {
+  it('does not cut the nutrient off a long okay sentence', async () => {
+    const fake = makeFakeRenal({ scenes: [{ ok: true, kind: 'fridge', foods: [{ name: 'crispy green leaf lettuce', grams: null }, { name: 'eggs', grams: null }], label: null }] });
+    const long = { 'crispy green leaf lettuce': 'Okay, crispy green leaf lettuce has about one hundred two milligrams of potassium.', eggs: 'Okay, eggs has about ninety nine milligrams of phosphorus.' };
+    const renalLong = { ...fake, checkFood: async ({ food }) => ({ ok: true, food: food.name, verdict: 'ok', say: long[food.name], reasons: [], nutrients: null, portion: 'x', swap: null, source: 'usda' }) };
+    const r = await build({ renal: renalLong }).look_at_camera.execute({ place: 'home' });
+    assert.equal(r.ok, true);
+    const spoken = r.results.map(x => x.spoken);
+    assert.ok(spoken.includes('Yes, crispy green leaf lettuce has about one hundred two milligrams of potassium.'), JSON.stringify(spoken));
+    assert.ok(spoken.includes('Yes, eggs has about ninety nine milligrams of phosphorus.'), JSON.stringify(spoken));
+  });
+});

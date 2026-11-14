@@ -394,7 +394,9 @@ export function buildTools({
             ...(say ? { say } : {}),
           };
         };
-        for (const [capBad, capOk, capFood] of [[130, 80, 40], [90, 30, 30], [60, 0, 24]]) {
+        // The first pass keeps every sentence whole (a cut sentence can lose the nutrient it names); the
+        // tighter passes only run when the whole result would not fit in LOOK_LIMIT.
+        for (const [capBad, capOk, capFood] of [[240, 240, 60], [130, 80, 40], [90, 30, 30], [60, 0, 24]]) {
           const r = build(rows.length, capBad, capOk, capFood);
           if (size(r) <= LOOK_LIMIT) return r;
         }
