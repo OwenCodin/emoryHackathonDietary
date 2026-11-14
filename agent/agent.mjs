@@ -28,7 +28,11 @@ const agent = defineAgent({
     const source = new VideoSource(WIDTH, HEIGHT);
     const track = LocalVideoTrack.createVideoTrack('agent-video', source);
     let tick = 0, speaking = false;
-    const frame = () => source.captureFrame(new VideoFrame(drawFace(tick++, speaking), WIDTH, HEIGHT, VideoBufferType.RGBA));
+    // A failed frame must never take the call down: the timer callback has no caller to catch for it.
+    const frame = () => {
+      try { source.captureFrame(new VideoFrame(drawFace(tick++, speaking), WIDTH, HEIGHT, VideoBufferType.RGBA)); }
+      catch (error) { console.error('[agent] video frame failed', error); }
+    };
     frame();
     await ctx.room.localParticipant.publishTrack(track, { source: TrackSource.SOURCE_CAMERA });
     const timer = setInterval(frame, 1000 / FPS);
@@ -39,9 +43,10 @@ const agent = defineAgent({
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => { speaking = event.newState === 'speaking'; });
     ctx.addShutdownCallback(async () => {
       clearInterval(timer);
-      await session.close();
-      await track.close();
-      await source.close();
+      // Close each resource even if an earlier one fails.
+      for (const close of [() => session.close(), () => track.close(), () => source.close()]) {
+        try { await close(); } catch (error) { console.error('[agent] shutdown step failed', error); }
+      }
     });
     await session.start({
       room: ctx.room,

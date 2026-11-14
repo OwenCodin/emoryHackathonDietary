@@ -24,13 +24,14 @@ export async function checkFood({ food, profile } = {}) {
   return {
     ok: true,
     food: (food && food.name) || 'unknown food',
-    verdict: 'limit',
-    say: 'A banana has about 420 milligrams of potassium, a fifth of your day. Half is fine.',
-    reasons: ['potassium 422 mg is 21% of the 2000 mg daily limit'],
-    nutrients: { sodiumMg: 1, potassiumMg: 422, phosphorusMg: 26 },
-    portion: '1 medium (118 g)',
-    swap: 'an apple',
-    source: 'rule',
+    // Deliberately 'unknown': this stub knows nothing about food, and the agent speaks `say` aloud on real calls.
+    verdict: 'unknown',
+    say: 'This is placeholder test data. The real food check is not connected yet, so I cannot judge that food.',
+    reasons: ['stub: the renal module has not been merged'],
+    nutrients: null,
+    portion: 'unknown',
+    swap: null,
+    source: 'none',
   };
 }
 
@@ -43,7 +44,7 @@ export async function suggestMeals({ foods, profile, count } = {}) {
     steps: ['Cook the rice in unsalted broth.', 'Pan-cook the chicken with herbs.', 'Serve together.'],
     why: 'Low in sodium and potassium, with a modest phosphorus load.',
   };
-  const n = Math.max(1, Number.isInteger(count) ? count : 1);
+  const n = Math.min(5, Math.max(1, Number.isInteger(count) ? count : 1));
   return { ok: true, meals: Array.from({ length: n }, () => ({ ...meal })) };
 }
 
