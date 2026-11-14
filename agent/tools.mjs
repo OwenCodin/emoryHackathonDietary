@@ -78,6 +78,7 @@ const FAILS = {
   no_camera_picture: "I can't see your camera right now. Please turn your camera on and hold the food still in front of it.",
   unclear_picture: "I couldn't make that out. Please hold it a little closer and keep it still.",
   vision_failed: "I couldn't look at that just now. Please hold it still and ask me again.",
+  label_unreadable: "I can't read enough on that side of the package. Please show me the front of the package, or hold the nutrition panel a little closer.",
   no_food_seen: "I couldn't spot any food there. Please point the camera at the food and keep it still.",
   profile_unavailable: "I can't reach your care plan right now, so I won't guess. Let's try again in a moment.",
   check_failed: "I couldn't check that just now. Let's try again in a moment.",
@@ -104,6 +105,8 @@ const FAILS = {
   bad_items: 'Tell me the items you need, a few words each.',
   bad_item: 'Tell me which item you mean, in a few words.',
 };
+// renal/check.mjs composes "Okay, this product has about N milligrams of sodium." from this name.
+const UNNAMED_PRODUCT = 'this product';
 const TOO_LONG = "Done, but there's too much detail to read out. Ask me about one part at a time.";
 const fail = (error, extra = {}) => ({ ok: false, error, say: FAILS[error], ...extra });
 
@@ -280,7 +283,7 @@ export function buildTools({
   return {
     // Anonymous tools: the object key is the tool name.
     look_at_camera: llm.tool({
-      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Pass place home for the caller own fridge, pantry or cupboards, and place store in a shop. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest. For a store shelf the result has best and spoken: say spoken, which names the product to pick. If the result has unjudged true, say what you can see and that you could not check it against their limits right now; never guess a verdict. If the result has online true, also say once that some of these numbers came from an online search, not their care team\'s list.',
+      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Pass place home for the caller own fridge, pantry or cupboards, and place store in a shop. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest. For a store shelf the result has best and spoken: say spoken, which names the product to pick. If the result has unjudged true, say what you can see and that you could not check it against their limits right now; never guess a verdict. If the result has unnamed true, the product name was not visible: say each spoken sentence as given, then you may ask what the product is or to see the front of the package. If the result has online true, also say once that some of these numbers came from an online search, not their care team\'s list.',
       parameters: z.object({ place: z.enum(['home', 'store']).nullish() }),
       execute: guard(async (call, args = {}) => {
         const place = args?.place === 'home' || args?.place === 'store' ? args.place : null;
@@ -297,9 +300,16 @@ export function buildTools({
         if (!seen?.ok) return fail('vision_failed');
         if (seen.kind === 'unclear') return fail('unclear_picture');
         const named = f => f && typeof f.name === 'string' && f.name.trim();
-        const all = seen.label?.product
+        const label = seen.label && typeof seen.label === 'object' ? seen.label : null;
+        const product = typeof label?.product === 'string' ? label.product.trim() : '';
+        const namedFoods = (Array.isArray(seen.foods) ? seen.foods : []).filter(named);
+        const nameless = !!label && !product && (seen.kind === 'label' || namedFoods.length === 0);
+        const usable = !!label && (['sodiumMg', 'potassiumMg', 'phosphorusMg'].some(k => Number.isFinite(label[k]) && label[k] >= 0)
+          || (typeof label.ingredients === 'string' && label.ingredients.trim() !== ''));
+        if (nameless && !usable) return fail('label_unreadable');
+        const all = product
           ? [{ name: seen.label.product, label: seen.label }]
-          : (Array.isArray(seen.foods) ? seen.foods : []).filter(named);
+          : nameless ? [{ name: UNNAMED_PRODUCT, label }] : namedFoods;
         const foods = all.slice(0, 6);
         const notChecked = all.length - foods.length;
         if (foods.length === 0) return fail('no_food_seen');
@@ -321,10 +331,16 @@ export function buildTools({
             rows.push({ food: clean(foods[i].name, 80), verdict: 'unknown', swap: '', speak: () => "I can't tell, I couldn't check that one just now." });
           }
         });
+        // Never invent nutrient numbers: renal/check.mjs falls back to a name lookup when a label has no numbers,
+        // and 'this product' is not a real food, so only numbers printed on the label may reach the caller.
+        if (nameless && good.some(g => g.v?.source === 'web' || ['sodiumMg', 'potassiumMg', 'phosphorusMg'].some(k => {
+          const x = g.v?.nutrients?.[k];
+          return Number.isFinite(x) && x !== label[k];
+        }))) return fail('label_unreadable');
         const unjudged = good.length === 0;
         // The most serious verdicts come first, so a shortened result never hides an "avoid".
         rows.sort((a, b) => RANK[a.verdict] - RANK[b.verdict]);
-        if (!call.timedOut) {
+        if (!call.timedOut && !nameless) {
           lastFoods = foods.map(f => clean(f.name, 80));
           good.forEach(g => remember(g.v, g.name));
           if ((seen.kind === 'fridge' || seen.kind === 'shelf') && !seen.label?.product && place !== 'store') {
@@ -340,7 +356,7 @@ export function buildTools({
           }
         }
         let shelf = null;
-        if (!unjudged && seen.kind === 'shelf' && place !== 'home' && !seen.label?.product && foods.length >= 2) {
+        if (!unjudged && seen.kind === 'shelf' && place !== 'home' && !seen.label?.product && !nameless && foods.length >= 2) {
           const best = pickBest(good.map(g => g.v), got.profile?.limits);
           const match = best ? good.find(g => g.v === best) : null;
           shelf = shelfSpoken(best, match?.name);
@@ -361,6 +377,7 @@ export function buildTools({
           return {
             ok: true,
             kind: seen.kind,
+            ...(nameless ? { unnamed: true } : {}),
             ...(unjudged ? { unjudged: true } : {}),
             ...(good.some(g => g.v?.source === 'web') ? { online: true } : {}),
             ...(remembered ? { remembered: true } : {}),
