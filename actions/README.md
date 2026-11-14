@@ -84,6 +84,10 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `PATIENT_PHONE` | A, C | Required for texts and outbound calls | The patient's phone in international form, for example `+1XXXXXXXXXX`. If it is empty, `text_cart_link` and `text_recipe` fail with `no_phone`. |
 | `GROCERY_STORE_URL` | C | Required for the cart | HTTPS URL of a supported grocery retailer. |
 | `INSTACART_API_KEY` | C | Optional | Instacart shopping-list fallback when the store blocks automation. |
+| `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | C | Optional | Kroger public API app credentials (developer.kroger.com, Production, with Cart, Locations, Products and Profile). When both are set the cart uses the Kroger API instead of the browser. |
+| `KROGER_LOCATION_ID` | C | Optional | Kroger store used for product search and prices. Empty means `01100695` (Kroger - Ponce). |
+| `KROGER_REDIRECT_URI` | C | Optional | Sign-in redirect; must match the redirect URI registered on the Kroger app. Empty means `http://localhost:8765/callback`. |
+| `KROGER_TOKEN_DIR` | C | Optional | A folder outside this repo for the saved Kroger sign-in. Empty means `~/.config/renal-dietitian`. |
 
 ### Rules for every function that crosses a track boundary
 
@@ -338,7 +342,13 @@ The browser cart cannot fill a real cart: kroger.com, walmart.com and Instacart 
 
 **What was verified live (14 Nov 2026):** the app token, the locations lookup, and product search at 01100695, including a read-only check through this code: "unsalted butter" chose Kroger Unsalted Butter Sticks ($3.59), "white rice" chose Kroger Enriched Long Grain White Rice ($1.89), "apples" chose Kroger Honeycrisp Apples 4 Pack Tray ($5.00). Kroger's authorize URL with `http://localhost:8765/callback` returns the Kroger sign-in page.
 
-**Not verified:** the sign-in itself, the code exchange, the refresh, and add to cart; nothing has been added to a real cart. The `cart/add` details (PUT, scope `cart.basic:write`, body `{items:[{upc, quantity, modality}]}`, success 204) and the authorization-code and refresh-token grants are taken from third-party libraries and were not confirmed against Kroger's official docs, which could not be read (JavaScript-rendered pages).
+**Also verified live (14 Nov 2026), from the command line, not on a call:** the one-time sign-in completed and was saved, and a three-item run through `startCart` finished in 5.5 s with state `done`: Kroger Unsalted Butter Sticks ($3.59), Kroger Enriched Long Grain White Rice ($1.89) and 3 x Kroger Honeycrisp Apples 4 Pack Tray ($15.00), total $20.48. A person then confirmed the items were in the cart on kroger.com. So `PUT /v1/cart/add` with scope `cart.basic:write` and body `{items:[{upc, quantity, modality}]}`, and the authorization-code grant, are confirmed by use. They still come from third-party libraries, because Kroger's official docs could not be read (JavaScript-rendered pages).
+
+**Not verified:** the cart on a live call (the agent's `start_cart` tool calls the same code), and the token refresh after the first access token expires.
+
+**Known weakness:** quantity is a count of packages, and the first priced match wins, so "apples" with quantity 3 became three 4-pack trays.
+
+**Browser cart, same day:** kroger.com returned an empty search page to the automated browser, walmart.com showed a "Robot or human?" press-and-hold page (the cart paused with "The patient must confirm the next browser action"; its challenge check does not recognise that wording), and the Instacart Kroger storefront asked a guest to sign in or give an address (the cart paused on its blocked-intent guard).
 
 ### `sendText`
 

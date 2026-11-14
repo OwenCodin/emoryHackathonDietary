@@ -24,7 +24,8 @@ Built and tested with fakes, not yet proven on a live call:
 
 - Pantry memory and `text_recipe`.
 - `text_cart_link` from a call. The texting path was proven only by a direct API send.
-- The grocery cart, and the outbound mealtime call. They have not been seen working on a live call since the merge.
+- The grocery cart on a call. From the command line the Kroger API cart added three items to a real Kroger cart, confirmed on kroger.com (14 November); it has not been seen on a live call. The browser cart is blocked by kroger.com, walmart.com and Instacart.
+- The outbound mealtime call. It has not been seen working on a live call since the merge.
 - The online lookup as part of a call. It ran from the command line with billing on, but no caller has heard an online answer yet.
 
 Parked: receiving photos by iMessage.
@@ -53,7 +54,8 @@ Then fill `.env.local` by key name. Put no values in this README, in chat, or in
 | `USDA_API_KEY` | A personal key from api.data.gov. `DEMO_KEY` runs out quickly. | Optional, but use a personal key |
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | The Chert Developer page: the project key, the project and the line. | Required for texts and outbound calls |
 | `PATIENT_PHONE` | The patient's phone in international form. | Required for texts and outbound calls |
-| `GROCERY_STORE_URL`, `INSTACART_API_KEY` | Only for the cart (Track C). | Optional |
+| `GROCERY_STORE_URL`, `INSTACART_API_KEY` | Only for the browser cart (Track C). | Optional |
+| `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | A Production app on developer.kroger.com with Cart, Locations, Products and Profile, and the redirect URI `http://localhost:8765/callback`. When both are set the cart uses the Kroger API. Then sign in once: `node --env-file=.env.local actions/kroger-login.mjs`. | Optional, needed for the Kroger cart |
 
 The optional model, agent and state keys (`GEMINI_LIVE_MODEL`, `RENAL_*`, `AGENT_*`, `PLAYGROUND`) are listed with their defaults in the "Environment variables" table of the Shared contract in any track README, for example [renal/README.md](renal/README.md).
 
@@ -129,7 +131,8 @@ On the Chert trial line the agent can only reply to the patient. Follow these ru
 - Diet colas reuse regular cola numbers. "Soda", "pop" and "soft drink" are judged as cola.
 - The online lookup can return different results for the same product on different tries.
 - The demo patient profile ("Sam", fixed limits) is hard-coded data.
-- The grocery cart (Track C) and the outbound mealtime call have not been seen working on a live call since the merge. They need `GROCERY_STORE_URL` and `INSTACART_API_KEY`.
+- The grocery cart (Track C) has not been seen working on a live call. The Kroger API cart works from the command line; it needs `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` and a one-time sign-in. Its quantity is a count of packages, so "3 apples" can become three multi-packs.
+- The outbound mealtime call has not been seen working on a live call since the merge.
 - Pantry memory and `text_recipe` are tested with fakes. The texting path was proven only by a direct API send, not yet from a live call.
 - Store-shelf looks now return plain food names without brands (open decision).
 
