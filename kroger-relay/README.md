@@ -15,7 +15,7 @@ Kroger redirects the browser to a registered HTTPS address with a one-time autho
 | Route | Method | What it does |
 | --- | --- | --- |
 | `/k/<state>` (rewritten to `/api/k?state=<state>`) | GET | Checks the state is exactly 43 URL-safe characters, then redirects (302) to Kroger's authorize page with the relay callback as `redirect_uri`. Stores nothing. |
-| `/api/kroger/callback` | GET | Kroger's redirect target. Stores `{ code, at }` under the state and shows "Kroger is connected. You can go back to your call." On a Kroger error shows "not finished" and stores nothing. |
+| `/api/kroger/callback` | GET | Kroger's redirect target. Stores `{ code, at }` under the state and shows "Thanks, you're signed in to Kroger." with what to do next: go back to the call, or if it has ended call back within a few minutes, and that after ten minutes the sign-in is dropped. It does not claim the sign-in is finished; the agent's Mac picks the code up on the current call or the next one within 10 minutes. On a Kroger error shows "not finished" and stores nothing. |
 | `/api/kroger/claim` | POST | The agent's Mac sends `Authorization: Bearer <RELAY_SECRET>` and `{"state":"..."}`. Returns `{"code":"..."}` once and deletes it; later claims and codes older than 10 minutes give 404. |
 
 Environment (set on Vercel): `KROGER_CLIENT_ID`, `RELAY_SECRET` (32 characters or more), `RELAY_PUBLIC_URL` (the production domain, no trailing slash). Blob access needs no variable: the store connection adds OIDC credentials and `BLOB_STORE_ID` automatically.
@@ -47,6 +47,8 @@ Flags below were checked against `vercel --version` (59.5.0) and `--help` for `l
 `PORT=8787 node kroger-relay/dev-server.mjs` serves the relay on `127.0.0.1:8787` with an in-memory store. Set `KROGER_CLIENT_ID` and `RELAY_SECRET` in the environment to exercise the routes. `npm test` at the repo root runs the relay tests (no network, no install) and the local end-to-end test.
 
 ## Verified / not verified
+
+Needs a redeploy: the success page text above changed in the code, but the deployed relay still shows the old text until a person runs `vercel deploy --prod` from `kroger-relay/`.
 
 Verified: the handler tests (`lib/relay.test.mjs`), the local server end-to-end test (`actions/kroger-relay-e2e.test.mjs`, with a fake Kroger token endpoint), and the `@vercel/blob` 2.9.0 call signatures, read from the package's type files.
 
