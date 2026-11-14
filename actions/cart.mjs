@@ -23,17 +23,33 @@ const BLOCKED_INTENT =
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function getModelText(outputs = []) {
-  return outputs
-    .filter((output) => output.type === 'model_output')
-    .flatMap((output) => output.content ?? [])
+function getPendingCalls(interaction, handled) {
+  return (interaction?.steps ?? []).filter(
+    (step) => step.type === 'function_call' && !handled.has(step.id),
+  );
+}
+
+function getModelText(interaction, handled) {
+  const steps = interaction?.steps ?? [];
+  let start = 0;
+  steps.forEach((step, index) => {
+    if (step.type === 'function_call' && handled.has(step.id)) start = index + 1;
+  });
+  return steps
+    .slice(start)
+    .filter((step) => step.type === 'model_output')
+    .flatMap((step) => step.content ?? [])
     .filter((content) => content.type === 'text')
     .map((content) => content.text)
     .join('\n');
 }
 
-function getAction(outputs = []) {
-  return outputs.find((output) => output.type === 'function_call') ?? null;
+// Gemini computer use sends click and scroll points on a 0-999 grid for both axes.
+function toViewport(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 999 || y > 999) {
+    return null;
+  }
+  return { x: (x / 1000) * WIDTH, y: (y / 1000) * HEIGHT };
 }
 
 function getSafetyDecision(action) {
@@ -117,6 +133,7 @@ async function pageHasBotChallenge(page) {
 
 async function executeAction(page, action) {
   const args = action.arguments ?? {};
+  let note = null;
   switch (action.name) {
     case 'navigate': {
       if (!isAllowedStoreUrl(args.url) || isCheckoutUrl(args.url)) {
@@ -125,12 +142,23 @@ async function executeAction(page, action) {
       await page.goto(args.url, { waitUntil: 'domcontentloaded' });
       break;
     }
-    case 'click': {
-      const { x, y } = args;
-      if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 999 || y > 999) {
-        return { ok: false, error: 'Click coordinates are invalid' };
+    case 'click':
+    case 'double_click':
+    case 'triple_click': {
+      const point = toViewport(args.x, args.y);
+      if (!point) return { ok: false, error: 'Click coordinates are invalid' };
+      const clickCount = action.name === 'double_click' ? 2 : action.name === 'triple_click' ? 3 : 1;
+      if (clickCount > 1) {
+        await page.mouse.click(point.x, point.y, { clickCount });
+      } else {
+        await page.mouse.click(point.x, point.y);
       }
-      await page.mouse.click((x / 1000) * WIDTH, (y / 1000) * HEIGHT);
+      break;
+    }
+    case 'move': {
+      const point = toViewport(args.x, args.y);
+      if (!point) return { ok: false, error: 'Click coordinates are invalid' };
+      await page.mouse.move(point.x, point.y);
       break;
     }
     case 'type': {
@@ -149,15 +177,41 @@ async function executeAction(page, action) {
     }
     case 'scroll': {
       const direction = args.direction;
-      const distance = Math.min(Math.max(Number(args.amount) || 500, 0), 1200);
-      const x = Number.isFinite(args.x) ? (args.x / 1000) * WIDTH : WIDTH / 2;
-      const y = Number.isFinite(args.y) ? (args.y / 1000) * HEIGHT : HEIGHT / 2;
-      const delta = direction === 'up' ? -distance : direction === 'down' ? distance : null;
-      if (delta === null) return { ok: false, error: 'Scroll direction is invalid' };
-      await page.mouse.move(x, y);
-      await page.mouse.wheel(0, delta);
+      const distance = Math.min(
+        Math.max(Number(args.magnitude_in_pixels ?? args.amount) || 300, 0),
+        1200,
+      );
+      const hasPoint = Number.isFinite(args.x) && Number.isFinite(args.y);
+      const point = hasPoint ? toViewport(args.x, args.y) : { x: WIDTH / 2, y: HEIGHT / 2 };
+      if (!point) return { ok: false, error: 'Scroll coordinates are invalid' };
+      const deltas = {
+        up: [0, -distance],
+        down: [0, distance],
+        left: [-distance, 0],
+        right: [distance, 0],
+      };
+      const delta = deltas[direction];
+      if (!delta) return { ok: false, error: 'Scroll direction is invalid' };
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.wheel(delta[0], delta[1]);
       break;
     }
+    case 'hotkey': {
+      const keys = args.keys;
+      if (
+        !Array.isArray(keys) ||
+        keys.length < 1 ||
+        keys.length > 4 ||
+        keys.some((key) => typeof key !== 'string' || key.length === 0 || key.length > 32)
+      ) {
+        return { ok: false, error: 'Hotkey is invalid' };
+      }
+      await page.keyboard.press(keys.join('+'));
+      break;
+    }
+    case 'go_forward':
+      await page.goForward({ waitUntil: 'domcontentloaded' });
+      break;
     case 'press_key': {
       if (typeof args.key !== 'string' || args.key.length > 32) {
         return { ok: false, error: 'Key is invalid' };
@@ -166,11 +220,14 @@ async function executeAction(page, action) {
       break;
     }
     case 'wait': {
-      const seconds = Number(args.seconds);
-      if (!Number.isFinite(seconds) || seconds < 0 || seconds > 10) {
+      // The computer-use guide defaults wait to 1 second; long waits are capped at 10.
+      const seconds = args.seconds === undefined || args.seconds === null
+        ? 1
+        : Number(args.seconds);
+      if (!Number.isFinite(seconds) || seconds < 0) {
         return { ok: false, error: 'Wait duration is invalid' };
       }
-      await sleep(seconds * 1000);
+      await sleep(Math.min(seconds, 10) * 1000);
       break;
     }
     case 'go_back':
@@ -179,7 +236,7 @@ async function executeAction(page, action) {
     case 'take_screenshot':
       break;
     default:
-      return { ok: false, error: 'Unsupported browser action' };
+      note = 'unsupported action';
   }
 
   if (!isAllowedStoreUrl(page.url())) {
@@ -192,7 +249,7 @@ async function executeAction(page, action) {
     return { ok: false, error: 'Checkout or payment page was blocked' };
   }
 
-  return { ok: true };
+  return note ? { ok: true, note } : { ok: true };
 }
 
 function makePrompt(item, storeUrl) {
@@ -216,7 +273,7 @@ export function createCartController({
   createAi = () => {
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) throw new Error('GOOGLE_API_KEY is required for the cart');
-    return new GoogleGenAI({ apiKey });
+    return new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
   },
   getStoreUrl: storeUrlProvider = getStoreUrl,
   captureFrame = captureCartFrame,
@@ -306,6 +363,7 @@ export function createCartController({
       await captureFrame(page);
       activateFrame(true);
 
+      const handled = new Set();
       for (const item of items) {
         if (stopRequested) break;
         status = { ...status, step: `Searching for ${item.name}` };
@@ -329,9 +387,9 @@ export function createCartController({
             return;
           }
 
-          const call = getAction(interaction.outputs ?? []);
-          if (!call) {
-            const result = parseItemResult(getModelText(interaction.outputs ?? []), item);
+          const calls = getPendingCalls(interaction, handled);
+          if (calls.length === 0) {
+            const result = parseItemResult(getModelText(interaction, handled), item);
             if (result.added) {
               status.added.push(result.added);
               status.total += result.added.price;
@@ -341,60 +399,74 @@ export function createCartController({
             break;
           }
 
-          const safety = getSafetyDecision(call).toLowerCase();
-          if (safety.includes('blocked') || safety.includes('require_confirmation')) {
-            status = {
-              ...status,
-              state: 'waiting_for_patient',
-              step: safety.includes('blocked')
-                ? 'A browser action was blocked by model safety'
-                : 'The patient must confirm the next browser action',
-            };
-            return;
-          }
-          if (intentIsBlocked(call)) {
-            status = {
-              ...status,
-              state: 'waiting_for_patient',
-              step: 'A checkout, payment, account, or personal-information action was blocked',
-            };
-            return;
-          }
-          if (actions >= MAX_ACTIONS) {
-            fail('Cart stopped after 60 browser actions');
-            return;
+          for (const call of calls) {
+            const safety = getSafetyDecision(call).toLowerCase();
+            if (safety.includes('blocked') || safety.includes('require_confirmation')) {
+              status = {
+                ...status,
+                state: 'waiting_for_patient',
+                step: safety.includes('blocked')
+                  ? 'A browser action was blocked by model safety'
+                  : 'The patient must confirm the next browser action',
+              };
+              return;
+            }
+            if (intentIsBlocked(call)) {
+              status = {
+                ...status,
+                state: 'waiting_for_patient',
+                step: 'A checkout, payment, account, or personal-information action was blocked',
+              };
+              return;
+            }
           }
 
-          status.step = typeof call.intent === 'string'
-            ? call.intent
-            : `Performing ${call.name}`;
-          actions += 1;
-          const actionResult = await executeAction(page, call);
-          if (!actionResult.ok) {
-            status = {
-              ...status,
-              state: actionResult.error.includes('checkout')
-                ? 'waiting_for_patient'
-                : 'failed',
-              step: actionResult.error,
-            };
-            return;
-          }
+          const results = [];
+          for (const call of calls) {
+            if (actions >= MAX_ACTIONS) {
+              fail('Cart stopped after 60 browser actions');
+              return;
+            }
 
-          const screenshot = await page.screenshot({ type: 'png' });
-          await captureFrame(page);
-          interaction = await ai.interactions.create({
-            model: MODEL,
-            previous_interaction_id: interaction.id,
-            input: [{
+            const intent = call.arguments?.intent ?? call.intent;
+            status.step = typeof intent === 'string' ? intent : `Performing ${call.name}`;
+            actions += 1;
+            handled.add(call.id);
+            const actionResult = await executeAction(page, call);
+            if (!actionResult.ok) {
+              status = {
+                ...status,
+                state: actionResult.error.includes('checkout')
+                  ? 'waiting_for_patient'
+                  : 'failed',
+                step: actionResult.error,
+              };
+              return;
+            }
+
+            const screenshot = await page.screenshot({ type: 'png' });
+            await captureFrame(page);
+            results.push({
               type: 'function_result',
               name: call.name,
               call_id: call.id,
               result: [
-                { type: 'text', text: `Current URL: ${getPageReference(page)}` },
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    url: getPageReference(page),
+                    ...(actionResult.note ? { error: actionResult.note } : {}),
+                  }),
+                },
                 { type: 'image', data: screenshot.toString('base64'), mime_type: 'image/png' },
               ],
-            }],
+            });
+          }
+
+          interaction = await ai.interactions.create({
+            model: MODEL,
+            previous_interaction_id: interaction.id,
+            input: results,
           }, { timeout_ms: 30_000 });
         }
       }
