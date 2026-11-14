@@ -81,6 +81,52 @@ export function chooseProduct(itemName, products) {
   return best ? { upc: best.upc, description: best.description, unitPrice: best.unitPrice } : null;
 }
 
+// Product pictures are only ever fetched from Kroger's own picture path.
+export function isKrogerImageUrl(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:'
+      && u.hostname === 'www.kroger.com'
+      && u.port === ''
+      && u.username === ''
+      && u.password === ''
+      && u.pathname.startsWith('/product/images/');
+  } catch {
+    return false;
+  }
+}
+
+const SIZE_ORDER = ['large', 'medium', 'xlarge'];
+
+export function pickImageUrl(product) {
+  try {
+    const images = Array.isArray(product?.images) ? product.images.filter((i) => i && typeof i === 'object') : [];
+    const isFront = (i) => i.perspective === 'front';
+    const isFeatured = (i) => i.featured === true;
+    const ordered = [
+      ...images.filter((i) => isFeatured(i) && isFront(i)),
+      ...images.filter((i) => isFeatured(i) && !isFront(i)),
+      ...images.filter((i) => !isFeatured(i) && isFront(i)),
+      ...images.filter((i) => !isFeatured(i) && !isFront(i)),
+    ];
+    for (const image of ordered) {
+      const sizes = Array.isArray(image.sizes) ? image.sizes.filter((s) => s && typeof s === 'object') : [];
+      const rank = (s) => {
+        const at = SIZE_ORDER.indexOf(s.size);
+        return at === -1 ? SIZE_ORDER.length : at;
+      };
+      const sorted = sizes.map((s, at) => ({ s, at })).sort((a, b) => rank(a.s) - rank(b.s) || a.at - b.at);
+      for (const { s } of sorted) {
+        if (isKrogerImageUrl(s.url)) return s.url;
+      }
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
 const isInside = (root, target) => {
   const rel = relative(root, target);
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
