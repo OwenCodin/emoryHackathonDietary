@@ -86,6 +86,28 @@ export function makeFakeRenal({ scenes } = {}) {
         ],
       };
     },
+    // Deterministic recipe for the same ham sandwich: the avoid ham is swapped, the unchecked spread stays.
+    async dishRecipe({ dish, profile, ingredients } = {}) {
+      return {
+        ok: true,
+        dish: String(dish ?? ''),
+        source: 'builtin',
+        ingredients: [
+          { name: 'white bread', quantity: '2 slices', verdict: 'ok' },
+          { name: 'fresh unsalted chicken', quantity: '3 slices', verdict: 'ok', swappedFrom: 'ham' },
+          { name: 'lettuce', quantity: '1 leaf', verdict: 'ok' },
+          { name: 'mayonnaise', quantity: '1 tablespoon', verdict: 'unknown' },
+        ],
+        leftOut: [],
+        steps: [
+          'Lay out the two slices of bread.',
+          'Spread a thin layer of the spread on one slice.',
+          'Add the filling and the lettuce.',
+          'Close the sandwich, cut it in half and serve.',
+        ],
+        minutes: 5,
+      };
+    },
     async logFood({ patientId, verdict } = {}) {
       return { ok: true };
     },

@@ -112,6 +112,30 @@ describe('renal contract', () => {
     }
   });
 
+  it('dishRecipe returns a recipe', async () => {
+    const saved = { google: process.env.GOOGLE_API_KEY, usda: process.env.USDA_API_KEY };
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.USDA_API_KEY;
+    try {
+      const r = await renal.dishRecipe({ dish: 'omelet', profile });
+      assert.equal(r.ok, true);
+      assert.equal(r.source, 'builtin');
+      assert.ok(Array.isArray(r.steps) && r.steps.length > 0 && r.steps.length <= 10 && r.steps.every(isStr));
+      assert.ok(r.ingredients.length > 0);
+      for (const i of r.ingredients) {
+        assert.ok(isStr(i.name) && isStr(i.quantity));
+        assert.ok(['ok', 'limit', 'avoid', 'unknown'].includes(i.verdict));
+      }
+      assert.ok(Array.isArray(r.leftOut));
+      assert.ok(r.totals === undefined || isNutrients(r.totals));
+    } finally {
+      if (saved.google === undefined) delete process.env.GOOGLE_API_KEY;
+      else process.env.GOOGLE_API_KEY = saved.google;
+      if (saved.usda === undefined) delete process.env.USDA_API_KEY;
+      else process.env.USDA_API_KEY = saved.usda;
+    }
+  });
+
   it('logFood and getToday return their shapes', async () => {
     const verdict = await renal.checkFood({ food: { name: 'banana' }, profile });
     assert.deepEqual(await renal.logFood({ patientId: 'demo', verdict }), { ok: true });
@@ -126,7 +150,7 @@ describe('renal contract', () => {
     delete process.env.GOOGLE_API_KEY;
     delete process.env.USDA_API_KEY;
     try {
-      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'dishIngredients', 'logFood', 'getToday']) {
+      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'dishIngredients', 'dishRecipe', 'logFood', 'getToday']) {
         const p = renal[name]();
         assert.ok(p instanceof Promise, `${name} returns a Promise`);
         const r = await p;
