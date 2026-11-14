@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkinGreeting, greeting } from './prompt.mjs';
-import { outboundCall, parseJobMetadata, safeReason } from './outbound.mjs';
+import { outboundCall, outboundRequested, parseJobMetadata, safeReason } from './outbound.mjs';
 
 const VALID = '{"outbound":true,"reason":"dinner_checkin","bridgeIdentity":"chert-bridge-out-sim"}';
 
@@ -46,4 +46,14 @@ test('checkinGreeting content and greeting unchanged', () => {
   assert.ok(checkinGreeting.length > 0 && checkinGreeting !== greeting);
   for (const phrase of ['AI renal dietitian', 'mealtime', 'care team', 'plate']) assert.ok(checkinGreeting.includes(phrase), phrase);
   assert.ok(greeting.includes('what food they want to check'));
+});
+
+test('outboundRequested flags malformed outbound requests so they are not treated as inbound', () => {
+  assert.equal(outboundRequested({ outbound: true }), true);
+  assert.equal(outboundRequested({ outbound: true, bridgeIdentity: 'agent-123' }), true);
+  assert.equal(outboundCall({ outbound: true, bridgeIdentity: 'agent-123' }), null);
+  assert.equal(outboundRequested(parseJobMetadata(VALID)), true);
+  for (const m of [{}, { sim: true }, { outbound: 'true' }, { outbound: false }, null, undefined, [], 'x']) {
+    assert.equal(outboundRequested(m), false, JSON.stringify(m));
+  }
 });

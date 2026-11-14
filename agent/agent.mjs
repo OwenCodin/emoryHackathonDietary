@@ -11,14 +11,22 @@ import { createVideoPicker } from './video.mjs';
 import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
-import { outboundCall, parseJobMetadata } from './outbound.mjs';
+import { outboundCall, outboundRequested, parseJobMetadata } from './outbound.mjs';
 import { checkinGreeting, greeting, instructions } from './prompt.mjs';
 
 
 const agent = defineAgent({
   entry: async ctx => {
     // Outbound (twist 3): Track C's callPatient dispatches with metadata naming the Chert bridge. Anything else is inbound.
-    const call = outboundCall(parseJobMetadata(ctx.job?.metadata));
+    const metadata = parseJobMetadata(ctx.job?.metadata);
+    const call = outboundCall(metadata);
+    if (!call && outboundRequested(metadata)) {
+      // Outbound asked for but bridgeIdentity missing or invalid: never fall back to an inbound call. No metadata in the log.
+      console.error('[agent] outbound metadata rejected');
+      await ctx.connect();
+      ctx.shutdown('outbound_metadata_rejected');
+      return;
+    }
     // Registered before connecting so no caller video track is missed.
     const camera = watchCaller(ctx.room);
     await ctx.connect();

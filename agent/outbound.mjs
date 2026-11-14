@@ -30,3 +30,9 @@ export function outboundCall(metadata) {
   if (typeof metadata.bridgeIdentity !== 'string' || !BRIDGE_IDENTITY.test(metadata.bridgeIdentity)) return null;
   return { bridgeIdentity: metadata.bridgeIdentity, reason: safeReason(metadata.reason) };
 }
+
+// True when the metadata asks for an outbound call, well formed or not. With outboundCall() null this means
+// the request was malformed and must not quietly become an inbound call.
+export function outboundRequested(metadata) {
+  return metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata) && metadata.outbound === true;
+}
