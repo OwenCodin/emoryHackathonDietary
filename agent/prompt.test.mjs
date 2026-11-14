@@ -57,3 +57,11 @@ describe('timeWarning', () => {
     assert.ok(timeWarning.includes('shopping list'));
   });
 });
+
+describe('store rules', () => {
+  it('instructions carry the store and shelf rules and the greeting is unchanged', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    for (const s of ['In a store', 'one sentence', 'best', 'shelf', 'not in a tool result']) assert.ok(instructions.includes(s), s);
+    assert.ok(greeting.startsWith('Greet the caller in one or two short sentences: say you are an AI renal dietitian'));
+  });
+});

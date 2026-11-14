@@ -10,6 +10,7 @@ import * as actionsModule from '../actions/index.mjs';
 
 const WORDS = { ok: 'Yes', avoid: 'No', limit: 'Small portion' };
 const RANK = { avoid: 0, limit: 1, unknown: 2, ok: 3 };
+const PICK = { ok: 0, limit: 1, unknown: 2, avoid: 3 };
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 // Text that came from another track's module: plain characters only, no links, bounded length.
@@ -145,6 +146,42 @@ function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout
 }
 
 const normalVerdict = v => (Object.hasOwn(RANK, v) ? v : 'unknown');
+
+// Picks the best checked food: ok, then limit, then unknown; never avoid, never a failed check.
+// Ties go to the lowest largest share of a daily limit, then to the order seen. Pure.
+export function pickBest(verdicts, limits) {
+  const share = n => {
+    let worst = -Infinity;
+    for (const k of ['sodiumMg', 'potassiumMg', 'phosphorusMg']) {
+      const have = n?.[k];
+      const cap = limits?.[k];
+      if (Number.isFinite(have) && have >= 0 && Number.isFinite(cap) && cap > 0) worst = Math.max(worst, have / cap);
+    }
+    return worst === -Infinity ? Infinity : worst;
+  };
+  const rows = (Array.isArray(verdicts) ? verdicts : [])
+    .map((v, i) => ({ v, i, rank: PICK[normalVerdict(v?.verdict)], share: share(v?.nutrients) }))
+    .filter(r => r.v?.ok === true && r.rank !== PICK.avoid);
+  if (rows.length === 0) return null;
+  rows.sort((a, b) => a.rank - b.rank || (a.share === b.share ? 0 : a.share < b.share ? -1 : 1) || a.i - b.i);
+  return rows[0].v;
+}
+
+const NONE_FIT = 'No, none of the items in view fit your limits. Want me to look at another shelf?';
+function shelfSpoken(best, fallbackName) {
+  if (!best) return { name: null, spoken: NONE_FIT };
+  const name = clean(best.food ?? fallbackName, 60);
+  const lead = { ok: `Yes, the ${name} is the best choice here.`, limit: `Small portion, the ${name} is the best choice here.` }[normalVerdict(best.verdict)]
+    ?? `I can't tell for sure, but the ${name} looks like the best choice here.`;
+  const say = clean(best.say, 400).replace(/^(yes|no|small portion|i can't tell)\s*[,.:!;-]+\s*/i, '');
+  let why = splitSentences(say)[0] ?? '';
+  if (why.length > 110) {
+    why = why.slice(0, 109);
+    const cut = why.lastIndexOf(' ');
+    why = (cut > 0 ? why.slice(0, cut) : why).replace(/[\s,;:.-]+$/, '') + '.';
+  }
+  return { name, spoken: (lead + (why ? ' ' + why : '')).slice(0, 200) };
+}
 const norm = s => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
 const isInside = (root, target) => {
   const rel = relative(root, target);
@@ -197,7 +234,7 @@ export function buildTools({
   return {
     // Anonymous tools: the object key is the tool name.
     look_at_camera: llm.tool({
-      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest.',
+      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest. For a store shelf the result has best and spoken: say spoken, which names the product to pick.',
       execute: guard(async call => {
         // A new look replaces the last one, whether or not it works.
         lastFoods = [];
@@ -239,6 +276,12 @@ export function buildTools({
           lastFoods = foods.map(f => clean(f.name, 80));
           good.forEach(g => remember(g.v, g.name));
         }
+        let shelf = null;
+        if (seen.kind === 'shelf' && !seen.label?.product && foods.length >= 2) {
+          const best = pickBest(good.map(g => g.v), got.profile?.limits);
+          const match = best ? good.find(g => g.v === best) : null;
+          shelf = shelfSpoken(best, match?.name);
+        }
         const build = (n, capBad, capOk, capFood) => {
           const results = rows.slice(0, n).map(r => ({
             food: r.food.slice(0, capFood),
@@ -247,7 +290,7 @@ export function buildTools({
             ...(r.swap ? { swap: r.swap.slice(0, 40) } : {}),
           }));
           const omitted = rows.length - n + notChecked;
-          return { ok: true, kind: seen.kind, results, ...(omitted > 0 ? { omitted, say: `I only covered ${n} of ${n + omitted} foods. Please show me the rest.` } : {}) };
+          return { ok: true, kind: seen.kind, ...(shelf ? { best: shelf.name, spoken: shelf.spoken } : {}), results, ...(omitted > 0 ? { omitted, say: `I only covered ${n} of ${n + omitted} foods. Please show me the rest.` } : {}) };
         };
         for (const [capBad, capOk, capFood] of [[130, 60, 40], [90, 30, 30], [60, 0, 24]]) {
           const r = build(rows.length, capBad, capOk, capFood);

@@ -688,3 +688,112 @@ describe('shopping list tools', async () => {
     assert.equal(l.ok, true);
   });
 });
+
+// ---- Phase 5 plan 03: pickBest and the shelf result (AISL-01) ----
+const LIM = { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000 };
+const vn = (food, verdict, nutrients = null, say = 'Fine today.') => ({ ...verdictFor(food, verdict, say), nutrients });
+
+describe('pickBest', () => {
+  it('ranks ok, then limit, then unknown, then avoid', () => {
+    assert.equal(tools.pickBest([vn('A', 'limit'), vn('B', 'ok')], LIM).food, 'B');
+    assert.equal(tools.pickBest([vn('A', 'unknown'), vn('B', 'limit')], LIM).food, 'B');
+    assert.equal(tools.pickBest([vn('A', 'avoid'), vn('B', 'unknown')], LIM).food, 'B');
+  });
+  it('gives null when all are avoid or nothing was checked', () => {
+    assert.equal(tools.pickBest([vn('A', 'avoid'), vn('B', 'avoid')], LIM), null);
+    assert.equal(tools.pickBest([], LIM), null);
+    assert.equal(tools.pickBest([null, { ok: false }], LIM), null);
+    assert.equal(tools.pickBest(undefined, LIM), null);
+  });
+  it('breaks a tie by the lowest largest share of a daily limit', () => {
+    const a = vn('A', 'ok', { sodiumMg: 800, potassiumMg: 100, phosphorusMg: 100 });
+    const b = vn('B', 'ok', { sodiumMg: 200, potassiumMg: 400, phosphorusMg: 100 });
+    assert.equal(tools.pickBest([a, b], LIM).food, 'B');
+    assert.equal(tools.pickBest([vn('A', 'ok'), b], LIM).food, 'B');
+  });
+  it('uses the order seen without nutrients or limits', () => {
+    assert.equal(tools.pickBest([vn('A', 'ok'), vn('B', 'ok')], LIM).food, 'A');
+    const a = vn('A', 'ok', { sodiumMg: 800, potassiumMg: 100, phosphorusMg: 100 });
+    const b = vn('B', 'ok', { sodiumMg: 200, potassiumMg: 400, phosphorusMg: 100 });
+    assert.equal(tools.pickBest([a, b], undefined).food, 'A');
+    assert.equal(tools.pickBest([a, b], { sodiumMg: 0, potassiumMg: 0, phosphorusMg: 0 }).food, 'A');
+  });
+  it('never chooses a failed check and ranks an odd verdict as unknown', () => {
+    assert.equal(tools.pickBest([{ ok: false, verdict: 'ok', food: 'X' }, vn('B', 'limit')], LIM).food, 'B');
+    assert.equal(tools.pickBest([vn('A', 'weird'), vn('B', 'avoid')], LIM).food, 'A');
+    assert.equal(tools.pickBest([vn('A', 'weird'), vn('B', 'limit')], LIM).food, 'B');
+  });
+  it('does not change its input', () => {
+    const input = [vn('A', 'limit'), vn('B', 'ok')];
+    const copy = JSON.stringify(input);
+    tools.pickBest(input, LIM);
+    assert.equal(JSON.stringify(input), copy);
+  });
+});
+
+const shelfRenal = (foods, byName, { kind = 'shelf', label = null, fails = [] } = {}) => ({ ...renal,
+  describeImage: async () => ({ ok: true, kind, foods: foods.map(name => ({ name, grams: null })), label }),
+  checkFood: async a => {
+    if (fails.includes(a.food.name)) throw new Error('boom');
+    const [verdict, say] = byName[a.food.name] ?? ['ok', 'Fine today.'];
+    return verdictFor(a.food.name, verdict, say);
+  } });
+
+describe('look_at_camera on a shelf', () => {
+  const three = ['regular broth', 'low sodium broth', 'bouillon cubes'];
+  const verdicts = { 'regular broth': ['limit', 'Quite salty.'], 'low sodium broth': ['ok', 'It is low in salt. Enjoy it.'], 'bouillon cubes': ['avoid', 'Far too salty.'] };
+  it('names the best choice first, with the verdict word first', async () => {
+    const r = await build({ renal: shelfRenal(three, verdicts) }).look_at_camera.execute({});
+    assert.equal(r.ok, true);
+    assert.equal(r.kind, 'shelf');
+    assert.equal(r.best, 'low sodium broth');
+    assert.ok(r.spoken.startsWith('Yes, the low sodium broth is the best choice here.'), r.spoken);
+    assert.ok(splitCount(r.spoken) <= 2);
+    assert.ok(r.spoken.length <= 200);
+    assert.equal(r.results.length, 3);
+    assert.equal(r.results[0].verdict, 'avoid');
+  });
+  it('says none fit when every food is avoid', async () => {
+    const r = await build({ renal: shelfRenal(['a', 'b'], { a: ['avoid', 'No.'], b: ['avoid', 'No.'] }) }).look_at_camera.execute({});
+    assert.equal(r.best, null);
+    assert.equal(r.spoken, 'No, none of the items in view fit your limits. Want me to look at another shelf?');
+  });
+  it('uses the limit and unknown lead sentences', async () => {
+    let r = await build({ renal: shelfRenal(['a', 'b'], { a: ['limit', 'Small amounts only.'], b: ['avoid', 'No.'] }) }).look_at_camera.execute({});
+    assert.ok(r.spoken.startsWith('Small portion, the a is the best choice here.'), r.spoken);
+    r = await build({ renal: shelfRenal(['a', 'b'], { a: ['unknown', 'Not sure.'], b: ['avoid', 'No.'] }) }).look_at_camera.execute({});
+    assert.ok(r.spoken.startsWith("I can't tell for sure, but the a looks like the best choice here."), r.spoken);
+    assert.ok(!r.spoken.startsWith('Yes'));
+  });
+  it('never recommends a food whose check failed', async () => {
+    const r = await build({ renal: shelfRenal(['a', 'b'], { b: ['avoid', 'No.'] }, { fails: ['a'] }) }).look_at_camera.execute({});
+    assert.equal(r.best, null);
+  });
+  it('leaves other pictures unchanged', async () => {
+    for (const kind of ['plate', 'fridge']) {
+      const r = await build({ renal: shelfRenal(['a', 'b'], {}, { kind }) }).look_at_camera.execute({});
+      assert.equal(r.ok, true);
+      assert.ok(!('best' in r) && !('spoken' in r));
+    }
+    let r = await build({ renal: shelfRenal(['only'], {}) }).look_at_camera.execute({});
+    assert.ok(!('best' in r) && !('spoken' in r));
+    r = await build({ renal: shelfRenal(['a', 'b'], {}, { label: { product: 'Soup' } }) }).look_at_camera.execute({});
+    assert.ok(!('best' in r) && !('spoken' in r));
+  });
+  it('stays within 900 characters for six long names and says', async () => {
+    const names = Array.from({ length: 6 }, (_, i) => `product number ${i} ${'x'.repeat(50)}`.slice(0, 70));
+    const long = 'A rather long sentence about this product that goes on and on and on. And another one that is just as long.';
+    const by = Object.fromEntries(names.map(n => [n, ['ok', long]]));
+    const r = await build({ renal: shelfRenal(names, by) }).look_at_camera.execute({});
+    assert.ok(JSON.stringify(r).length <= 900, String(JSON.stringify(r).length));
+    assert.equal(typeof r.best, 'string');
+    assert.ok(r.spoken.startsWith('Yes, the '));
+  });
+  it('cleans hostile names', async () => {
+    const r = await build({ renal: shelfRenal(['Broth\u0007 https://x.y', 'other'], { other: ['avoid', 'No.'] }) }).look_at_camera.execute({});
+    assert.equal(r.best, 'Broth');
+    assert.ok(r.spoken.includes('the Broth is'), r.spoken);
+    assert.ok(!r.spoken.includes('http'));
+  });
+});
+function splitCount(text) { return text.split(/(?<=[.!?])\s+/).length; }
