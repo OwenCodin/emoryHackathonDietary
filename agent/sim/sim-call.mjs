@@ -82,7 +82,7 @@ async function runCall(n) {
   const log = (...a) => console.log(`[sim call ${n} ${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a);
   const roomName = `sim-${Date.now()}-${n}`;
   const room = new Room();
-  let micTimer = null, camTimer = null, camTrack = null, camSource = null, framesSent = 0;
+  let micTimer = null, camTimer = null, camTrack = null, camSource = null, mic = null, source = null, framesSent = 0;
   const stats = { audioFrames: 0, loudFrames: 0, firstLoudAt: null, peak: 0, lastLoudAt: 0, videoFrames: 0, videoSize: null, agentIdentity: null, timeline: [] };
   try {
     await rooms.createRoom({ name: roomName, emptyTimeout: 60 });
@@ -161,8 +161,8 @@ async function runCall(n) {
     log('joined room as', identity);
 
     // A silent microphone named like Chert's, so the agent has caller audio to bind to.
-    const source = new AudioSource(48000, 1);
-    const mic = LocalAudioTrack.createAudioTrack('facetime-remote-audio', source);
+    source = new AudioSource(48000, 1);
+    mic = LocalAudioTrack.createAudioTrack('facetime-remote-audio', source);
     await room.localParticipant.publishTrack(mic, { source: TrackSource.SOURCE_MICROPHONE });
     const silence = new Int16Array(480);
     const startSilence = () => { micTimer = setInterval(() => { source.captureFrame(new AudioFrame(silence, 48000, 1, 480)).catch(() => {}); }, 10); };
@@ -291,6 +291,8 @@ async function runCall(n) {
     if (camTimer) clearInterval(camTimer);
     try { await camTrack?.close(); } catch { /* ignore */ }
     try { await camSource?.close(); } catch { /* ignore */ }
+    try { await mic?.close(); } catch { /* ignore */ }
+    try { await source?.close(); } catch { /* ignore */ }
     await room.disconnect().catch(() => {});
     await deleteRoomQuietly(roomName);
     activeRoom = null;
