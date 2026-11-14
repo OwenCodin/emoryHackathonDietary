@@ -91,13 +91,23 @@ describe('look_at_camera', () => {
     assert.ok(r.results[0].spoken);
     assert.equal(r.results[0].swap, undefined);
   });
-  it('unclear and failed pictures give unclear_picture', async () => {
-    for (const seen of [{ ok: true, kind: 'unclear', foods: [], label: null }, { ok: false, error: 'x' }]) {
-      const r = await build({ renal: { ...renal, describeImage: async () => seen } }).look_at_camera.execute({});
-      assert.equal(r.ok, false);
-      assert.equal(r.error, 'unclear_picture');
-      assert.match(r.say, /closer/);
-    }
+  it('a failed describeImage gives vision_failed', async () => {
+    const r = await build({ renal: { ...renal, describeImage: async () => ({ ok: false, error: 'x' }) } }).look_at_camera.execute({});
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'vision_failed');
+    assert.match(r.say, /still/);
+  });
+  it('an unclear picture gives unclear_picture', async () => {
+    const r = await build({ renal: { ...renal, describeImage: async () => ({ ok: true, kind: 'unclear', foods: [], label: null }) } }).look_at_camera.execute({});
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'unclear_picture');
+    assert.match(r.say, /closer/);
+  });
+  it('a clear picture with no named foods gives no_food_seen', async () => {
+    const r = await build({ renal: { ...renal, describeImage: async () => ({ ok: true, kind: 'plate', foods: [], label: null }) } }).look_at_camera.execute({});
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'no_food_seen');
+    assert.match(r.say, /food/);
   });
   it('judges the label product once', async () => {
     const calls = [];
@@ -135,9 +145,13 @@ describe('guarding', () => {
     const bad = { ...renal,
       getProfile: async () => ({ ok: false, error: 'https://x.test/?token=SECRET123' }),
       checkFood: async () => ({ ok: false, error: 'https://x.test/?token=SECRET123' }) };
-    for (const r of [await build({ renal: bad }).check_food.execute({ name: 'a', grams: null }), await build({ renal: bad }).look_at_camera.execute({})]) {
-      assert.equal(r.ok, false);
+    // look_at_camera is no longer a dead end: it returns ok:true with unjudged rows (see the unjudged tests).
+    const look = await build({ renal: bad }).look_at_camera.execute({});
+    assert.equal(look.ok, true);
+    assert.equal(look.unjudged, true);
+    for (const r of [await build({ renal: bad }).check_food.execute({ name: 'a', grams: null }), look]) {
       assert.ok(r.say.length > 0);
+      if (r !== look) assert.equal(r.ok, false);
       const j = JSON.stringify(r);
       for (const w of ['SECRET123', 'http', 'boom', 'stack']) assert.ok(!j.includes(w), w);
     }
@@ -1008,5 +1022,74 @@ describe('text_recipe', () => {
     assert.equal((await t.text_recipe.execute({})).error, 'text_unconfirmed');
     assert.equal((await t.text_recipe.execute({})).error, 'recipe_already_sent');
     assert.equal(calls.length, 1);
+  });
+});
+
+describe('quick 261114-fc6: a look that sees foods is never a dead end', async () => {
+  const { createMemory } = await import('./memory.mjs');
+  let n = 0;
+  const stateDir = () => join(dir, `fc6-${n++}`);
+  const names = [{ name: 'Lettuce', grams: null }, { name: 'Spring mix salad', grams: null }];
+  const fridgeSeen = () => ({ ...renal, describeImage: async () => ({ ok: true, kind: 'fridge', foods: names, label: null }) });
+
+  it('every check failing returns unjudged, remembers the foods and feeds suggest_meal', async () => {
+    for (const failing of [async () => ({ ok: false, error: 'USDA lookup failed (429)' }), async () => { throw new Error('boom'); }]) {
+      const added = [];
+      const memory = createMemory({ patientId: 'demo', dir: stateDir() });
+      const realAdd = memory.addPantry.bind(memory);
+      memory.addPantry = async list => { added.push(list); return realAdd(list); };
+      const { mod, calls } = rec({ ...fridgeSeen(), checkFood: failing }, 'suggestMeals');
+      const t = build({ renal: mod, memory });
+      const r = await t.look_at_camera.execute({ place: 'home' });
+      assert.equal(r.ok, true);
+      assert.equal(r.unjudged, true);
+      assert.equal(r.remembered, true);
+      assert.equal(r.best, undefined);
+      assert.deepEqual(r.results.map(x => x.verdict), ['unknown', 'unknown']);
+      assert.ok(r.results.every(x => x.spoken === "I can't tell, I couldn't check that one just now."));
+      assert.equal(r.say, "I can see 2 foods, but I couldn't check them against your limits just now.");
+      assert.deepEqual(added, [['Lettuce', 'Spring mix salad']]);
+      const meal = await t.suggest_meal.execute({});
+      assert.equal(meal.ok, true);
+      assert.deepEqual(calls[0].foods, ['Lettuce', 'Spring mix salad']);
+    }
+  });
+  it('a failing profile is not a failure: foods are remembered and checkFood is never called', async () => {
+    let checks = 0;
+    const memory = createMemory({ patientId: 'demo', dir: stateDir() });
+    const t = build({ memory, renal: { ...fridgeSeen(), getProfile: async () => ({ ok: false, error: 'x' }), checkFood: async () => { checks++; return verdictFor('x'); } } });
+    const r = await t.look_at_camera.execute({ place: 'home' });
+    assert.equal(r.ok, true);
+    assert.equal(r.unjudged, true);
+    assert.equal(r.remembered, true);
+    assert.equal(checks, 0);
+    assert.equal((await t.pantry_list.execute({})).count, 2);
+  });
+  it('a shelf look where nothing could be judged has no shelf pick', async () => {
+    const shelf = { ...renal, describeImage: async () => ({ ok: true, kind: 'shelf', foods: names, label: null }), checkFood: async () => ({ ok: false, error: 'x' }) };
+    const r = await build({ renal: shelf }).look_at_camera.execute({ place: 'store' });
+    assert.equal(r.ok, true);
+    assert.equal(r.unjudged, true);
+    assert.equal(r.best, undefined);
+    assert.equal(r.spoken, undefined);
+    assert.equal(r.remembered, undefined);
+  });
+  it('a single unjudged food is worded in the singular', async () => {
+    const one = { ...renal, describeImage: async () => ({ ok: true, kind: 'plate', foods: [{ name: 'soup', grams: null }], label: null }), checkFood: async () => ({ ok: false, error: 'x' }) };
+    const r = await build({ renal: one }).look_at_camera.execute({});
+    assert.equal(r.say, "I can see one food, but I couldn't check it against your limits just now.");
+  });
+  it('online is set only when a checked verdict came from the web', async () => {
+    const web = { ...renal, checkFood: async a => ({ ...verdictFor(a.food.name, 'limit', "Limit, x has about one hundred milligrams of sodium per serving. That is from what I found online, not from your care team's list."), source: 'web' }) };
+    const r = await build({ renal: web }).look_at_camera.execute({});
+    assert.equal(r.online, true);
+    assert.equal(r.unjudged, undefined);
+    const plain = await build().look_at_camera.execute({});
+    assert.equal(Object.hasOwn(plain, 'online'), false);
+  });
+  it('check_food keeps the online provenance sentence in its spoken text', async () => {
+    const web = { ...renal, checkFood: async a => ({ ...verdictFor(a.food.name, 'limit', "Limit, x has about one hundred milligrams of sodium per serving. That is from what I found online, not from your care team's list."), source: 'web' }) };
+    const r = await build({ renal: web }).check_food.execute({ name: 'oatly', grams: null });
+    assert.ok(r.spoken.endsWith("not from your care team's list."), r.spoken);
   });
 });

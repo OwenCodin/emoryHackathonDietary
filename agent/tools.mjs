@@ -77,6 +77,8 @@ export function spokenVerdict(verdict, max = 240) {
 const FAILS = {
   no_camera_picture: "I can't see your camera right now. Please turn your camera on and hold the food still in front of it.",
   unclear_picture: "I couldn't make that out. Please hold it a little closer and keep it still.",
+  vision_failed: "I couldn't look at that just now. Please hold it still and ask me again.",
+  no_food_seen: "I couldn't spot any food there. Please point the camera at the food and keep it still.",
   profile_unavailable: "I can't reach your care plan right now, so I won't guess. Let's try again in a moment.",
   check_failed: "I couldn't check that just now. Let's try again in a moment.",
   tool_failed: "I couldn't check that just now. Let's try again in a moment.",
@@ -278,7 +280,7 @@ export function buildTools({
   return {
     // Anonymous tools: the object key is the tool name.
     look_at_camera: llm.tool({
-      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Pass place home for the caller own fridge, pantry or cupboards, and place store in a shop. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest. For a store shelf the result has best and spoken: say spoken, which names the product to pick.',
+      description: 'Look at what the caller is showing on camera right now (a food label, plate, fridge or shelf) and judge it against their limits. Pass place home for the caller own fridge, pantry or cupboards, and place store in a shop. Call this every time they ask about something in view; each call takes a new picture. If the result has omitted, say that you only covered some of the foods and ask them to show the rest. For a store shelf the result has best and spoken: say spoken, which names the product to pick. If the result has unjudged true, say what you can see and that you could not check it against their limits right now; never guess a verdict. If the result has online true, also say once that some of these numbers came from an online search, not their care team\'s list.',
       parameters: z.object({ place: z.enum(['home', 'store']).nullish() }),
       execute: guard(async (call, args = {}) => {
         const place = args?.place === 'home' || args?.place === 'store' ? args.place : null;
@@ -292,17 +294,20 @@ export function buildTools({
           try { await saveDebugFrame(debugFrameDir, picture); } catch { /* a failed debug write never fails the tool */ }
         }
         const seen = await renal.describeImage({ jpeg: picture });
-        if (!seen?.ok || seen.kind === 'unclear') return fail('unclear_picture');
-        const got = await renal.getProfile({ patientId });
-        if (!got?.ok) return fail('profile_unavailable');
+        if (!seen?.ok) return fail('vision_failed');
+        if (seen.kind === 'unclear') return fail('unclear_picture');
         const named = f => f && typeof f.name === 'string' && f.name.trim();
         const all = seen.label?.product
           ? [{ name: seen.label.product, label: seen.label }]
           : (Array.isArray(seen.foods) ? seen.foods : []).filter(named);
         const foods = all.slice(0, 6);
         const notChecked = all.length - foods.length;
-        if (foods.length === 0) return fail('unclear_picture');
+        if (foods.length === 0) return fail('no_food_seen');
+        // A profile problem never hides what was seen: nothing is judged and the foods are still remembered.
+        const got = await renal.getProfile({ patientId });
+        const profileOk = got?.ok === true;
         const verdicts = await Promise.all(foods.map(async food => {
+          if (!profileOk) return null;
           try { return await renal.checkFood({ food, profile: got.profile }); } catch { return null; }
         }));
         const rows = [];
@@ -316,7 +321,7 @@ export function buildTools({
             rows.push({ food: clean(foods[i].name, 80), verdict: 'unknown', swap: '', speak: () => "I can't tell, I couldn't check that one just now." });
           }
         });
-        if (good.length === 0) return fail('check_failed');
+        const unjudged = good.length === 0;
         // The most serious verdicts come first, so a shortened result never hides an "avoid".
         rows.sort((a, b) => RANK[a.verdict] - RANK[b.verdict]);
         if (!call.timedOut) {
@@ -335,7 +340,7 @@ export function buildTools({
           }
         }
         let shelf = null;
-        if (seen.kind === 'shelf' && place !== 'home' && !seen.label?.product && foods.length >= 2) {
+        if (!unjudged && seen.kind === 'shelf' && place !== 'home' && !seen.label?.product && foods.length >= 2) {
           const best = pickBest(good.map(g => g.v), got.profile?.limits);
           const match = best ? good.find(g => g.v === best) : null;
           shelf = shelfSpoken(best, match?.name);
@@ -348,7 +353,22 @@ export function buildTools({
             ...(r.swap ? { swap: r.swap.slice(0, 40) } : {}),
           }));
           const omitted = rows.length - n + notChecked;
-          return { ok: true, kind: seen.kind, ...(remembered ? { remembered: true } : {}), ...(shelf ? { best: shelf.name, spoken: shelf.spoken } : {}), results, ...(omitted > 0 ? { omitted, say: `I only covered ${n} of ${n + omitted} foods. Please show me the rest.` } : {}) };
+          const omittedSay = omitted > 0 ? `I only covered ${n} of ${n + omitted} foods. Please show me the rest.` : '';
+          // Never a verdict or a number here: only how many foods were seen and that they could not be checked.
+          const seenCount = rows.length;
+          const unjudgedSay = unjudged ? `I can see ${seenCount === 1 ? 'one food' : `${seenCount} foods`}, but I couldn't check ${seenCount === 1 ? 'it' : 'them'} against your limits just now.` : '';
+          const say = [unjudgedSay, omittedSay].filter(Boolean).join(' ');
+          return {
+            ok: true,
+            kind: seen.kind,
+            ...(unjudged ? { unjudged: true } : {}),
+            ...(good.some(g => g.v?.source === 'web') ? { online: true } : {}),
+            ...(remembered ? { remembered: true } : {}),
+            ...(shelf ? { best: shelf.name, spoken: shelf.spoken } : {}),
+            results,
+            ...(omitted > 0 ? { omitted } : {}),
+            ...(say ? { say } : {}),
+          };
         };
         for (const [capBad, capOk, capFood] of [[130, 60, 40], [90, 30, 30], [60, 0, 24]]) {
           const r = build(rows.length, capBad, capOk, capFood);
