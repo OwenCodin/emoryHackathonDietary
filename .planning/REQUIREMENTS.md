@@ -44,8 +44,8 @@
 
 ### Outbound
 
-- [ ] **OUT-01**: When dispatched with job metadata `outbound: true`, the agent joins and publishes audio and video immediately, without waiting for a participant, and stays silent until `chert_bridge_ready`
-- [ ] **OUT-02**: A patient who answers an outbound call hears a mealtime check-in greeting asking to see their plate
+- [x] **OUT-01**: When dispatched with job metadata `outbound: true`, the agent joins and publishes audio and video immediately, without waiting for a participant, and stays silent until `chert_bridge_ready`
+- [x] **OUT-02**: A patient who answers an outbound call hears a mealtime check-in greeting asking to see their plate
 
 ### In the aisle
 
@@ -106,8 +106,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AISL-04 | Phase 3 | Complete |
 | VID-01 | Phase 4 | Complete |
 | VID-02 | Phase 4 | Complete |
-| OUT-01 | Phase 4 | Pending |
-| OUT-02 | Phase 4 | Pending |
+| OUT-01 | Phase 4 | Complete |
+| OUT-02 | Phase 4 | Complete |
 | AISL-01 | Phase 5 | Pending |
 | AISL-02 | Phase 5 | Pending |
 | AISL-03 | Phase 5 | Pending |

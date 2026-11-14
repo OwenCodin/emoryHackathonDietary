@@ -11,7 +11,7 @@ Real FaceTime calls are scarce (about 49 minutes left on the trial, 5 minutes pe
 - [x] **Phase 1: Scaffold and stubs** - Repo starts with `npm start`, shared video size, and stub renal and actions modules so all three tracks can work alone (completed 2026-11-14)
 - [x] **Phase 2: First call** - A FaceTime call is answered, greeted in time, and conversational, twice in a row (completed 2026-11-14)
 - [x] **Phase 3: Camera and tools** - The patient shows or names food and hears a one-sentence verdict tied to their limits (completed 2026-11-14)
-- [ ] **Phase 4: Browser on the call and the agent calls you** - The patient sees the shopping browser during a cart run, and an outbound call opens with a mealtime check-in
+- [x] **Phase 4: Browser on the call and the agent calls you** - The patient sees the shopping browser during a cart run, and an outbound call opens with a mealtime check-in (completed 2026-11-14)
 - [ ] **Phase 5: In the aisle** - The patient points at a shelf and hears the best choice, and a callback continues the same shopping list
 
 ## Phase Details
@@ -106,7 +106,7 @@ Plans:
   4. **[real call]** A patient who answers an outbound call hears a mealtime check-in such as "It's dinner time. Show me your plate."
 
 **Human checkpoint**: Asking Chert staff whether the trial line may place outbound calls and to which verified numbers (with Track C); placing the real outbound test within the shared minute budget.
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 **Wave 1**
@@ -115,7 +115,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — Outbound entry: publish before the bridge joins, silent until ready, mealtime check-in; simulated outbound and inbound proof (OUT-01, OUT-02)
+- [x] 04-02-PLAN.md — Outbound entry: publish before the bridge joins, silent until ready, mealtime check-in; simulated outbound and inbound proof (OUT-01, OUT-02)
 
 **Cross-cutting constraints:**
 
@@ -144,5 +144,5 @@ Plans:
 | 1. Scaffold and stubs | 1/1 | Complete   | 2026-11-14 |
 | 2. First call | 1/1 | Complete   | 2026-11-14 |
 | 3. Camera and tools | 2/2 | Complete   | 2026-11-14 |
-| 4. Browser on the call and the agent calls you | 1/2 | In Progress|  |
+| 4. Browser on the call and the agent calls you | 2/2 | Complete   | 2026-11-14 |
 | 5. In the aisle | 0/0 | Not started | - |
