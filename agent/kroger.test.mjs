@@ -193,3 +193,57 @@ describe('privacy', () => {
     assert.ok(!text.includes('relay.example') && !text.includes('A'.repeat(43)) && !text.includes(PHONE.slice(2)));
   });
 });
+
+describe('finish_onboarding Kroger sentence', () => {
+  const finish = async ({ status = STATUS(), texted = true, build = {} } = {}) => {
+    const { t, calls } = setup({ status, build: { setupDue: true, ...build } });
+    if (texted) await t.text_kroger_sign_in.execute();
+    const started = Date.now();
+    const out = await t.finish_onboarding.execute();
+    return { out, calls, ms: Date.now() - started };
+  };
+
+  it('ends with the fixed reminder when a link was texted and Kroger is not connected', async () => {
+    const { out } = await finish();
+    assert.equal(out.ok, true);
+    assert.ok(out.say.endsWith(tools.KROGER_FINISH_LATER));
+    assert.equal(out.say.split(tools.KROGER_FINISH_LATER).length, 2);
+    assert.equal(typeof out.complete, 'boolean');
+  });
+  it('says Kroger is connected when it is', async () => {
+    const { out } = await finish({ status: STATUS({ connected: true }) });
+    assert.equal(out.ok, true);
+    assert.ok(out.say.endsWith(' Your Kroger account is connected.'));
+  });
+  it('adds nothing when no link was texted this call (the caller said later)', async () => {
+    const { out } = await finish({ texted: false });
+    assert.equal(out.ok, true);
+    assert.ok(!out.say.includes('Kroger'));
+  });
+  it('adds nothing when Kroger is not set up, has no relay, or the status is missing, throws or never answers', async () => {
+    for (const status of [STATUS({ configured: false }), STATUS({ relay: false }), () => { throw new Error('boom'); }]) {
+      const { out } = await finish({ status });
+      assert.equal(out.ok, true, JSON.stringify(out));
+      assert.ok(!out.say.includes('Kroger'), out.say);
+    }
+    const hang = setup({ status: () => new Promise(() => {}), build: { setupDue: true } });
+    await hang.t.text_kroger_sign_in.execute();
+    const started = Date.now();
+    const out = await hang.t.finish_onboarding.execute();
+    assert.equal(out.ok, true);
+    assert.ok(Date.now() - started < 1800, 'finish_onboarding waited too long');
+    assert.ok(!out.say.includes('Kroger'));
+  });
+  it('a missing getKrogerStatus does not break finishing', async () => {
+    const { t, actions } = setup({ build: { setupDue: true } });
+    await t.text_kroger_sign_in.execute();
+    delete actions.getKrogerStatus;
+    const out = await t.finish_onboarding.execute();
+    assert.equal(out.ok, true);
+    assert.ok(!out.say.includes('Kroger'));
+  });
+  it('the extra sentence has no link, state or phone', async () => {
+    const { out } = await finish();
+    assert.ok(!out.say.includes('relay.example') && !out.say.includes('A'.repeat(43)) && !out.say.includes(PHONE.slice(2)));
+  });
+});
