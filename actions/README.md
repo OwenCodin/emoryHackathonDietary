@@ -232,7 +232,7 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 ### Local implementation status
 
-The Track C modules are implemented. On 14 Nov 2026 the cart was run against the real Gemini Interactions API on https://www.kroger.com, headed, as a guest (Kroger refuses sign-in to automation), asking for unsalted butter, white rice and 3 apples. The model loop worked: about 30 actions were carried out and every `function_result` was accepted. No item was added (0 added, 0 missing, total $0.00): Kroger's search never produced results for the model, it kept retrying search and browsing categories, and the run stopped on the first item (unsalted butter) with state `failed` when a `go_back` timed out after about 200 seconds. It never reached checkout. The cart has still not been run on a live call. Set `GROCERY_STORE_URL` and test a retailer before claiming it works. `agent/agent.mjs` exists and the root `npm start` runs the agent.
+The Track C modules are implemented. On 14 Nov 2026 the cart was run against the real Gemini Interactions API on https://www.kroger.com, headed, as a guest (Kroger refuses sign-in to automation), asking for unsalted butter, white rice and 3 apples. The model loop worked: about 30 actions were carried out and every `function_result` was accepted. No item was added (0 added, 0 missing, total $0.00): Kroger's search never produced results for the model, it kept retrying search and browsing categories, and the run stopped on the first item (unsalted butter) with state `failed` when a `go_back` timed out after about 200 seconds. It never reached checkout. Later the same day a Kroger public API cart path was added beside the browser one (see "Kroger API cart" below). The cart has still not been run on a live call. Set `GROCERY_STORE_URL` and test a retailer before claiming it works. `agent/agent.mjs` exists and the root `npm start` runs the agent.
 
 Reported when Track C was written: the runtime dependency audit showed three high advisories in
 `sharp@0.35.3`, which is pinned transitively by `@livekit/agents@1.8.0`.
@@ -247,6 +247,8 @@ LiveKit stack can be upgraded safely. I have not re-run the audit.
 |---|---|
 | `actions/index.mjs` | Re-exports the six functions in the contract. |
 | `actions/cart.mjs` | `startCart`, `getCartStatus`, `stopCart`. The Gemini computer-use loop over a Playwright browser. |
+| `actions/kroger.mjs` | Kroger public API client: app-token product search, stored sign-in, add to cart, product choice. |
+| `actions/kroger-login.mjs` | One-time Kroger sign-in, run by a person: `node --env-file=.env.local actions/kroger-login.mjs`. |
 | `actions/frames.mjs` | `getCartFrame`. Keeps the latest browser screenshot as RGBA at `WIDTH` by `HEIGHT`. |
 | `actions/login.mjs` | Opens the browser profile so you can sign in to the store by hand, once. |
 | `actions/outbound.mjs` | `callPatient`. |
@@ -321,6 +323,22 @@ The generated link is a shopping list: the patient must choose a store and revie
 No store login has been tested by this implementation yet; the user must sign in and validate the selected site before it can be called reliable.
 
 **Where it runs.** Track A imports `actions/index.mjs`, so the browser runs inside the agent's process for that call. Module-level state is fine. Close the browser context in `stopCart()` and when the cart finishes, or the next call cannot open the profile.
+
+### Kroger API cart
+
+The browser cart cannot fill a real cart: kroger.com, walmart.com and Instacart all block the guest browser. So `startCart` has a second path that uses Kroger's public API and opens no browser.
+
+**When it is used.** The API path runs when both `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` are set. With either unset the browser cart runs exactly as before. There is no other switch. Argument validation runs first on both paths.
+
+**One-time sign-in.** A person runs `node --env-file=.env.local actions/kroger-login.mjs`. It opens Kroger's sign-in page in the normal browser, receives the redirect on `KROGER_REDIRECT_URI` (default `http://localhost:8765/callback`, which must be registered on the Kroger app), checks a random state value, exchanges the code and saves a refresh token. The token is stored in `KROGER_TOKEN_DIR` (default `~/.config/renal-dietitian`) as `kroger-tokens.json`, folder mode 700, file mode 600. The folder is refused if it is inside this repo. Without a stored sign-in a run ends `failed` with the step "Sign in to Kroger first: node --env-file=.env.local actions/kroger-login.mjs"; it does not fall back to the browser. If Kroger rejects the stored sign-in the step says it expired and to run the command again.
+
+**How a run works.** For each item: search products at `KROGER_LOCATION_ID` (default 01100695, Kroger - Ponce), choose a product, add it with `PUT /v1/cart/add` (pickup). Product choice is deterministic: it needs a positive price (promo if there is one, else regular) and every content word of the item name in the description. A request for unsalted, low sodium, no salt added, reduced sodium or sodium free must match such a marker; otherwise a product with a marker is preferred; ties keep Kroger's order. Quantity is the leading integer of the quantity text ("3 apples" is 3, "a dozen" is 1) and is capped at 5. Status steps read "Searching Kroger for ...", "Adding ... to the Kroger cart", then "Kroger cart updated" (or "No items could be added to the Kroger cart" with no `cartUrl`). `getCartStatus` has the same shape as on the browser path, and `cartUrl` is `https://www.kroger.com/cart` when at least one item was added. There is no cart picture on this path (`getCartFrame` stays `null`).
+
+**Safety.** Adding to a cart is not a purchase. The code has no checkout, order or payment call; a test checks that every URL it fetches is the token, products or cart/add endpoint. The public API cannot view or remove cart items, so the patient reviews the cart on kroger.com.
+
+**What was verified live (14 Nov 2026):** the app token, the locations lookup, and product search at 01100695, including a read-only check through this code: "unsalted butter" chose Kroger Unsalted Butter Sticks ($3.59), "white rice" chose Kroger Enriched Long Grain White Rice ($1.89), "apples" chose Kroger Honeycrisp Apples 4 Pack Tray ($5.00). Kroger's authorize URL with `http://localhost:8765/callback` returns the Kroger sign-in page.
+
+**Not verified:** the sign-in itself, the code exchange, the refresh, and add to cart; nothing has been added to a real cart. The `cart/add` details (PUT, scope `cart.basic:write`, body `{items:[{upc, quantity, modality}]}`, success 204) and the authorization-code and refresh-token grants are taken from third-party libraries and were not confirmed against Kroger's official docs, which could not be read (JavaScript-rendered pages).
 
 ### `sendText`
 

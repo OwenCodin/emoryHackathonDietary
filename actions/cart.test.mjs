@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import sharp from 'sharp';
 import { createCartController } from './cart.mjs';
+import { createKrogerClient } from './kroger.mjs';
 
 const png = await sharp({
   create: {
@@ -92,6 +93,7 @@ function createController(replies, overrides = {}) {
     getStoreUrl: () => 'https://www.walmart.com/',
     captureFrame: async () => new Uint8Array(1280 * 720 * 4),
     activateFrame: () => {},
+    getKrogerConfig: () => null,
     ...overrides,
   });
   return { controller, browser, requests };
@@ -393,5 +395,160 @@ test('a blocked call anywhere in a multi-call reply stops all of them', async ()
       callStep('c2', 'click', { x: 1, y: 1, safety_decision: { decision: 'blocked' } })),
   ], 'waiting_for_patient');
   assert.equal(safety.calls.filter((c) => c[0] === 'click').length, 0);
+});
+
+// ---- Kroger API path ----
+
+const KROGER_CONFIG = { clientId: 'test-client', clientSecret: 'test-secret', locationId: '01100695', tokenDir: '/unused' };
+const LOGIN = 'node --env-file=.env.local actions/kroger-login.mjs';
+
+function krogerProduct(upc, description, price) {
+  return { upc, description, items: [{ price: { regular: price } }] };
+}
+
+const defaultSearch = (term) => ({
+  status: 200,
+  body: {
+    data: term === 'apples'
+      ? [krogerProduct('2', 'Honeycrisp Apple', 1.1)]
+      : [krogerProduct('1', 'Kroger Salted Butter', 3), krogerProduct('3', 'Kroger® Unsalted Butter Sticks', 3.59)],
+  },
+});
+
+function makeKrogerController({ stored = { refreshToken: 'test-refresh' }, search = defaultSearch, add, refreshStatus = 200, openContext } = {}) {
+  const calls = [];
+  let controller;
+  const fetchImpl = async (url, init = {}) => {
+    const u = new URL(url);
+    calls.push({ path: u.pathname, body: init.body });
+    let status = 200;
+    let body = {};
+    if (u.pathname === '/v1/connect/oauth2/token') {
+      if (new URLSearchParams(String(init.body)).get('grant_type') === 'refresh_token') status = refreshStatus;
+      body = { access_token: 'test-user-access', expires_in: 1800 };
+    } else if (u.pathname === '/v1/products') {
+      ({ status, body } = search(u.searchParams.get('filter.term')));
+    } else if (u.pathname === '/v1/cart/add') {
+      ({ status, body = null } = add?.(JSON.parse(init.body), controller) ?? { status: 204 });
+    } else {
+      throw new Error(`unexpected ${u.pathname}`);
+    }
+    return { ok: status >= 200 && status < 300, status, json: async () => body };
+  };
+  controller = createCartController({
+    openContext: openContext ?? (async () => { throw new Error('browser must not open'); }),
+    getKrogerConfig: () => KROGER_CONFIG,
+    createKroger: (config) => createKrogerClient({
+      ...config,
+      tokenStore: { load: async () => stored, save: async () => ({ ok: true }) },
+      fetchImpl,
+    }),
+  });
+  return { controller, calls };
+}
+
+test('browser path is used when there is no Kroger config', async () => {
+  let opened = false;
+  const ctx = createController([textReply('i', 'MISSING: x')], {
+    openContext: async () => { opened = true; return makeBrowser().context; },
+  });
+  await ctx.controller.startCart({ items: ITEMS });
+  await waitForState(ctx.controller, 'done');
+  assert.equal(opened, true);
+});
+
+test('kroger API path fills the cart without a browser', async () => {
+  const { controller, calls } = makeKrogerController();
+  assert.deepEqual(await controller.startCart({
+    items: [{ name: 'unsalted butter', quantity: '2' }, { name: 'apples', quantity: '3 apples' }],
+  }), { ok: true });
+  await waitForState(controller, 'done');
+  assert.deepEqual(controller.getCartStatus(), {
+    ok: true,
+    state: 'done',
+    step: 'Kroger cart updated',
+    added: [
+      { name: 'Kroger® Unsalted Butter Sticks', price: 7.18 },
+      { name: 'Honeycrisp Apple', price: 3.3 },
+    ],
+    missing: [],
+    total: 10.48,
+    cartUrl: 'https://www.kroger.com/cart',
+  });
+  const adds = calls.filter((c) => c.path === '/v1/cart/add').map((c) => JSON.parse(c.body).items[0]);
+  assert.deepEqual(adds.map((a) => a.quantity), [2, 3]);
+});
+
+test('kroger path reports missing items and keeps going', async () => {
+  const { controller } = makeKrogerController({
+    search: (term) => term === 'apples'
+      ? { status: 200, body: { data: [] } }
+      : term === 'rice'
+        ? { status: 500, body: {} }
+        : { status: 200, body: { data: [krogerProduct('1', 'Plain Broth', 2)] } },
+    add: () => ({ status: 500 }),
+  });
+  await controller.startCart({ items: [
+    { name: 'apples', quantity: '1' },
+    { name: 'rice', quantity: '1' },
+    { name: 'broth', quantity: '1' },
+  ] });
+  await waitForState(controller, 'done');
+  const s = controller.getCartStatus();
+  assert.deepEqual(s.missing, [
+    'apples: no matching product at the store',
+    'rice: product search failed (http_500)',
+    'broth: Kroger did not accept the item (http_500)',
+  ]);
+  assert.equal(s.step, 'No items could be added to the Kroger cart');
+  assert.equal(s.cartUrl, null);
+});
+
+test('kroger path with no stored sign-in fails with the login command', async () => {
+  const { controller, calls } = makeKrogerController({ stored: null });
+  await controller.startCart({ items: ITEMS });
+  await waitForState(controller, 'failed');
+  assert.equal(controller.getCartStatus().step, `Sign in to Kroger first: ${LOGIN}`);
+  assert.equal(calls.length, 0);
+});
+
+test('kroger refresh rejected fails with the expired message', async () => {
+  const { controller, calls } = makeKrogerController({ refreshStatus: 401 });
+  await controller.startCart({ items: ITEMS });
+  await waitForState(controller, 'failed');
+  assert.equal(controller.getCartStatus().step, `Kroger sign-in expired: run ${LOGIN} again`);
+  assert.equal(calls.some((c) => c.path === '/v1/products'), false);
+});
+
+test('kroger 401 mid-run keeps earlier items', async () => {
+  let adds = 0;
+  const { controller } = makeKrogerController({
+    add: () => (++adds === 1 ? { status: 204 } : { status: 401 }),
+  });
+  await controller.startCart({ items: [
+    { name: 'unsalted butter', quantity: '1' },
+    { name: 'apples', quantity: '1' },
+  ] });
+  await waitForState(controller, 'failed');
+  const s = controller.getCartStatus();
+  assert.equal(s.step, `Kroger sign-in expired: run ${LOGIN} again`);
+  assert.deepEqual(s.added, [{ name: 'Kroger® Unsalted Butter Sticks', price: 3.59 }]);
+  assert.equal(s.total, 3.59);
+  assert.ok(!JSON.stringify(s).includes('test-user-access'));
+});
+
+test('stopCart during the kroger run goes idle with no further requests', async () => {
+  let stopper;
+  const { controller, calls } = makeKrogerController({
+    add: (body, c) => { stopper = c.stopCart(); return { status: 204 }; },
+  });
+  await controller.startCart({ items: [
+    { name: 'unsalted butter', quantity: '1' },
+    { name: 'apples', quantity: '1' },
+  ] });
+  await waitForState(controller, 'idle');
+  await stopper;
+  assert.equal(controller.getCartStatus().step, 'Cart stopped');
+  assert.equal(calls.filter((c) => c.path === '/v1/cart/add').length, 1);
 });
 

@@ -13,6 +13,17 @@ import {
   isCheckoutUrl,
 } from './store.mjs';
 import { createInstacartLink } from './instacart.mjs';
+import {
+  KROGER_CART_URL,
+  chooseProduct,
+  createKrogerClient,
+  createTokenStore,
+  parseQuantity,
+  readKrogerConfig,
+} from './kroger.mjs';
+
+const KROGER_LOGIN_COMMAND = 'node --env-file=.env.local actions/kroger-login.mjs';
+const round2 = (n) => Math.round(n * 100) / 100;
 
 const PROFILE_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '.browser-profile');
 const MAX_ACTIONS = 60;
@@ -280,6 +291,11 @@ export function createCartController({
   activateFrame = setCartFrameActive,
   createFallbackLink = createInstacartLink,
   now = Date.now,
+  getKrogerConfig = () => readKrogerConfig(process.env),
+  createKroger = (config) => createKrogerClient({
+    ...config,
+    tokenStore: createTokenStore({ dir: config.tokenDir }),
+  }),
 } = {}) {
   let context = null;
   let runPromise = null;
@@ -297,7 +313,71 @@ export function createCartController({
     status = { ...status, state: 'failed', step };
   }
 
+  // Kroger public API path: no browser, no Gemini. Never throws.
+  async function runKroger(items, config) {
+    const startedAt = now();
+    const expired = `Kroger sign-in expired: run ${KROGER_LOGIN_COMMAND} again`;
+    try {
+      const kroger = createKroger(config);
+      const auth = await kroger.getUserToken();
+      if (!auth.ok) {
+        if (auth.error === 'no_sign_in') fail(`Sign in to Kroger first: ${KROGER_LOGIN_COMMAND}`);
+        else if (auth.error === 'sign_in_rejected') fail(expired);
+        else fail(`Kroger sign-in check failed (${auth.error})`);
+        return;
+      }
+      for (const item of items) {
+        if (stopRequested) break;
+        if (now() - startedAt >= MAX_DURATION_MS) {
+          fail('Cart stopped after four minutes');
+          return;
+        }
+        status = { ...status, step: `Searching Kroger for ${item.name}` };
+        const found = await kroger.searchProducts(item.name);
+        if (stopRequested) break;
+        if (!found.ok) {
+          status.missing.push(`${item.name}: product search failed (${found.error})`);
+          continue;
+        }
+        const product = chooseProduct(item.name, found.products);
+        if (!product) {
+          status.missing.push(`${item.name}: no matching product at the store`);
+          continue;
+        }
+        status = { ...status, step: `Adding ${item.name} to the Kroger cart` };
+        const quantity = parseQuantity(item.quantity);
+        const added = await kroger.addToCart({ upc: product.upc, quantity }, auth.token);
+        if (stopRequested) break;
+        if (!added.ok) {
+          if (added.error === 'sign_in_rejected') {
+            fail(expired);
+            return;
+          }
+          status.missing.push(`${item.name}: Kroger did not accept the item (${added.error})`);
+          continue;
+        }
+        const price = round2(product.unitPrice * quantity);
+        status.added.push({ name: product.description, price });
+        status.total = round2(status.total + price);
+      }
+      if (stopRequested) {
+        status = { ...status, state: 'idle', step: 'Cart stopped' };
+      } else if (status.added.length === 0) {
+        status = { ...status, state: 'done', step: 'No items could be added to the Kroger cart', cartUrl: null };
+      } else {
+        status = { ...status, state: 'done', step: 'Kroger cart updated', cartUrl: KROGER_CART_URL };
+      }
+    } catch {
+      if (stopRequested) status = { ...status, state: 'idle', step: 'Cart stopped' };
+      else fail('Kroger cart failed');
+    } finally {
+      runPromise = null;
+    }
+  }
+
   async function run(items) {
+    const krogerConfig = getKrogerConfig();
+    if (krogerConfig) return runKroger(items, krogerConfig);
     const startedAt = now();
     let actions = 0;
     let page;
