@@ -18,6 +18,16 @@ export function watchCaller(room, options = {}) {
   let generation = 0;
   let videoSid = null;
   let muted = false;
+  let activeReader = null;
+
+  // Cancelling frees the stream's native handle and stops it queueing frames nobody reads.
+  const releaseReader = () => {
+    const r = activeReader;
+    activeReader = null;
+    if (!r) return;
+    try { Promise.resolve(r.cancel()).catch(() => {}); } catch { /* already released */ }
+    try { r.releaseLock?.(); } catch { /* a read may still be parked */ }
+  };
 
   // Without PLAYGROUND only the Chert bridge is the caller; with it, any non-agent participant.
   const accepts = participant => playground
@@ -26,9 +36,12 @@ export function watchCaller(room, options = {}) {
 
   const start = track => {
     const mine = ++generation;
+    releaseReader(); // the previous track's reader, if a second video track replaces it
+    let reader;
+    try { reader = openStream(track).getReader(); } catch { return; }
+    activeReader = reader;
     (async () => {
       try {
-        const reader = openStream(track).getReader();
         for (;;) {
           const { value, done } = await reader.read();
           if (done || mine !== generation) break;
@@ -36,6 +49,8 @@ export function watchCaller(room, options = {}) {
         }
       } catch { /* track ended */ }
       if (mine === generation) latest = null;
+      else if (activeReader === reader) releaseReader();
+      else { try { Promise.resolve(reader.cancel()).catch(() => {}); } catch { /* released */ } }
     })();
   };
 
@@ -50,6 +65,7 @@ export function watchCaller(room, options = {}) {
   const onUnsubscribed = (track, publication) => {
     if (track?.kind === TrackKind.KIND_VIDEO && publication?.sid === videoSid) {
       generation++;
+      releaseReader();
       latest = null;
       videoSid = null;
     }
@@ -80,6 +96,7 @@ export function watchCaller(room, options = {}) {
     },
     close() {
       generation++;
+      releaseReader();
       latest = null;
       room.off(RoomEvent.TrackSubscribed, onSubscribed);
       room.off(RoomEvent.TrackUnsubscribed, onUnsubscribed);

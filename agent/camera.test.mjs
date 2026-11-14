@@ -126,3 +126,45 @@ describe('watchCaller', () => {
     assert.equal(await cam.jpeg(), null);
   });
 });
+
+describe('reader release', () => {
+  // A stream whose reader records cancel().
+  function cancelable() {
+    const log = { cancels: 0 };
+    const reader = {
+      read: () => new Promise(() => {}),
+      cancel: async () => { log.cancels++; },
+      releaseLock: () => {},
+    };
+    return { log, stream: { getReader: () => reader } };
+  }
+  const make = streams => {
+    const room = new EventEmitter();
+    let i = 0;
+    const cam = camera.watchCaller(room, { playground: false, openStream: () => streams[i++].stream, now: () => 10000 });
+    return { room, cam };
+  };
+
+  it('cancels the reader on unsubscribe', () => {
+    const a = cancelable();
+    const { room } = make([a]);
+    room.emit(RoomEvent.TrackSubscribed, video, pub(), who('chert-bridge-test'));
+    room.emit(RoomEvent.TrackUnsubscribed, video, pub(), who('chert-bridge-test'));
+    assert.equal(a.log.cancels, 1);
+  });
+  it('cancels the old reader when a new video track replaces it', () => {
+    const a = cancelable(), b = cancelable();
+    const { room } = make([a, b]);
+    room.emit(RoomEvent.TrackSubscribed, video, pub(), who('chert-bridge-test'));
+    room.emit(RoomEvent.TrackSubscribed, { ...video, sid: 'TR_w' }, pub({ sid: 'TR_w' }), who('chert-bridge-test'));
+    assert.equal(a.log.cancels, 1);
+    assert.equal(b.log.cancels, 0);
+  });
+  it('cancels the reader on close', () => {
+    const a = cancelable();
+    const { room, cam } = make([a]);
+    room.emit(RoomEvent.TrackSubscribed, video, pub(), who('chert-bridge-test'));
+    cam.close();
+    assert.equal(a.log.cancels, 1);
+  });
+});
