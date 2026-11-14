@@ -1,9 +1,10 @@
 import { fileURLToPath } from 'node:url';
-import { AutoSubscribe, defineAgent, voice } from '@livekit/agents';
+import { defineAgent, voice } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
 import { LocalVideoTrack, TrackSource, VideoBufferType, VideoFrame, VideoSource } from '@livekit/rtc-node';
 import { drawFace } from './face.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
+import { watchCaller } from './camera.mjs';
 import { buildTools } from './tools.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
@@ -12,7 +13,9 @@ import { greeting, instructions } from './prompt.mjs';
 
 const agent = defineAgent({
   entry: async ctx => {
-    await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
+    // Registered before connecting so no caller video track is missed.
+    const camera = watchCaller(ctx.room);
+    await ctx.connect();
     // Chert prepares a room before a caller exists. Join promptly so Chert can
     // find us, but wait before opening a paid model session or sending video.
     const caller = await ctx.waitForParticipant();
@@ -60,7 +63,7 @@ const agent = defineAgent({
       console.log('[agent] call ended');
       if (timer) clearInterval(timer);
       // Close each resource even if an earlier one fails.
-      for (const close of [() => session.close(), () => track.close(), () => source.close()]) {
+      for (const close of [() => session.close(), () => track.close(), () => source.close(), () => camera.close()]) {
         try { await close(); } catch (error) { console.error('[agent] shutdown step failed', error); }
       }
     });
@@ -92,7 +95,7 @@ const agent = defineAgent({
       timer = setInterval(frame, 1000 / FPS);
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions, tools: buildTools({ patientId: 'demo' }) }),
+        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo' }) }),
         record: false,
         inputOptions: {
           participantIdentity: caller.identity,
