@@ -135,7 +135,21 @@ Plans:
   3. **[real call]** The patient is told at about four minutes that the call will end soon and to call back, and a call back continues the same list
 
 **Human checkpoint**: A real shelf test in a store or with a printed shelf photo, placed by the person within the minute budget.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — A spoken question always gets an answer: barge-in off by default, reply watchdog with one nudge per unanswered turn, six simulated banana calls (D-15 to D-18)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 05-02-PLAN.md — A call back continues the same shopping list and the caller is warned before the time limit: per-patient state file, three list tools, resume greeting, four-minute warning (D-04 to D-12)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 05-03-PLAN.md — Pointing at a shelf names the best choice: pickBest ranking, shelf sentence, store prompt rules (D-01 to D-03)
 
 ## Progress
 
@@ -145,4 +159,4 @@ Plans:
 | 2. First call | 1/1 | Complete   | 2026-11-14 |
 | 3. Camera and tools | 2/2 | Complete   | 2026-11-14 |
 | 4. Browser on the call and the agent calls you | 2/2 | Complete   | 2026-11-14 |
-| 5. In the aisle | 0/0 | Not started | - |
+| 5. In the aisle | 0/3 | Planned | - |
