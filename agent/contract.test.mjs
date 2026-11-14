@@ -223,7 +223,7 @@ describe('actions contract', () => {
 
   it('every async function returns a Promise with an ok result', async () => {
     await withScrubbedKroger(async () => {
-      for (const name of ['startCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText', 'startKrogerSignIn', 'getKrogerStatus']) {
+      for (const name of ['startCart', 'previewCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText', 'startKrogerSignIn', 'getKrogerStatus']) {
         const p = actions[name]();
         assert.ok(p instanceof Promise, `${name} returns a Promise`);
         assert.equal(typeof (await p).ok, 'boolean', `${name}() returns an ok result`);
