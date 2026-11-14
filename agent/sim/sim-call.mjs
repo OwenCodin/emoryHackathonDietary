@@ -4,9 +4,11 @@
 // publishes (greeting timing, silence before the signal, video size). One RESULT line per call.
 //
 // Run against an already running agent (npm start, or node --env-file=.env.local agent/agent.mjs start):
-//   node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]...
+//   node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch]
 // --image PATH publishes a facetime-remote-video track showing that picture (1280x720, about 5 frames a second).
 // --say TEXT (repeatable) speaks the text into the caller microphone after the greeting, using macOS say.
+// --expect-cart-switch checks that the agent's video goes face, then cart (magenta), then face; run against an agent
+// started with AGENT_FAKE_CART=1.
 // With --say or --image listening ends at the earlier of ready + SECONDS and 44 s after the call started.
 // Exit 0 only if every call passes all checks; otherwise exit 1 naming the failed checks.
 import { existsSync } from 'node:fs';
@@ -17,9 +19,10 @@ import {
 } from '@livekit/rtc-node';
 import { AccessToken, AgentDispatchClient, RoomServiceClient } from 'livekit-server-sdk';
 import { HEIGHT, WIDTH } from '../../shared/video.mjs';
+import { followsFaceCartFace, isMagenta } from './fake-cart.mjs';
 import { MAX_SPEECH_CHARS, speechPcm } from './speech.mjs';
 
-const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]...';
+const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch]';
 
 function intArg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -45,6 +48,7 @@ const SAYS = textArgs('--say');
 const IMAGES = textArgs('--image');
 if (IMAGES.length > 1 || (IMAGES.length === 1 && !existsSync(IMAGES[0]))) { console.log(USAGE); process.exit(1); }
 const IMAGE = IMAGES[0] ?? null;
+const EXPECT_CART = process.argv.includes('--expect-cart-switch');
 const SCRIPTED = SAYS.length > 0 || IMAGE !== null;
 
 const url = process.env.LIVEKIT_URL;
@@ -76,7 +80,7 @@ async function runCall(n) {
   const roomName = `sim-${Date.now()}-${n}`;
   const room = new Room();
   let micTimer = null, camTimer = null, camTrack = null, camSource = null, framesSent = 0;
-  const stats = { audioFrames: 0, loudFrames: 0, firstLoudAt: null, peak: 0, lastLoudAt: 0, videoFrames: 0, videoSize: null, agentIdentity: null };
+  const stats = { audioFrames: 0, loudFrames: 0, firstLoudAt: null, peak: 0, lastLoudAt: 0, videoFrames: 0, videoSize: null, agentIdentity: null, timeline: [] };
   try {
     await rooms.createRoom({ name: roomName, emptyTimeout: 60 });
     activeRoom = roomName;
@@ -105,12 +109,22 @@ async function runCall(n) {
         })();
       } else {
         const reader = new VideoStream(track).getReader();
+        let lastSampleAt = 0;
         (async () => {
           for (;;) {
             const { value, done } = await reader.read().catch(() => ({ done: true }));
             if (done) break;
             stats.videoFrames++;
             stats.videoSize = `${value.frame.width}x${value.frame.height}`;
+            if (EXPECT_CART && Date.now() - lastSampleAt >= 500) {
+              lastSampleAt = Date.now();
+              try {
+                const rgba = value.frame.convert(VideoBufferType.RGBA);
+                const i = ((Math.floor(rgba.height / 2) * rgba.width) + Math.floor(rgba.width / 2)) * 4;
+                const kind = isMagenta(rgba.data[i], rgba.data[i + 1], rgba.data[i + 2]) ? 'cart' : 'face';
+                if (stats.timeline[stats.timeline.length - 1] !== kind && stats.timeline.length < 30) stats.timeline.push(kind);
+              } catch { /* sampling must never stop the reader */ }
+            }
           }
         })();
       }
@@ -203,12 +217,16 @@ async function runCall(n) {
       audioFrames: stats.audioFrames, peak: stats.peak,
       videoFrames: stats.videoFrames, videoSize: stats.videoSize,
     };
+    result.callSeconds = Number(((listenEndAt - t0) / 1000).toFixed(1));
+    if (EXPECT_CART) {
+      result.videoTimeline = stats.timeline;
+      result.cartSwitch = followsFaceCartFace(stats.timeline);
+    }
     if (SCRIPTED) {
       result.image = picture !== null;
       result.imageFramesSent = framesSent;
       result.says = SAYS.length;
       result.replies = replies;
-      result.callSeconds = Number(((listenEndAt - t0) / 1000).toFixed(1));
     }
     const failed = [];
     if (result.spokeBeforeReady) failed.push('spokeBeforeReady');
@@ -218,8 +236,9 @@ async function runCall(n) {
     if (SCRIPTED) {
       if (picture && framesSent < 5) failed.push('imagePublished');
       if (SAYS.length > 0 && (replies.length < SAYS.length || replies.some(r => !r.replied))) failed.push('repliedToSay');
-      if (result.callSeconds > 45) failed.push('callUnder45s');
     }
+    if (EXPECT_CART && !result.cartSwitch) failed.push('cartSwitch');
+    if ((SCRIPTED || EXPECT_CART) && result.callSeconds > 45) failed.push('callUnder45s');
     result.failed = failed;
     result.pass = failed.length === 0;
     return result;
