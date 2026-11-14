@@ -51,7 +51,7 @@ describe('spokenVerdict', () => {
 describe('buildTools shape', () => {
   it('has the eight tools, anonymous', () => {
     const t = build();
-    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'shopping_list', 'mark_item', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'text_recipe', 'start_setup', 'save_profile_basics', 'propose_limits', 'confirm_limits', 'set_avoid_foods', 'set_preferences', 'finish_onboarding']);
+    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'shopping_list', 'mark_item', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'text_recipe', 'kroger_status', 'text_kroger_sign_in', 'start_setup', 'save_profile_basics', 'propose_limits', 'confirm_limits', 'set_avoid_foods', 'set_preferences', 'finish_onboarding']);
     for (const tool of Object.values(t)) assert.ok(!Object.hasOwn(tool, 'name'));
   });
 });

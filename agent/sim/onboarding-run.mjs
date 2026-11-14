@@ -17,10 +17,21 @@ try {
   const { createMemory } = await import('../memory.mjs');
   const { SETUP_STEPS } = await import('../prompt.mjs');
   const { realtimeOptions } = await import('../prefs.mjs');
+  const { makeFakeActions } = await import('../fake-modules.mjs');
 
   const memory = createMemory({ patientId: 'demo', dir: prefsDir });
   const clock = { t: Date.now() };
-  const tools = buildTools({ camera: null, patientId: 'demo', renal, memory, setupDue: true, now: () => clock.t, callerHeardAfter: () => true, timeoutMs: 5000 });
+  // Fake actions: the sign-in reads as connected only after the link was made (the patient tapping it), and no text is sent.
+  const PHONE = '+15555550100';
+  const texts = [];
+  let linkMade = false;
+  const actions = {
+    ...makeFakeActions(),
+    async getKrogerStatus() { return { ok: true, configured: true, relay: true, connected: linkMade, pending: false }; },
+    async startKrogerSignIn() { linkMade = true; return { ok: true, link: `https://relay.example/k/${'A'.repeat(43)}` }; },
+    async sendText(msg) { texts.push(msg); return { ok: true }; },
+  };
+  const tools = buildTools({ camera: null, patientId: 'demo', renal, memory, actions, phone: PHONE, setupDue: true, now: () => clock.t, callerHeardAfter: () => true, timeoutMs: 5000 });
 
   console.log('setupStatus before:', JSON.stringify(await setupStatus({ patientId: 'demo', renal })));
   const said = [];
@@ -42,6 +53,10 @@ try {
   await step('confirm_limits', { sodium_mg: 2000, potassium_mg: 2000, phosphorus_mg: 1000, fluid_ml: 1000 });
   await step('set_avoid_foods', { foods: ['grapefruit'] });
   await step('set_preferences', { voice: 'warm', reply_style: 'brief', language: 'english' });
+  await step('kroger_status', {});
+  await step('text_kroger_sign_in', {});
+  await step('kroger_status', {});
+  if (texts.length !== 1 || texts[0].phone !== PHONE || !texts[0].text.includes('https://relay.example/k/')) { failed = true; console.log('  ^ the sign-in text was not sent once to the patient phone with the link'); }
   await step('finish_onboarding', {});
 
   const got = await renal.getProfile({ patientId: 'demo' });
@@ -63,10 +78,10 @@ try {
     'Please call me Ana', 'I am on hemodialysis three times a week',
     'My sodium is two thousand milligrams, potassium two thousand, phosphorus one thousand, and fluid one thousand milliliters',
     'Yes that is right', 'Sorry, my potassium is two thousand, not nine thousand', 'Yes that is right',
-    'Yes, my care team said to avoid grapefruit', 'The warm voice please', 'Brief answers in English please', 'Okay, can I check a banana',
+    'Yes, my care team said to avoid grapefruit', 'The warm voice please', 'Brief answers in English please', 'Okay', 'I signed in', 'Okay, can I check a banana',
   ];
   const callerWords = callerAnswers.reduce((n, s) => n + count(s), 0);
-  const seconds = Math.round(((agentWords + callerWords) / 150) * 60 + 12 * 1.5);
+  const seconds = Math.round(((agentWords + callerWords) / 150) * 60 + 15 * 1.5);
   const inside = seconds >= 180 && seconds <= 300 && seconds < 240;
   console.log(`spoken length: agent words=${agentWords} caller words=${callerWords} estimate=${seconds} s`);
   console.log(`target 180 to 300 s total and under 240 s: ${inside ? 'PASS' : seconds < 180 ? 'FAIL (shorter than 180 s; acceptable for the call cap)' : 'FAIL'}`);
