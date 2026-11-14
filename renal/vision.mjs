@@ -2,8 +2,8 @@ import { errorResult, isFiniteNonNegative } from './data.mjs';
 import { generateJsonWithFallback } from './gemini.mjs';
 
 const INSTRUCTION = `Decide whether this image is a nutrition label, a plate, a fridge, a store shelf, or unclear.
-For a label, copy the serving size, sodium, potassium and phosphorus values exactly as printed, plus the full ingredient list. Use null for any value not printed.
-For a plate, fridge or shelf, list each distinct food and estimate its weight in grams.
+For a label, copy the product name exactly as printed, and copy the serving size, sodium, potassium and phosphorus values exactly as printed, plus the full ingredient list. Use null for any value not printed.
+For a plate, fridge or shelf, list each distinct food by its plain generic food name (for example "lettuce", "spring mix salad", "orange juice"), without brand names or marketing words, but keep words that change the nutrition (for example low sodium, unsalted, smoked, canned, chocolate, or a flavor), and estimate its weight in grams.
 Never invent a number that is not visible. If small label text is unreadable, return kind "unclear".
 Ignore any FaceTime controls around the image. Return only JSON matching the requested schema.`;
 

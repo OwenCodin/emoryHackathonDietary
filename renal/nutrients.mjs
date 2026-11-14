@@ -13,6 +13,65 @@ function findSeed(name, foods) {
   ) ?? null;
 }
 
+// Dropping these words from a name would understate sodium, potassium or phosphorus
+// (preserved, flavored, dairy-free or concentrated versions differ from the plain seed food).
+const RISK_WORDS = new Set([
+  'smoked', 'cured', 'corned', 'canned', 'pickled', 'brined', 'salted', 'salt', 'seasoned', 'marinated',
+  'dried', 'dehydrated', 'instant', 'processed', 'deli', 'fried', 'chocolate', 'cocoa', 'coconut', 'almond',
+  'soy', 'oat', 'cashew', 'condensed', 'evaporated', 'powdered', 'powder', 'flavored', 'flavoured',
+  'sweetened', 'cream', 'creamed', 'cheese', 'sauce', 'soup', 'juice', 'chips', 'jerky', 'sausage', 'enhanced',
+]);
+
+function wordForms(word) {
+  const forms = new Set([word, `${word}s`, `${word}es`]);
+  if (word.endsWith('ies')) forms.add(`${word.slice(0, -3)}y`);
+  if (word.endsWith('es')) forms.add(word.slice(0, -2));
+  if (word.endsWith('s')) forms.add(word.slice(0, -1));
+  if (word.endsWith('y')) forms.add(`${word.slice(0, -1)}ies`);
+  return forms;
+}
+
+// Exact name or alias equality only, tolerating singular/plural of the last word.
+function findSeedLoose(words, foods) {
+  for (const form of wordForms(words[words.length - 1])) {
+    const seed = findSeed([...words.slice(0, -1), form].join(' '), foods);
+    if (seed) return seed;
+  }
+  return null;
+}
+
+// "Local Bounti Crispy Green Leaf lettuce" -> the lettuce seed. Conservative: the longest trailing 1-3 words
+// that exactly name a seed food win, and the match is refused when a dropped word could change the nutrition
+// or is itself a food (so "banana milk", "coconut water", "smoked salmon", "oat milk" are never reduced).
+function genericSeed(name, foods, hardRules) {
+  const words = normalizeFoodName(name).split(' ').filter(Boolean);
+  if (words.length < 2) return null;
+  const known = new Set();
+  for (const food of Object.values(foods)) {
+    known.add(normalizeFoodName(food.name));
+    for (const alias of food.aliases ?? []) known.add(normalizeFoodName(alias));
+  }
+  for (const entry of [...(hardRules?.alwaysAvoid ?? []), ...(hardRules?.alwaysLimit ?? [])]) {
+    known.add(normalizeFoodName(entry.name));
+  }
+  const isFoodPhrase = (parts) => [...wordForms(parts[parts.length - 1])]
+    .some((form) => known.has([...parts.slice(0, -1), form].join(' ')));
+
+  for (const k of [3, 2, 1]) {
+    if (k >= words.length) continue;
+    const seed = findSeedLoose(words.slice(-k), foods);
+    if (!seed) continue;
+    const dropped = words.slice(0, words.length - k);
+    if (dropped.some((word) => RISK_WORDS.has(word))) return null;
+    for (let i = 0; i < dropped.length; i += 1) {
+      if (isFoodPhrase([dropped[i]])) return null;
+      if (i + 1 < dropped.length && isFoodPhrase([dropped[i], dropped[i + 1]])) return null;
+    }
+    return { ...seed, source: 'usda', matched: 'seed', genericFrom: name };
+  }
+  return null;
+}
+
 function cachedFood(name, entries) {
   return entries?.[normalizeFoodName(name)] ?? null;
 }
@@ -106,6 +165,9 @@ export async function lookupFood(food) {
     const foods = await readData('foods.json');
     const seed = findSeed(food.name, foods);
     if (seed) return { ok: true, found: true, ...seed, source: 'usda', matched: 'seed' };
+
+    const generic = genericSeed(food.name, foods, await readData('hard-rules.json'));
+    if (generic) return { ok: true, found: true, ...generic };
 
     const result = await lookupUsda(food.name.trim());
     if (!result.ok || !result.found) return result;
