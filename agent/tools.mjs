@@ -110,7 +110,8 @@ const FAILS = {
   nothing_added: "I couldn't find those items at the store, so nothing was added to your cart and there's no link to send. Tell me another name for what you want and I'll try again.",
   link_already_sent: "I've already texted you that link. Please check your messages.",
   no_phone: "I don't have a phone number to text, so I can't send that.",
-  no_recipe: "I haven't suggested a meal yet. Ask me for a meal idea first, and then I can text you the recipe.",
+  no_recipe: "I haven't suggested a meal or looked up a dish yet. Ask me for a meal idea or tell me a dish, and then I can text you the recipe.",
+  recipe_unavailable: "I couldn't put that recipe together just now, so nothing was texted. I can text you the ingredient list instead.",
   which_recipe: 'Which meal should I text you? Tell me its name, or say the first or the second.',
   recipe_already_sent: "I've already texted you that recipe. Please check your messages.",
   text_unconfirmed: "I tried to text the recipe but couldn't confirm it went through. Please check your messages before we try again.",
@@ -157,6 +158,13 @@ export const LIST_CLOSING = 'This list follows the limits set by your care team 
 // The Kroger public API can only add to a cart: it has no remove or read route. This sentence is fixed and said as given.
 export const KROGER_NO_REMOVE = "Kroger doesn't let me take items out of your cart. I've taken it off your list so it won't be added again, and I can text you the cart link so you can remove it there.";
 
+const perServing = totals => {
+  const v = ['sodiumMg', 'potassiumMg', 'phosphorusMg'].map(k => totals?.[k]);
+  return v.every(x => Number.isFinite(x) && x >= 0)
+    ? `Per serving (one typical portion of each ingredient): sodium ${Math.round(v[0])} mg, potassium ${Math.round(v[1])} mg, phosphorus ${Math.round(v[2])} mg`
+    : '';
+};
+
 // Plain text for one suggested meal, built only from cleaned fields (see lastMeals in suggest_meal). Pure.
 export function recipeText(meal) {
   const title = clean(meal?.title, 80) || 'your meal';
@@ -171,9 +179,42 @@ export function recipeText(meal) {
     `Uses from your kitchen: ${uses.length ? uses.join(', ') : 'nothing from your kitchen'}`,
     `Missing: ${missing.length ? missing.map(m => (m.quantity ? `${m.name} (${m.quantity})` : m.name)).join(', ') : 'nothing'}`,
     ...(minutes ? [`Time: about ${minutes} minutes`] : []),
+    ...(perServing(meal?.totals) ? [perServing(meal.totals)] : []),
     'Steps:',
     ...steps.slice(0, n).map((x, i) => `${i + 1}. ${x}`),
     ...(why ? [`Why it fits: ${why}`] : []),
+    RECIPE_CLOSING,
+  ].join('\n');
+  let n = steps.length;
+  let text = build(n);
+  while (text.length > 4000 && n > 0) text = build(--n);
+  return text.length > 4000 ? `${text.slice(0, 3999 - RECIPE_CLOSING.length).trimEnd()}\n${RECIPE_CLOSING}`.slice(0, 4000) : text;
+}
+
+// Plain text for the full recipe of a dish (renal.dishRecipe), built only from cleaned fields. Pure.
+export function dishRecipeText(recipe, toBuy = []) {
+  const title = clean(recipe?.dish, 80) || 'your dish';
+  const rows = (Array.isArray(recipe?.ingredients) ? recipe.ingredients : []).slice(0, 8)
+    .map(i => ({ name: clean(i?.name, 60), quantity: clean(i?.quantity, 40), from: clean(i?.swappedFrom, 60), verdict: i?.verdict })).filter(i => i.name);
+  const steps = (Array.isArray(recipe?.steps) ? recipe.steps : []).slice(0, 10).map(x => clean(x, 300)).filter(Boolean);
+  const left = (Array.isArray(recipe?.leftOut) ? recipe.leftOut : []).slice(0, 8).map(x => clean(x, 60)).filter(Boolean);
+  const buy = (Array.isArray(toBuy) ? toBuy : []).slice(0, 20)
+    .map(i => ({ name: clean(i?.name, 60), quantity: clean(i?.quantity, 30) })).filter(i => i.name);
+  const minutes = Number.isInteger(recipe?.minutes) && recipe.minutes > 0 && recipe.minutes <= 600 ? recipe.minutes : null;
+  const names = v => rows.filter(i => i.verdict === v).map(i => i.name).join(', ');
+  const per = perServing(recipe?.totals);
+  const build = n => [
+    `Recipe from your AI renal dietitian: ${title}`,
+    'Ingredients:',
+    ...rows.map(i => `- ${i.from ? `${i.name} instead of ${i.from}` : i.name}${i.quantity ? ` (${i.quantity})` : ''}`),
+    ...(names('limit') ? [`Small portions: ${names('limit')}`] : []),
+    ...(names('unknown') ? [`Not checked against your limits: ${names('unknown')}`] : []),
+    ...(left.length ? [`Left out because it does not fit your limits: ${left.join(', ')}`] : []),
+    ...(buy.length ? [`To buy: ${buy.map(i => (i.quantity ? `${i.name} (${i.quantity})` : i.name)).join(', ')}`] : []),
+    ...(minutes ? [`Time: about ${minutes} minutes`] : []),
+    ...(per ? [per] : []),
+    'Steps:',
+    ...steps.slice(0, n).map((x, i) => `${i + 1}. ${x}`),
     RECIPE_CLOSING,
   ].join('\n');
   let n = steps.length;
@@ -271,7 +312,7 @@ function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout
     let timer;
     try { activity(1); } catch { /* a hook never changes a result */ }
     try {
-      const timedOut = new Promise(resolve => { timer = setTimeout(() => { call.timedOut = true; resolve(onTimeout()); }, timeoutMs); });
+      const timedOut = new Promise(resolve => { timer = setTimeout(() => { call.timedOut = true; resolve(onTimeout(call)); }, timeoutMs); });
       const work = Promise.resolve().then(() => fn(call, ...args));
       work.catch(() => {}); // a late failure after the timeout is not reported twice
       const result = await Promise.race([work, timedOut]);
@@ -421,6 +462,7 @@ export function buildTools({
   // Dish-to-cart state, for this call only. Quantities are not stored in memory (it keeps names only).
   const qty = new Map(); // lowercase name -> quantity text (at most 40 characters)
   let lastDish = null; // { name, items: [{ name, quantity }] } from the last dish_ingredients
+  let recipeFrom = null; // 'dish' | 'meals': which of lastDish and lastMeals is newer
   const avoidNames = new Set(); // lowercase names judged avoid this call (dish ingredients and judged foods)
   const heldNames = new Set(); // avoid names left off the list; keep_after_warning only works for these
   let listShownSig = ''; // the list as last handed back to the model (names and quantities)
@@ -657,6 +699,7 @@ export function buildTools({
         if (rows.length === 0) return fail('dish_unknown');
         if (!call.timedOut) {
           lastDish = { name: clean(r.dish ?? dish, 40) || clean(dish, 40), items: rows.map(i => ({ name: i.name, quantity: i.quantity })) };
+          recipeFrom = 'dish';
           for (const i of rows) {
             qty.set(i.name.toLowerCase(), i.quantity.slice(0, 40));
             if (i.swap) qty.set(i.swap.toLowerCase(), i.quantity.slice(0, 40));
@@ -703,6 +746,7 @@ export function buildTools({
         if (!call.timedOut) {
           lastMissing = [...seen.values()];
           for (const i of lastMissing) if (i.quantity) qty.set(i.name.toLowerCase(), i.quantity.slice(0, 40));
+          recipeFrom = 'meals';
           lastMeals = meals.slice(0, 5).map(m => ({
             title: clean(m?.title, 80),
             uses: (Array.isArray(m?.uses) ? m.uses : []).slice(0, 12).map(u => clean(u, 60)).filter(Boolean),
@@ -711,6 +755,7 @@ export function buildTools({
             ...(Number.isInteger(m?.minutes) && m.minutes > 0 && m.minutes <= 600 ? { minutes: m.minutes } : {}),
             steps: (Array.isArray(m?.steps) ? m.steps : []).slice(0, 12).map(x => clean(x, 300)).filter(Boolean),
             why: clean(m?.why, 300),
+            ...(three(m?.totals) ? { totals: three(m.totals) } : {}),
           }));
         }
         if (memory && !call.timedOut) {
@@ -1057,42 +1102,75 @@ export function buildTools({
       }, { timeoutMs, limit: LIST_LIMIT }),
     }),
     text_recipe: llm.tool({
-      description: 'Text the caller one of the meals just suggested, as a recipe. Pass the title or the position (1 or 2) they chose. Only call it after they agree.',
+      description: 'Text the caller a full recipe: one of the meals just suggested, or the dish from the last dish_ingredients. Pass the meal title or position (1 or 2) they chose, or the dish name; with neither it sends the most recent one. Only call it after they agree.',
       parameters: z.object({ title: z.string().trim().min(1).max(80).nullish(), position: z.number().int().min(1).max(5).nullish() }),
       execute: guard(async (call, args = {}) => {
         if (!phoneOk) return fail('no_phone');
-        if (lastMeals.length === 0) return fail('no_recipe');
-        const which = () => fail('which_recipe', { titles: lastMeals.slice(0, 5).map(m => m.title.slice(0, 60)) });
-        let meal = null;
+        if (lastMeals.length === 0 && !lastDish) return fail('no_recipe');
+        const which = () => fail('which_recipe', { titles: [...lastMeals.slice(0, 5).map(m => m.title.slice(0, 60)), ...(lastDish ? [lastDish.name.slice(0, 60)] : [])] });
         const pos = args?.position;
         const asked = typeof args?.title === 'string' ? norm(args.title) : '';
+        const d = lastDish ? norm(lastDish.name) : '';
+        const dishHit = !!lastDish && asked.length >= 3 && (d === asked || d.includes(asked) || asked.includes(d));
+        let meal = null;
+        let useDish = false;
         if (Number.isInteger(pos)) {
           meal = lastMeals[pos - 1] ?? null;
           if (!meal) return which();
         } else if (asked) {
           meal = lastMeals.find(m => norm(m.title) === asked) ?? null;
+          const exactMeal = !!meal;
           if (!meal && asked.length >= 3) {
             const hits = lastMeals.filter(m => { const t = norm(m.title); return t.length >= 3 && (t.includes(asked) || asked.includes(t)); });
             if (hits.length === 1) meal = hits[0];
           }
-          if (!meal) return which();
+          if (meal && dishHit) {
+            if (exactMeal && d !== asked) useDish = false;
+            else useDish = recipeFrom === 'dish';
+          } else if (dishHit) useDish = true;
+          else if (!meal) return which();
+        } else if (recipeFrom === 'dish' && lastDish) {
+          useDish = true;
         } else if (lastMeals.length === 1) {
           meal = lastMeals[0];
         } else {
           return which();
         }
-        const key = norm(meal.title);
-        if (sentRecipes.has(key)) return fail('recipe_already_sent');
         // Marked before sending: a send that times out may still arrive, and a repeat would duplicate it.
-        sentRecipes.add(key);
+        const send = async (key, text, title) => {
+          sentRecipes.add(key);
+          call.sending = true;
+          let r;
+          try { r = await actions.sendText({ phone, text }); }
+          catch { sentRecipes.delete(key); return fail('text_failed'); }
+          if (r?.ok) return { ok: true, sent: true, title: title.slice(0, 60) };
+          if (typeof r?.error === 'string' && /outcome is unknown/i.test(r.error)) return fail('text_unconfirmed');
+          sentRecipes.delete(key);
+          return fail('text_failed');
+        };
+        if (!useDish) {
+          const key = norm(meal.title);
+          if (sentRecipes.has(key)) return fail('recipe_already_sent');
+          return send(key, recipeText(meal), meal.title);
+        }
+        const dish = lastDish;
+        const key = `dish:${norm(dish.name)}`;
+        if (sentRecipes.has(key)) return fail('recipe_already_sent');
+        const got = await renal.getProfile({ patientId });
+        if (got?.limitsNeeded === true) return fail('limits_needed');
+        if (!got?.ok) return fail('profile_unavailable');
+        if (typeof renal.dishRecipe !== 'function') return fail('recipe_unavailable');
         let r;
-        try { r = await actions.sendText({ phone, text: recipeText(meal) }); }
-        catch { sentRecipes.delete(key); return fail('text_failed'); }
-        if (r?.ok) return { ok: true, sent: true, title: meal.title.slice(0, 60) };
-        if (typeof r?.error === 'string' && /outcome is unknown/i.test(r.error)) return fail('text_unconfirmed');
-        sentRecipes.delete(key);
-        return fail('text_failed');
-      }, { timeoutMs, onTimeout: () => fail('text_unconfirmed') }),
+        try { r = await renal.dishRecipe({ dish: dish.name, profile: got.profile, ingredients: dish.items }); }
+        catch { return fail('recipe_unavailable'); }
+        if (r?.ok !== true || !Array.isArray(r.steps) || r.steps.length === 0) return fail('recipe_unavailable');
+        const have = (Array.isArray(r.ingredients) ? r.ingredients : []).map(g => clean(g?.name, 60));
+        const toBuy = (await listNow()).filter(i => have.some(n => sameFood(i.name, n)));
+        const text = dishRecipeText({ ...r, dish: clean(r.dish, 80) || dish.name }, toBuy);
+        if (call.timedOut) return fail('timeout');
+        if (sentRecipes.has(key)) return fail('recipe_already_sent');
+        return send(key, text, dish.name);
+      }, { timeoutMs, onTimeout: call => fail(call?.sending ? 'text_unconfirmed' : 'timeout') }),
     }),
     kroger_status: llm.tool({
       description: "Whether the caller's Kroger account is connected for grocery carts. Call it during setup, and after the caller says they signed in. Its say sentence is what to tell the caller.",
