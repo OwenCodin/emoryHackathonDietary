@@ -104,6 +104,7 @@ None yet.
 | fast | text_cart_link waits up to 8 s for a running cart before giving up (a live call asked for the link 0.4 s after start_cart and got no_cart_link) (443/443 pass) | 2026-11-14 | b6d5de7 | - |
 | 261114-kle | Product pictures on the call for the Kroger cart: a 1280x720 cart card (photos, names, prices, total, nothing-is-paid line) offered through getCartFrame after each add and held 20 s after the run; pictures only from www.kroger.com/product/images (464/464 pass). Rendered live from product search; not yet seen on a call | 2026-11-14 | 8dbeb03 | [261114-kle-product-pictures-on-the-call-for-the-kro](./quick/261114-kle-product-pictures-on-the-call-for-the-kro/) |
 | 261114-kvi | Meal ideas from scratch within the renal limits: suggestMeals fromScratch (built-in foods only, every ingredient judged from real numbers, summed sodium, potassium and phosphorus each within one third of the daily limit, totals returned), suggest_meal from_scratch, no_safe_meal, shared contract row updated in all three READMEs (483/483 pass). Live: Gemini meals in about 3.2 s after putting the quick model first (763acc5) | 2026-11-14 | 050d5f8 | [261114-kvi-meal-ideas-from-scratch-within-the-renal](./quick/261114-kvi-meal-ideas-from-scratch-within-the-renal/) |
+| fast | From-scratch meals: when no proposed dish passes, the built-in meals go through the same checks before no_safe_meal (a live call got no_safe_meal) (484/484 pass) | 2026-11-14 | 910b62e | - |
 
 ## Session Continuity
 
