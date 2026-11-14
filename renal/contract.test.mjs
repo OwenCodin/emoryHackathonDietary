@@ -188,20 +188,25 @@ test('returns failure objects for invalid inputs and unavailable services', asyn
   assert.equal((await describeImage(null)).ok, false);
 });
 
-test('returns a failure object instead of throwing when USDA is offline', async () => {
+test('a USDA outage with no web result is an honest unknown, not a failure', async () => {
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.USDA_API_KEY;
+  const previousGoogle = process.env.GOOGLE_API_KEY;
   process.env.USDA_API_KEY = 'test-key';
+  delete process.env.GOOGLE_API_KEY;
   globalThis.fetch = async () => {
     throw new Error('network unavailable');
   };
   try {
     const result = await checkFood({ food: { name: 'network-only food' }, profile });
-    assert.equal(result.ok, false);
-    assert.match(result.error, /network unavailable/i);
+    assert.equal(result.ok, true);
+    assert.equal(result.verdict, 'unknown');
+    assert.equal(result.source, 'none');
+    assert.match(result.say, /I do not have reliable nutrition numbers for network-only food, so I cannot judge it yet\./);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.USDA_API_KEY;
     else process.env.USDA_API_KEY = previousKey;
+    if (previousGoogle !== undefined) process.env.GOOGLE_API_KEY = previousGoogle;
   }
 });

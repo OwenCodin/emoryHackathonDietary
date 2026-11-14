@@ -1,4 +1,5 @@
 import { errorResult, normalizeFoodName, plausibleMatch, readData, writeData } from './data.mjs';
+import { acceptWebEntry, lookupWeb } from './websearch.mjs';
 
 export { plausibleMatch };
 
@@ -156,7 +157,37 @@ async function lookupUsda(name) {
   return { ok: true, found: true, ...entry };
 }
 
-export async function lookupFood(food) {
+// Rejected web lookups are remembered in memory only, so a flaky answer is retried later.
+const WEB_MISS_MS = 10 * 60 * 1000;
+const webMisses = new Map();
+
+async function webStep(name, ai) {
+  const key = normalizeFoodName(name);
+  const currentCache = await loadCache();
+  currentCache.web ??= {};
+  const cached = currentCache.web[key];
+  if (cached !== undefined) {
+    // Persisted web numbers are re-validated on every read; a tampered or mismatched entry is dropped.
+    if (acceptWebEntry(name, cached)) return { ok: true, found: true, ...cached, source: 'web', matched: 'web' };
+    delete currentCache.web[key];
+  }
+  const missUntil = webMisses.get(key);
+  if (missUntil !== undefined) {
+    if (missUntil > Date.now()) return { ok: true, found: false };
+    webMisses.delete(key);
+  }
+  const web = await lookupWeb(name, { ai });
+  if (web.found) {
+    const entry = { ...web.entry, savedAt: new Date().toISOString() };
+    currentCache.web[key] = entry;
+    await writeData('cache.json', currentCache);
+    return { ok: true, found: true, ...entry, source: 'web', matched: 'web' };
+  }
+  if (web.rejected) webMisses.set(key, Date.now() + WEB_MISS_MS);
+  return { ok: true, found: false };
+}
+
+export async function lookupFood(food, { ai } = {}) {
   if (!food || typeof food.name !== 'string' || !food.name.trim()) {
     return { ok: false, error: 'food name is required' };
   }
@@ -169,9 +200,16 @@ export async function lookupFood(food) {
     const generic = genericSeed(food.name, foods, await readData('hard-rules.json'));
     if (generic) return { ok: true, found: true, ...generic };
 
-    const result = await lookupUsda(food.name.trim());
-    if (!result.ok || !result.found) return result;
-    return { ...result, source: 'usda', matched: 'usda' };
+    // A USDA failure (429, 5xx, timeout, bad JSON) is never a failed check: fall through to the grounded web lookup.
+    let usda;
+    try {
+      usda = await lookupUsda(food.name.trim());
+    } catch {
+      usda = { ok: false };
+    }
+    if (usda.ok && usda.found) return { ...usda, source: 'usda', matched: 'usda' };
+
+    return await webStep(food.name.trim(), ai);
   } catch (error) {
     return errorResult(error, 'could not look up nutrients');
   }
