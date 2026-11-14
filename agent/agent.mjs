@@ -7,14 +7,8 @@ import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { buildTools } from './tools.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
+import { greeting, instructions } from './prompt.mjs';
 
-// Placeholder instructions; the full dietitian prompt arrives in a later phase.
-const instructions = `You are a friendly AI renal dietitian on a FaceTime video call, helping a person with kidney disease or on dialysis.
-You follow the sodium, potassium, phosphorus and fluid limits set by the caller's care team. You do not replace the care team and you never change the limits.
-When the caller names a food, use the check_food tool.
-Keep each reply to one or two short sentences. Be clear that you are an AI.`;
-// Said once, as soon as FaceTime is ready. Keep it short: it is the first thing the caller hears.
-const greeting = 'Greet the caller in one short sentence, say you are an AI renal dietitian who follows the limits their care team set, and ask what food they want to check.';
 
 const agent = defineAgent({
   entry: async ctx => {
@@ -22,6 +16,7 @@ const agent = defineAgent({
     // Chert prepares a room before a caller exists. Join promptly so Chert can
     // find us, but wait before opening a paid model session or sending video.
     const caller = await ctx.waitForParticipant();
+    console.log(`[agent] call joined caller=${caller.identity}`);
 
     // Video: one camera track, published by this agent. The Mac shows video only
     // from the participant that speaks, so the picture and the voice stay together.
@@ -37,11 +32,24 @@ const agent = defineAgent({
     await ctx.room.localParticipant.publishTrack(track, { source: TrackSource.SOURCE_CAMERA });
     const timer = setInterval(frame, 1000 / FPS);
 
+    const model = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live';
     const session = new voice.AgentSession({
-      llm: new google.realtime.RealtimeModel({ model: process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live', voice: 'Puck' }),
+      llm: new google.realtime.RealtimeModel({ model, voice: 'Puck' }),
     });
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => { speaking = event.newState === 'speaking'; });
+    // Tool name and ok only: arguments and outputs contain what the caller said.
+    session.on(voice.AgentSessionEventTypes.FunctionToolsExecuted, event => {
+      try {
+        event.functionCalls.forEach((call, i) => {
+          const out = event.functionCallOutputs[i];
+          let ok = false;
+          try { ok = Boolean(out) && !out.isError && JSON.parse(out.output)?.ok === true; } catch { ok = false; }
+          console.log(`[agent] tool ${call.name} ok=${ok}`);
+        });
+      } catch { /* logging must never break the call */ }
+    });
     ctx.addShutdownCallback(async () => {
+      console.log('[agent] call ended');
       clearInterval(timer);
       // Close each resource even if an earlier one fails.
       for (const close of [() => session.close(), () => track.close(), () => source.close()]) {
@@ -62,11 +70,15 @@ const agent = defineAgent({
       },
       outputOptions: { audioEnabled: true, transcriptionEnabled: false },
     });
+    console.log(`[agent] session started model=${model}`);
     // Greet once when chert dev reports that FaceTime is ready (bridge_ready in the
     // room metadata): the Mac ends the call if it hears nothing within 10 seconds
     // of that. Participant arrival alone is not readiness, so there is no greeting
     // on it. Without the signal there is no greeting, and the caller speaks first.
-    const stopGreeting = greetOnBridgeReady(ctx.room, () => session.generateReply({ instructions: greeting }));
+    const stopGreeting = greetOnBridgeReady(ctx.room, () => {
+      console.log('[agent] greeting requested');
+      return session.generateReply({ instructions: greeting });
+    });
     ctx.addShutdownCallback(async () => stopGreeting());
   },
 });
