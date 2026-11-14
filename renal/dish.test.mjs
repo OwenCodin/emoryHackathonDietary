@@ -179,3 +179,12 @@ test('the prompt quotes the cleaned dish, lists catalog names and carries no lim
   assert.ok(!text.includes('2300') && !text.includes('2000') && !text.includes('star fruit'));
   assert.ok(text.includes('ham'));
 });
+
+test('a thin model answer for a dish the table knows falls back to the table', async () => {
+  const ai = fakeAi([{ name: 'white bread', quantity: '2 slices' }, { name: 'ham', quantity: '2 slices' }]);
+  const r = await dishIngredients({ dish: 'ham sandwich', profile: P }, { ai, check: okCheck() });
+  assert.equal(r.source, 'builtin');
+  assert.ok(r.ingredients.length >= 5);
+  const other = await dishIngredients({ dish: 'zzqx surprise', profile: P }, { ai, check: okCheck() });
+  assert.equal(other.source, 'model');
+});
