@@ -12,7 +12,7 @@ Real FaceTime calls are scarce (about 49 minutes left on the trial, 5 minutes pe
 - [x] **Phase 2: First call** - A FaceTime call is answered, greeted in time, and conversational, twice in a row (completed 2026-11-14)
 - [x] **Phase 3: Camera and tools** - The patient shows or names food and hears a one-sentence verdict tied to their limits (completed 2026-11-14)
 - [x] **Phase 4: Browser on the call and the agent calls you** - The patient sees the shopping browser during a cart run, and an outbound call opens with a mealtime check-in (completed 2026-11-14)
-- [ ] **Phase 5: In the aisle** - The patient points at a shelf and hears the best choice, and a callback continues the same shopping list
+- [x] **Phase 5: In the aisle** - The patient points at a shelf and hears the best choice, and a callback continues the same shopping list (completed 2026-11-14)
 
 ## Phase Details
 
@@ -149,7 +149,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 05-03-PLAN.md — Pointing at a shelf names the best choice: pickBest ranking, shelf sentence, store prompt rules (D-01 to D-03)
+- [x] 05-03-PLAN.md — Pointing at a shelf names the best choice: pickBest ranking, shelf sentence, store prompt rules (D-01 to D-03)
 
 ## Progress
 
@@ -159,4 +159,4 @@ Plans:
 | 2. First call | 1/1 | Complete   | 2026-11-14 |
 | 3. Camera and tools | 2/2 | Complete   | 2026-11-14 |
 | 4. Browser on the call and the agent calls you | 2/2 | Complete   | 2026-11-14 |
-| 5. In the aisle | 2/3 | In Progress|  |
+| 5. In the aisle | 3/3 | Complete   | 2026-11-14 |
