@@ -114,15 +114,17 @@ const GAP = 20;
 const TILE_W = 373;
 const TILE_H = 245;
 const PAD = 14;
-const PHOTO_H = 140;
+const PHOTO_H = 120;
 
 // The rectangles for `count` tiles (at most CARD_MAX_TILES), each with its photo box.
 export function cardLayout(count) {
   const n = Math.max(0, Math.min(CARD_MAX_TILES, Number.isFinite(count) ? Math.floor(count) : 0));
   const tiles = [];
+  // One row of tiles is centred between the header and the footer; two rows fill the space.
+  const top = n <= COLUMNS ? GRID_Y + Math.round((TILE_H + GAP) / 2) : GRID_Y;
   for (let i = 0; i < n; i++) {
     const x = GRID_X + (i % COLUMNS) * (TILE_W + GAP);
-    const y = GRID_Y + Math.floor(i / COLUMNS) * (TILE_H + GAP);
+    const y = top + Math.floor(i / COLUMNS) * (TILE_H + GAP);
     tiles.push({ x, y, w: TILE_W, h: TILE_H, photo: { x: x + PAD, y: y + PAD, w: TILE_W - 2 * PAD, h: PHOTO_H } });
   }
   return tiles;
@@ -169,9 +171,9 @@ function tileSvg(tile, item) {
     `<rect x="${photo.x}" y="${photo.y}" width="${photo.w}" height="${photo.h}" rx="10" fill="${PLACEHOLDER_FILL}"/>`,
     text(photo.x + photo.w / 2, photo.y + photo.h / 2 + 9, 28, PLACEHOLDER_TEXT, 'No picture', { anchor: 'middle' }),
   ];
-  const nameY = photo.y + photo.h + 32;
+  const nameY = photo.y + photo.h + 30;
   lines.forEach((line, i) => parts.push(text(tile.x + PAD, nameY + i * 26, 24, LIGHT, escapeXml(line))));
-  if (price) parts.push(text(tile.x + PAD, tile.y + tile.h - 12, 28, WHITE, escapeXml(price), { weight: 700 }));
+  if (price) parts.push(text(tile.x + PAD, tile.y + tile.h - 14, 28, WHITE, escapeXml(price), { weight: 700 }));
   parts.push('</g>');
   return parts.join('');
 }
