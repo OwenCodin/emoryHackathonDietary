@@ -3,12 +3,13 @@
     "id": "demo",
     "name": "Sam",
     "limits": {
-      "sodiumMg": 2000,
+      "sodiumMg": 2300,
       "potassiumMg": 2000,
       "phosphorusMg": 1000,
       "fluidMl": 1000
     },
     "avoid": ["star fruit", "salt substitute"],
-    "setBy": "care team"
+    "setBy": "care team",
+    "limitsNote": "Illustrative demo profile. The sodium value follows a common CKD guideline; potassium, phosphorus, and fluid limits must be set individually by the patient's care team."
   }
 }

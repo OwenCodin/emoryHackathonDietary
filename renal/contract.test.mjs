@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
-import test from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { after } from 'node:test';
 import {
   checkFood,
   describeImage,
@@ -9,6 +11,14 @@ import {
   logFood,
   suggestMeals,
 } from './index.mjs';
+
+// Keep diary and USDA cache writes out of the committed renal/data files.
+const stateDir = await mkdtemp(join(tmpdir(), 'renal-state-'));
+process.env.RENAL_STATE_DIR = stateDir;
+after(async () => {
+  delete process.env.RENAL_STATE_DIR;
+  await rm(stateDir, { recursive: true, force: true });
+});
 
 const profile = {
   id: 'demo',
@@ -37,7 +47,9 @@ test('loads the seeded care-team profile', async () => {
   const result = await getProfile({});
   assert.equal(result.ok, true);
   assert.equal(result.profile.name, 'Sam');
-  assert.deepEqual(result.profile.limits, profile.limits);
+  assert.equal(result.profile.limits.sodiumMg, 2300);
+  assert.equal(result.profile.limits.potassiumMg, profile.limits.potassiumMg);
+  assert.match(result.profile.limitsNote, /illustrative demo profile/i);
 });
 
 test('judges a label using its per-serving sodium value', async () => {
@@ -142,9 +154,7 @@ test('suggests and verifies seeded meals offline', async () => {
 });
 
 test('persists diary entries and computes today totals', async () => {
-  const diaryPath = new URL('./data/diary.json', import.meta.url);
-  const original = await readFile(diaryPath, 'utf8');
-  try {
+  {
     const logged = await logFood({
       patientId: 'demo',
       verdict: {
@@ -161,8 +171,6 @@ test('persists diary entries and computes today totals', async () => {
     assert.equal(today.totals.sodiumMg, 2);
     assert.equal(today.totals.potassiumMg, 194);
     assert.equal(today.remaining.potassiumMg, profile.limits.potassiumMg - 194);
-  } finally {
-    await writeFile(diaryPath, original, 'utf8');
   }
 });
 
@@ -182,20 +190,25 @@ test('returns failure objects for invalid inputs and unavailable services', asyn
   assert.equal((await describeImage(null)).ok, false);
 });
 
-test('returns a failure object instead of throwing when USDA is offline', async () => {
+test('a USDA outage with no web result is an honest unknown, not a failure', async () => {
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.USDA_API_KEY;
+  const previousGoogle = process.env.GOOGLE_API_KEY;
   process.env.USDA_API_KEY = 'test-key';
+  delete process.env.GOOGLE_API_KEY;
   globalThis.fetch = async () => {
     throw new Error('network unavailable');
   };
   try {
     const result = await checkFood({ food: { name: 'network-only food' }, profile });
-    assert.equal(result.ok, false);
-    assert.match(result.error, /network unavailable/i);
+    assert.equal(result.ok, true);
+    assert.equal(result.verdict, 'unknown');
+    assert.equal(result.source, 'none');
+    assert.match(result.say, /I do not have reliable nutrition numbers for network-only food, so I cannot judge it yet\./);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.USDA_API_KEY;
     else process.env.USDA_API_KEY = previousKey;
+    if (previousGoogle !== undefined) process.env.GOOGLE_API_KEY = previousGoogle;
   }
 });

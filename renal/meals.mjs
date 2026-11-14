@@ -1,5 +1,6 @@
 import { checkFood } from './check.mjs';
 import { errorResult, normalizeFoodName } from './data.mjs';
+import { generateJsonWithFallback } from './gemini.mjs';
 
 const FALLBACK_MEALS = [
   {
@@ -65,30 +66,38 @@ const MEAL_SCHEMA = {
   required: ['meals'],
 };
 
-async function proposeMeals(foods, profile, count) {
-  if (!process.env.GOOGLE_API_KEY) return FALLBACK_MEALS;
-  let timeout;
+function parseMeals(text) {
+  const parsed = JSON.parse(text);
+  return Array.isArray(parsed?.meals) ? parsed.meals : null;
+}
+
+async function proposeMeals(foods, profile, count, injected) {
+  if (!injected && !process.env.GOOGLE_API_KEY) return FALLBACK_MEALS;
   try {
-    const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
-    const request = ai.models.generateContent({
-      model: process.env.RENAL_MEALS_MODEL || 'gemini-3.8-flash',
-      contents: `Suggest up to ${count} simple kidney-friendly meals using available foods: ${foods.join(', ') || 'none listed'}. Patient daily limits are sodium ${profile.limits.sodiumMg} mg, potassium ${profile.limits.potassiumMg} mg, phosphorus ${profile.limits.phosphorusMg} mg. Avoid: ${(profile.avoid ?? []).join(', ')}. Prefer low-sodium preparation. Return JSON only.`,
-      config: { responseMimeType: 'application/json', responseSchema: MEAL_SCHEMA },
-    });
-    const response = await Promise.race([
-      request,
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('meal suggestions timed out')), 5100);
+    let ai = injected;
+    if (!ai) {
+      const { GoogleGenAI } = await import('@google/genai');
+      ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+    }
+    const result = await generateJsonWithFallback({
+      ai,
+      models: [
+        process.env.RENAL_MEALS_MODEL || 'gemini-3.8-flash',
+        process.env.RENAL_MEALS_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
+      ],
+      buildRequest: (model, signal) => ({
+        model,
+        contents: `Suggest up to ${count} simple kidney-friendly meals using available foods: ${foods.join(', ') || 'none listed'}. Patient daily limits are sodium ${profile.limits.sodiumMg} mg, potassium ${profile.limits.potassiumMg} mg, phosphorus ${profile.limits.phosphorusMg} mg. Avoid: ${(profile.avoid ?? []).join(', ')}. Prefer low-sodium preparation. Return JSON only.`,
+        config: { responseMimeType: 'application/json', responseSchema: MEAL_SCHEMA, abortSignal: signal },
       }),
-    ]);
-    const parsed = JSON.parse(response.text);
-    if (!Array.isArray(parsed.meals)) throw new Error('bad meal output');
-    return parsed.meals;
+      parse: parseMeals,
+      totalMs: 5100,
+      hedgeMs: 2500,
+      label: 'meal suggestions',
+    });
+    return result.ok ? result.value : FALLBACK_MEALS;
   } catch {
     return FALLBACK_MEALS;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -102,7 +111,7 @@ function validMeal(meal) {
     typeof meal.why === 'string';
 }
 
-export async function suggestMeals(input = {}) {
+export async function suggestMeals(input = {}, { ai } = {}) {
   const foods = input?.foods ?? [];
   const profile = input?.profile;
   const count = input?.count ?? 2;
@@ -116,7 +125,7 @@ export async function suggestMeals(input = {}) {
     const requestedCount = Math.min(count, 5);
     const available = new Set(foods.map((food) =>
       FOOD_ALIASES.get(normalizeFoodName(food)) ?? normalizeFoodName(food)));
-    const proposals = await proposeMeals(foods, profile, requestedCount);
+    const proposals = await proposeMeals(foods, profile, requestedCount, ai);
     const meals = [];
     for (const meal of proposals) {
       if (!validMeal(meal)) continue;
