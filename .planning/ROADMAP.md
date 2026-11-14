@@ -46,7 +46,10 @@ Plans:
   4. **[real call]** After the patient hangs up, a second call is answered and greeted the same way
   5. Without a call: `chert doctor` passes and `chert dev` reaches the waiting-room message while `npm start` is running; a Gemini tool call to `check_food` against the stubs works in the playground or a call (shows tool calling works through plugin 1.8.0)
 **Human checkpoint**: The person puts keys in `.env.local`; asks Chert staff whether caller capture is enabled on the line (and which line to use if not) before more code is written; announces in team chat before each real call.
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md — Simulated Chert caller in the repo, dietitian persona and care-team greeting in prompt.mjs, [agent] lifecycle log lines, and a two-call no-phone proof against one running agent
 
 ### Phase 3: Camera and tools
 **Goal**: A patient shows or names a food and hears a short, correct verdict based on their own limits, and the agent never guesses when it cannot see
@@ -96,7 +99,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Scaffold and stubs | 1/1 | Complete   | 2026-11-14 |
-| 2. First call | 0/0 | Not started | - |
+| 2. First call | 0/1 | Planned | - |
 | 3. Camera and tools | 0/0 | Not started | - |
 | 4. Browser on the call and the agent calls you | 0/0 | Not started | - |
 | 5. In the aisle | 0/0 | Not started | - |
