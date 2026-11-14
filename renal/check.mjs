@@ -123,6 +123,7 @@ export async function checkFood(input = {}) {
     let per100 = false;
     let canonical = null;
     let countsAsFluid = /\b(soup|broth|drink|juice|cola|coffee|water|tea|ice)\b/i.test(name);
+    let labelHasNumbers = false;
     if (isLabel) {
       const label = food.label;
       if (!label || typeof label !== 'object') return { ok: false, error: 'food label is invalid' };
@@ -131,61 +132,77 @@ export async function checkFood(input = {}) {
           return { ok: false, error: `label ${key} must be a non-negative number or null` };
         }
       }
+      labelHasNumbers = NUTRIENTS.some(([key]) => isFiniteNonNegative(label[key]));
+    }
+
+    const noNutrients = () => Object.fromEntries(NUTRIENTS.map(([key]) => [key, null]));
+    if (isLabel && labelHasNumbers) {
+      const label = food.label;
       nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => [key, label[key] ?? null]));
       portion = label.servingSize || 'one labeled serving';
       source = 'label';
     } else {
-      const lookup = await lookupFood(food);
-      if (!lookup.ok) return lookup;
-      if (!lookup.found) {
-        const limitRule = hardRules.alwaysLimit.find((entry) => phraseMatches(entry.name, normalizedName));
-        if (limitRule) {
+      // No label numbers (or not a label): judge by name, seed first, then guarded USDA.
+      const lookupName = name; // food.name is validated non-empty; a label's product is only a fallback if that ever changes
+      const lookup = await lookupFood({ ...food, name: lookupName });
+      if (!isLabel && !lookup.ok) return lookup;
+      if (!lookup.ok || !lookup.found) {
+        if (isLabel) {
+          // Ingredient rules and name rules below may still decide.
+          nutrients = noNutrients();
+          portion = food.label.servingSize || 'one labeled serving';
+          source = 'none';
+        } else {
+          const limitRule = hardRules.alwaysLimit.find((entry) => phraseMatches(entry.name, normalizedName));
+          if (limitRule) {
+            return {
+              ok: true,
+              food: name,
+              verdict: 'limit',
+              say: `Limit ${name}. ${sentenceCase(limitRule.reason)}.`,
+              reasons: [limitRule.reason],
+              nutrients: null,
+              portion: food.grams == null ? 'unknown' : `${food.grams} g`,
+              swap: null,
+              source: 'rule',
+            };
+          }
           return {
             ok: true,
             food: name,
-            verdict: 'limit',
-            say: `Limit ${name}. ${sentenceCase(limitRule.reason)}.`,
-            reasons: [limitRule.reason],
+            verdict: 'unknown',
+            say: `I do not have reliable nutrition numbers for ${name}, so I cannot judge it yet.`,
+            reasons: ['no label, seeded food data, or USDA result was available'],
             nutrients: null,
             portion: food.grams == null ? 'unknown' : `${food.grams} g`,
             swap: null,
-            source: 'rule',
+            source: 'none',
           };
         }
-        return {
-          ok: true,
-          food: name,
-          verdict: 'unknown',
-          say: `I do not have reliable nutrition numbers for ${name}, so I cannot judge it yet.`,
-          reasons: ['no label, seeded food data, or USDA result was available'],
-          nutrients: null,
-          portion: food.grams == null ? 'unknown' : `${food.grams} g`,
-          swap: null,
-          source: 'none',
-        };
+      } else {
+        if (lookup.matched === 'seed' && typeof lookup.name === 'string') {
+          canonical = normalizeFoodName(lookup.name);
+          const lateAvoid = avoidFor([normalizedName, canonical]);
+          if (lateAvoid) return lateAvoid;
+        }
+        const knownServing = Number.isFinite(lookup.servingGrams) && lookup.servingGrams > 0;
+        const grams = food.grams ?? (knownServing ? lookup.servingGrams : 100);
+        per100 = food.grams == null && !knownServing;
+        const multiplier = grams / 100;
+        nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => {
+          const value = lookup.nutrients?.[key];
+          if (typeof value !== 'number') return [key, null];
+          const scaled = Math.round(value * multiplier);
+          return [key, isFiniteNonNegative(scaled) ? scaled : null];
+        }));
+        countsAsFluid ||= lookup.fluid === true;
+        portion = per100
+          ? '100 g (no typical serving size known)'
+          : food.grams == null
+            ? lookup.portion
+            : `${food.grams} g${lookup.portion ? ` (${lookup.portion} typical serving)` : ''}`;
+        source = lookup.source;
       }
-      if (lookup.matched === 'seed' && typeof lookup.name === 'string') {
-        canonical = normalizeFoodName(lookup.name);
-        const lateAvoid = avoidFor([normalizedName, canonical]);
-        if (lateAvoid) return lateAvoid;
-      }
-      const knownServing = Number.isFinite(lookup.servingGrams) && lookup.servingGrams > 0;
-      const grams = food.grams ?? (knownServing ? lookup.servingGrams : 100);
-      per100 = food.grams == null && !knownServing;
-      const multiplier = grams / 100;
-      nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => {
-        const value = lookup.nutrients?.[key];
-        if (typeof value !== 'number') return [key, null];
-        const scaled = Math.round(value * multiplier);
-        return [key, isFiniteNonNegative(scaled) ? scaled : null];
-      }));
-      countsAsFluid ||= lookup.fluid === true;
-      portion = per100
-        ? '100 g (no typical serving size known)'
-        : food.grams == null
-          ? lookup.portion
-          : `${food.grams} g${lookup.portion ? ` (${lookup.portion} typical serving)` : ''}`;
-      source = lookup.source;
     }
 
     const ruleReasons = [];
@@ -236,6 +253,8 @@ export async function checkFood(input = {}) {
       } else {
         say = 'I cannot judge this food because its label does not show enough nutrition information.';
         verdict = 'unknown';
+        nutrients = null;
+        source = 'none';
       }
     } else {
       const amount = numberWords(worst.amount);

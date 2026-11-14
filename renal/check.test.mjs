@@ -169,3 +169,50 @@ test('cola rule matches phrases but not look-alike words', async () => {
   const colada = await checkFood({ food: { name: 'pina colada' }, profile });
   assert.equal(colada.verdict, 'unknown');
 });
+
+const emptyLabel = (product, ingredients = null) => ({
+  product,
+  servingSize: null,
+  sodiumMg: null,
+  potassiumMg: null,
+  phosphorusMg: null,
+  ingredients,
+});
+
+test('a numberless Coca-Cola label is judged by the product name', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  globalThis.fetch = failIfCalled();
+  const result = await checkFood({ food: { name: 'Coca-Cola', label: emptyLabel('Coca-Cola') }, profile });
+  assert.equal(result.ok, true);
+  assert.equal(result.verdict, 'limit');
+  assert.equal(result.source, 'rule');
+  assert.match(result.reasons.join(' '), /phosphate additive/i);
+});
+
+test('a numberless label with no known product still applies ingredient rules', async () => {
+  globalThis.fetch = usdaFetch([]);
+  const withPhos = await checkFood({
+    food: { name: 'Mystery fizz', label: emptyLabel('Mystery fizz', 'water, sugar, phosphoric acid') },
+    profile,
+  });
+  assert.equal(withPhos.verdict, 'limit');
+  assert.match(withPhos.reasons.join(' '), /phosphate additive/i);
+  const none = await checkFood({ food: { name: 'Mystery bar', label: emptyLabel('Mystery bar') }, profile });
+  assert.equal(none.verdict, 'unknown');
+  assert.equal(none.nutrients, null);
+  assert.match(none.say, /cannot judge/);
+});
+
+test('a label with numbers keeps using its own numbers', async () => {
+  globalThis.fetch = failIfCalled();
+  const result = await checkFood({
+    food: {
+      name: 'Chicken broth',
+      label: { ...emptyLabel('Chicken broth', 'chicken stock, salt'), servingSize: '1 cup', sodiumMg: 860 },
+    },
+    profile,
+  });
+  assert.equal(result.verdict, 'avoid');
+  assert.equal(result.source, 'label');
+  assert.equal(result.nutrients.sodiumMg, 860);
+});
