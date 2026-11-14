@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
-import { WAVE, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintWave, renderSvg, VERDICTS, waveBand } from './card.mjs';
+import { WAVE, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintMouth, paintWave, renderSvg, VERDICTS, waveBand } from './card.mjs';
 
 globalThis.fetch = async () => { throw new Error('network used'); };
 
@@ -13,23 +13,25 @@ describe('brandSvg', () => {
     const s = brandSvg();
     assert.ok(s.startsWith('<svg'));
     assert.ok(s.includes(`width="${WIDTH}" height="${HEIGHT}"`));
-    for (const t of ['RenaLine', 'Your renal dietitian', 'Follows your care team&#39;s limits']) assert.ok(s.includes(t), t);
+    for (const t of ['RenaLine', 'YOUR RENAL DIETITIAN', 'A calm companion for food choices', 'care team&#39;s limits', 'aria-label="RenaLine AI nutrition companion"']) assert.ok(s.includes(t), t);
   });
 });
 
 describe('cardSvg single', () => {
-  const cases = [['ok', 'YES'], ['limit', 'SMALL PORTION'], ['avoid', 'NO'], ['unknown', 'CAN&#39;T TELL']];
+  const cases = [['ok', 'YES'], ['limit', 'MAYBE'], ['avoid', 'NO'], ['unknown', 'CHECK']];
   for (const [verdict, word] of cases) {
     it(`draws ${verdict}`, () => {
-      const s = one({ verdict });
+      const s = one({ verdict, nutrients: { sodiumMg: 100, potassiumMg: 200, phosphorusMg: 50 }, portion: '1 serving' });
       assert.ok(s.includes(`>${word}<`), word);
       assert.ok(s.includes(VERDICTS[verdict].color));
       assert.ok(s.includes(`id="icon-${verdict}"`));
     });
   }
-  it('builds the detail line from tool numbers only', () => {
+  it('builds concise nutrient cards from tool numbers only', () => {
     const s = one({ nutrients: { sodiumMg: 1, potassiumMg: 422.6, phosphorusMg: 26 }, portion: '118 g' });
-    assert.ok(s.includes('Sodium 1 mg · Potassium 423 mg · Phosphorus 26 mg'));
+    assert.ok(s.includes('SODIUM') && s.includes('1 mg'));
+    assert.ok(s.includes('POTASSIUM') && s.includes('423 mg'));
+    assert.ok(s.includes('PHOSPHORUS') && s.includes('26 mg'));
     assert.ok(s.includes('Portion: 118 g'));
   });
   it('skips bad numbers and placeholder portions', () => {
@@ -41,8 +43,8 @@ describe('cardSvg single', () => {
   });
   it('online tag only when online', () => {
     const on = cardSvg({ items: [item()], online: true });
-    assert.ok(on.includes('Found online'));
-    assert.ok(!one().includes('Found online'));
+    assert.ok(on.includes('FOUND ONLINE'));
+    assert.ok(!one().includes('FOUND ONLINE'));
   });
 });
 
@@ -58,7 +60,7 @@ describe('cardSvg multi and unjudged', () => {
   it('unjudged has no verdict word', () => {
     const s = cardSvg({ items: [item({ verdict: null }), item({ verdict: null }), item({ verdict: null })], unjudged: true, seen: 3, more: 0 });
     assert.ok(s.includes('I can see 3 foods') && s.includes('can&#39;t judge them right now'));
-    for (const w of ['>YES<', '>NO<', '>SMALL PORTION<', 'CAN&#39;T TELL']) assert.ok(!s.includes(w), w);
+    for (const w of ['>YES<', '>NO<', '>MAYBE<', '>CHECK<']) assert.ok(!s.includes(w), w);
     const s1 = cardSvg({ items: [item({ verdict: null })], unjudged: true, seen: 1 });
     assert.ok(s1.includes('I can see one food') && s1.includes('judge it'));
   });
@@ -131,6 +133,19 @@ describe('render and wave', () => {
         assert.ok(p.subarray(row, row + WIDTH * 4).every(v => v === 7), `row ${y}`);
       }
     }
+  });
+  it('animates the portrait mouth only while speaking', () => {
+    const idle = new Uint8Array(WIDTH * HEIGHT * 4).fill(7);
+    const closed = idle.slice(), open = idle.slice();
+    paintMouth(closed, 1, false);
+    paintMouth(open, 1, true);
+    assert.notDeepEqual(open, closed);
+    const outside = (x, y) => {
+      const i = (y * WIDTH + x) * 4;
+      return [...open.subarray(i, i + 4)].every((value, k) => value === closed[i + k]);
+    };
+    assert.ok(outside(0, 0));
+    assert.ok(outside(WIDTH - 1, HEIGHT - 1));
   });
   it('waveBand at scale 1 is the old band', () => {
     assert.deepEqual(waveBand(1), { top: 505, bottom: 585, left: 135, right: 1145 });
