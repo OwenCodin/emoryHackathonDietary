@@ -9,10 +9,10 @@
 
 ### Scaffold
 
-- [ ] **SCAF-01**: A teammate can clone the repo, run `npm install` and `npm start`, and the agent process starts from the root `package.json` defined in the shared contract
-- [ ] **SCAF-02**: All tracks read video size and frame rate from one file, `shared/video.mjs` (WIDTH 1280, HEIGHT 720, FPS 15)
-- [ ] **SCAF-03**: Stub `renal/index.mjs` and `actions/index.mjs` export every contract function and return canned objects of the exact contract shapes, so each track can develop alone
-- [ ] **SCAF-04**: `.env.example` lists every contract variable without values, and `.gitignore` keeps `.env.local`, `node_modules/` and `actions/.browser-profile/` out of git
+- [x] **SCAF-01**: A teammate can clone the repo, run `npm install` and `npm start`, and the agent process starts from the root `package.json` defined in the shared contract
+- [x] **SCAF-02**: All tracks read video size and frame rate from one file, `shared/video.mjs` (WIDTH 1280, HEIGHT 720, FPS 15)
+- [x] **SCAF-03**: Stub `renal/index.mjs` and `actions/index.mjs` export every contract function and return canned objects of the exact contract shapes, so each track can develop alone
+- [x] **SCAF-04**: `.env.example` lists every contract variable without values, and `.gitignore` keeps `.env.local`, `node_modules/` and `actions/.browser-profile/` out of git
 
 ### Call
 
@@ -85,10 +85,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCAF-01 | Phase 1 | Pending |
-| SCAF-02 | Phase 1 | Pending |
-| SCAF-03 | Phase 1 | Pending |
-| SCAF-04 | Phase 1 | Pending |
+| SCAF-01 | Phase 1 | Complete |
+| SCAF-02 | Phase 1 | Complete |
+| SCAF-03 | Phase 1 | Complete |
+| SCAF-04 | Phase 1 | Complete |
 | CALL-01 | Phase 2 | Pending |
 | CALL-02 | Phase 2 | Pending |
 | CALL-03 | Phase 2 | Pending |

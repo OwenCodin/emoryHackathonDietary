@@ -8,7 +8,7 @@ Real FaceTime calls are scarce (about 49 minutes left on the trial, 5 minutes pe
 
 ## Phases
 
-- [ ] **Phase 1: Scaffold and stubs** - Repo starts with `npm start`, shared video size, and stub renal and actions modules so all three tracks can work alone
+- [x] **Phase 1: Scaffold and stubs** - Repo starts with `npm start`, shared video size, and stub renal and actions modules so all three tracks can work alone (completed 2026-11-14)
 - [ ] **Phase 2: First call** - A FaceTime call is answered, greeted in time, and conversational, twice in a row
 - [ ] **Phase 3: Camera and tools** - The patient shows or names food and hears a one-sentence verdict tied to their limits
 - [ ] **Phase 4: Browser on the call and the agent calls you** - The patient sees the shopping browser during a cart run, and an outbound call opens with a mealtime check-in
@@ -31,7 +31,7 @@ Real FaceTime calls are scarce (about 49 minutes left on the trial, 5 minutes pe
 **Plans**: 1 plan
 
 Plans:
-- [ ] 01-01-PLAN.md — Root package, contract test, stubs, shared video size and check_food tool, and the Chert starter on Gemini booting with `npm start` (walking skeleton; see 01-SKELETON.md)
+- [x] 01-01-PLAN.md — Root package, contract test, stubs, shared video size and check_food tool, and the Chert starter on Gemini booting with `npm start` (walking skeleton; see 01-SKELETON.md)
 
 ### Phase 2: First call
 **Goal**: A patient can FaceTime the line, is greeted in time, and holds a spoken conversation with the dietitian persona, repeatably
@@ -95,7 +95,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Scaffold and stubs | 0/0 | Not started | - |
+| 1. Scaffold and stubs | 1/1 | Complete   | 2026-11-14 |
 | 2. First call | 0/0 | Not started | - |
 | 3. Camera and tools | 0/0 | Not started | - |
 | 4. Browser on the call and the agent calls you | 0/0 | Not started | - |
