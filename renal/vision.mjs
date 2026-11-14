@@ -1,4 +1,5 @@
 import { errorResult, isFiniteNonNegative } from './data.mjs';
+import { generateJsonWithFallback } from './gemini.mjs';
 
 const INSTRUCTION = `Decide whether this image is a nutrition label, a plate, a fridge, a store shelf, or unclear.
 For a label, copy the serving size, sodium, potassium and phosphorus values exactly as printed, plus the full ingredient list. Use null for any value not printed.
@@ -62,43 +63,52 @@ function validateSeen(value) {
   return true;
 }
 
-export async function describeImage(input = {}) {
+function parseSeen(text) {
+  let seen;
+  try {
+    seen = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  return validateSeen(seen) ? seen : null;
+}
+
+export async function describeImage(input = {}, { ai: injected } = {}) {
   const jpeg = input?.jpeg;
   if (!Buffer.isBuffer(jpeg) || jpeg.length === 0) return { ok: false, error: 'jpeg must be a non-empty Buffer' };
-  if (!process.env.GOOGLE_API_KEY) return { ok: false, error: 'GOOGLE_API_KEY is not configured' };
+  if (!injected && !process.env.GOOGLE_API_KEY) return { ok: false, error: 'GOOGLE_API_KEY is not configured' };
 
-  let timeout;
   try {
-    const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
-    const request = ai.models.generateContent({
-      model: process.env.RENAL_VISION_MODEL || 'gemini-3.8-flash',
-      contents: [{
-        role: 'user',
-        parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: jpeg.toString('base64') } },
-          { text: INSTRUCTION },
-        ],
-      }],
-      config: { responseMimeType: 'application/json', responseSchema: RESPONSE_SCHEMA },
-    });
-    const response = await Promise.race([
-      request,
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('image description timed out')), 5400);
-      }),
-    ]);
-    let seen;
-    try {
-      seen = JSON.parse(response.text);
-    } catch {
-      return { ok: false, error: 'bad model output' };
+    let ai = injected;
+    if (!ai) {
+      const { GoogleGenAI } = await import('@google/genai');
+      ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
     }
-    if (!validateSeen(seen)) return { ok: false, error: 'bad model output' };
-    return { ok: true, ...seen };
+    const result = await generateJsonWithFallback({
+      ai,
+      models: [
+        process.env.RENAL_VISION_MODEL || 'gemini-3.8-flash',
+        process.env.RENAL_VISION_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
+      ],
+      buildRequest: (model, signal) => ({
+        model,
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: jpeg.toString('base64') } },
+            { text: INSTRUCTION },
+          ],
+        }],
+        config: { responseMimeType: 'application/json', responseSchema: RESPONSE_SCHEMA, abortSignal: signal },
+      }),
+      parse: parseSeen,
+      totalMs: 5400,
+      hedgeMs: 2500,
+      label: 'image description',
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, ...result.value };
   } catch (error) {
     return errorResult(error, 'image description failed');
-  } finally {
-    clearTimeout(timeout);
   }
 }
