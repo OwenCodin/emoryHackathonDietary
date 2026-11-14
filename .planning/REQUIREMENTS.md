@@ -39,8 +39,8 @@
 
 ### Video out
 
-- [ ] **VID-01**: On a FaceTime Video call the patient sees the agent's picture, published at the shared WIDTH and HEIGHT from the participant that speaks
-- [ ] **VID-02**: While a cart is running the patient sees the shopping browser, and sees the agent's picture again when it stops
+- [x] **VID-01**: On a FaceTime Video call the patient sees the agent's picture, published at the shared WIDTH and HEIGHT from the participant that speaks
+- [x] **VID-02**: While a cart is running the patient sees the shopping browser, and sees the agent's picture again when it stops
 
 ### Outbound
 
@@ -104,8 +104,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-05 | Phase 3 | Complete |
 | TOOL-06 | Phase 3 | Complete |
 | AISL-04 | Phase 3 | Complete |
-| VID-01 | Phase 4 | Pending |
-| VID-02 | Phase 4 | Pending |
+| VID-01 | Phase 4 | Complete |
+| VID-02 | Phase 4 | Complete |
 | OUT-01 | Phase 4 | Pending |
 | OUT-02 | Phase 4 | Pending |
 | AISL-01 | Phase 5 | Pending |

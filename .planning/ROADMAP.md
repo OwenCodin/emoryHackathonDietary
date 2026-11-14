@@ -106,12 +106,12 @@ Plans:
   4. **[real call]** A patient who answers an outbound call hears a mealtime check-in such as "It's dinner time. Show me your plate."
 
 **Human checkpoint**: Asking Chert staff whether the trial line may place outbound calls and to which verified numbers (with Track C); placing the real outbound test within the shared minute budget.
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Video out: cart frames when a cart runs, cached face otherwise; simulated face-cart-face proof (VID-01, VID-02)
+- [x] 04-01-PLAN.md — Video out: cart frames when a cart runs, cached face otherwise; simulated face-cart-face proof (VID-01, VID-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -144,5 +144,5 @@ Plans:
 | 1. Scaffold and stubs | 1/1 | Complete   | 2026-11-14 |
 | 2. First call | 1/1 | Complete   | 2026-11-14 |
 | 3. Camera and tools | 2/2 | Complete   | 2026-11-14 |
-| 4. Browser on the call and the agent calls you | 0/0 | Not started | - |
+| 4. Browser on the call and the agent calls you | 1/2 | In Progress|  |
 | 5. In the aisle | 0/0 | Not started | - |
