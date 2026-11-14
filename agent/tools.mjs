@@ -126,6 +126,14 @@ const FAILS = {
   profile_unsaved: "I couldn't save that just now. You can finish it later by saying 'update my setup'.",
   prefs_unsaved: "I couldn't save that preference just now. We can try again on your next call.",
   bad_condition: 'Tell me which fits best: kidney disease without dialysis, hemodialysis, peritoneal dialysis, a kidney transplant, or not sure.',
+  kroger_not_connected: "Your Kroger account isn't connected yet, so I can't fill your cart. Want me to text you a link to sign in?",
+  kroger_sign_in_needed: "Your Kroger account isn't connected yet, and I can't text a sign-in link on this line, so I can't fill your cart.",
+  kroger_sign_in_pending: "I'm still waiting for you to finish signing in to Kroger. Tap the link I texted you, then ask me again.",
+  kroger_not_configured: "Kroger sign-in by text isn't set up on this line, so I can't send a link.",
+  kroger_link_already_sent: "I've just texted you the Kroger sign-in link. Please check your messages.",
+  kroger_texting_refused: "Your phone didn't accept the text. Please send any message to this number from your phone, then ask me again.",
+  kroger_text_unconfirmed: "I tried to text the Kroger link but couldn't confirm it went through. Please check your messages before we try again.",
+  kroger_text_failed: "I couldn't text you the Kroger link just now. I can try again if you like.",
   limits_needed: "I don't have your care team's limits yet, so I can't judge foods against them. When you have them, say 'update my setup' and read them to me.",
 };
 // renal/check.mjs composes "Okay, this product has about N milligrams of sodium." from this name.
@@ -328,6 +336,7 @@ export function buildTools({
   let lastMissing = []; // CartItems the last meal suggestion said are missing
   const sentLinks = new Set(); // cart links already texted during this call
   const sentRecipes = new Set(); // recipes already texted during this call
+  let krogerTextAt = null; // when the Kroger sign-in link was last texted during this call (by now())
   let lastMeals = []; // cleaned meals from the last suggestion, for text_recipe
   let callPantry = []; // in-call copy of the pantry, so it works when memory is missing or unavailable
   const hidden = new Set(); // names forgotten this call even if the stored copy could not be changed
@@ -627,6 +636,14 @@ export function buildTools({
         }
         list = list.slice(0, 12);
         if (list.length === 0) return fail('nothing_to_buy');
+        // Kroger configured but nobody signed in: say so plainly and offer the texted link, instead of failing the cart.
+        if (typeof actions.getKrogerStatus === 'function') {
+          let ks = null;
+          try { ks = await actions.getKrogerStatus(); } catch { ks = null; }
+          if (ks?.ok === true && ks.configured === true && ks.connected === false) {
+            return fail(ks.pending === true ? 'kroger_sign_in_pending' : ks.relay === true ? 'kroger_not_connected' : 'kroger_sign_in_needed');
+          }
+        }
         const r = await actions.startCart({ items: list });
         if (r?.error === 'busy') return fail('cart_busy');
         if (!r?.ok) return fail('tool_failed');
@@ -645,7 +662,11 @@ export function buildTools({
           waiting_for_patient: 'The cart is paused and waiting for you.',
           done: 'The cart is filled and ready for you to review. I can text you the link.',
         };
-        if (s.state === 'failed') return fail('cart_failed', { state: 'failed' });
+        if (s.state === 'failed') {
+          const step = typeof s.step === 'string' ? s.step : '';
+          if (/^(Sign in to Kroger first|Kroger sign-in expired)/.test(step)) return fail('kroger_not_connected', { state: 'failed' });
+          return fail('cart_failed', { state: 'failed' });
+        }
         if (typeof s.state !== 'string' || !Object.hasOwn(SAY, s.state)) return fail('tool_failed');
         const names = list => (Array.isArray(list) ? list : []).map(x => clean(typeof x === 'object' ? x?.name : x, 50)).filter(Boolean);
         const added = names(s.added);
@@ -826,6 +847,48 @@ export function buildTools({
         sentRecipes.delete(key);
         return fail('text_failed');
       }, { timeoutMs, onTimeout: () => fail('text_unconfirmed') }),
+    }),
+    kroger_status: llm.tool({
+      description: "Whether the caller's Kroger account is connected for grocery carts. Call it during setup, and after the caller says they signed in. Its say sentence is what to tell the caller.",
+      execute: guard(async () => {
+        if (typeof actions.getKrogerStatus !== 'function') return fail('tool_failed');
+        const s = await actions.getKrogerStatus();
+        if (s?.ok !== true) return fail('tool_failed');
+        if (s.configured !== true) return { ok: true, connected: false, set_up: false, can_text: false, say: "Kroger shopping isn't set up on this line, so there's nothing to sign in to." };
+        if (s.connected === true) return { ok: true, connected: true, say: 'Your Kroger account is connected.' };
+        if (s.pending === true) return { ok: true, connected: false, pending: true, can_text: true, say: "I'm still waiting for you to finish signing in to Kroger from the link I texted you." };
+        if (s.relay === true) return { ok: true, connected: false, can_text: true, say: "Your Kroger account isn't connected yet. I can text you a link to sign in." };
+        return { ok: true, connected: false, can_text: false, say: "Your Kroger account isn't connected yet, and I can't text a sign-in link on this line." };
+      }, { timeoutMs }),
+    }),
+    text_kroger_sign_in: llm.tool({
+      description: 'Text the caller a link to sign in to Kroger so the cart works. Use it during setup when kroger_status says can_text, or when the caller agrees to sign in. Never read the link aloud; it is only in the text.',
+      execute: guard(async () => {
+        if (!phoneOk) return fail('no_phone');
+        if (krogerTextAt !== null && now() - krogerTextAt < 60_000) return fail('kroger_link_already_sent');
+        if (typeof actions.startKrogerSignIn !== 'function') return fail('tool_failed');
+        const started = await actions.startKrogerSignIn();
+        if (started?.ok !== true) {
+          return fail(started?.error === 'not_configured' || started?.error === 'no_relay' ? 'kroger_not_configured' : 'tool_failed');
+        }
+        let link = null;
+        try {
+          const u = new URL(String(started.link ?? ''));
+          if (u.protocol === 'https:' && u.href.length <= 300) link = u.href;
+        } catch { /* not a link */ }
+        if (!link) return fail('tool_failed');
+        // Marked before sending: a send that times out may still arrive, and a repeat would duplicate it.
+        krogerTextAt = now();
+        let r;
+        try { r = await actions.sendText({ phone, text: `Sign in to Kroger so your renal dietitian can fill your cart: ${link} Nothing is ever paid for you.` }); }
+        catch { krogerTextAt = null; return fail('kroger_text_failed'); }
+        if (r?.ok) return { ok: true, sent: true, say: "I've texted you a Kroger sign-in link. Tap it and sign in while we keep going." };
+        const why = typeof r?.error === 'string' ? r.error : '';
+        if (/HTTP 403/.test(why)) { krogerTextAt = null; return fail('kroger_texting_refused'); }
+        if (/outcome is unknown/i.test(why)) return fail('kroger_text_unconfirmed');
+        krogerTextAt = null;
+        return fail('kroger_text_failed');
+      }, { timeoutMs, onTimeout: () => fail('kroger_text_unconfirmed') }),
     }),
     start_setup: llm.tool({
       description: 'Start (or restart) setup when the caller says "update my setup" or asks to change their limits or details. Setup tools only work after this.',

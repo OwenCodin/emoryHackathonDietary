@@ -107,9 +107,14 @@ describe('first-call setup', () => {
   });
   it('setup steps are in order and fit the budget', async () => {
     const { SETUP_STEPS } = await import('./prompt.mjs');
-    assert.deepEqual(SETUP_STEPS.map(s => s.step), ['welcome', 'name', 'condition', 'limits', 'avoid', 'voice', 'style', 'capabilities', 'done']);
+    assert.deepEqual(SETUP_STEPS.map(s => s.step), ['welcome', 'name', 'condition', 'limits', 'avoid', 'voice', 'style', 'kroger', 'capabilities', 'kroger_later', 'done']);
+    assert.ok(SETUP_STEPS.findIndex(s => s.step === 'kroger') < SETUP_STEPS.findIndex(s => s.step === 'capabilities'));
     const words = SETUP_STEPS.map(s => s.says).join(' ').split(/\s+/).length;
     assert.ok(words <= 300, `${words} words`);
+  });
+  it('the instructions name the Kroger tools', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    for (const w of ['kroger_status', 'text_kroger_sign_in']) assert.ok(instructions.includes(w), w);
   });
   it('the time warning saves setup first', () => {
     assert.ok(timeWarning.includes('finish_onboarding'));

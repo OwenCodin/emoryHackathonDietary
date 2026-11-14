@@ -115,5 +115,11 @@ export function makeFakeActions() {
     async sendText({ phone, text } = {}) {
       return { ok: true };
     },
+    async getKrogerStatus() {
+      return { ok: true, configured: false, relay: false, connected: false, pending: false };
+    },
+    async startKrogerSignIn() {
+      return { ok: true, link: 'https://relay.example/k/' + 'A'.repeat(43) };
+    },
   };
 }

@@ -57,7 +57,8 @@ Then fill `.env.local` by key name. Put no values in this README, in chat, or in
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | The Chert Developer page: the project key, the project and the line. | Required for texts and outbound calls |
 | `PATIENT_PHONE` | The patient's phone in international form. | Required for texts and outbound calls |
 | `GROCERY_STORE_URL`, `INSTACART_API_KEY` | Only for the browser cart (Track C). | Optional |
-| `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | A Production app on developer.kroger.com with Cart, Locations, Products and Profile, and the redirect URI `http://localhost:8765/callback`. When both are set the cart uses the Kroger API. Then sign in once: `node --env-file=.env.local actions/kroger-login.mjs`. | Optional, needed for the Kroger cart |
+| `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | A Production app on developer.kroger.com with Cart, Locations, Products and Profile, and the redirect URI `http://localhost:8765/callback` (once the relay below is deployed, the redirect URI becomes `<relay>/api/kroger/callback`; see `kroger-relay/README.md`). When both are set the cart uses the Kroger API. Then sign in once: `node --env-file=.env.local actions/kroger-login.mjs`, or let the agent text the patient a link during setup. | Optional, needed for the Kroger cart |
+| `KROGER_RELAY_URL`, `KROGER_RELAY_SECRET` | The production domain of the small Vercel relay in `kroger-relay/` (https, no trailing slash) and the shared secret it was given (32 characters or more). With both set the agent can text a Kroger sign-in link during setup. A person deploys the relay by following `kroger-relay/README.md`. | Optional, needed for sign-in by texted link |
 
 The optional model, agent and state keys (`GEMINI_LIVE_MODEL`, `RENAL_*`, `AGENT_*`, `PLAYGROUND`) are listed with their defaults in the "Environment variables" table of the Shared contract in any track README, for example [renal/README.md](renal/README.md).
 
@@ -135,6 +136,7 @@ On the Chert trial line the agent can only reply to the patient. Follow these ru
 - Diet colas reuse regular cola numbers. "Soda", "pop" and "soft drink" are judged as cola.
 - The online lookup can return different results for the same product on different tries.
 - The demo patient profile ("Sam", fixed limits) is hard-coded data.
+- The Kroger sign-in relay (`kroger-relay/`) and the texted sign-in link have not been deployed or run live; only unit tests and a local end-to-end test with a fake Kroger token endpoint have run.
 - The grocery cart (Track C) has not been seen working on a live call. The Kroger API cart works from the command line; it needs `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` and a one-time sign-in. Its quantity is a count of packages, so "3 apples" can become three multi-packs.
 - The outbound mealtime call has not been seen working on a live call since the merge.
 - Pantry memory and `text_recipe` are tested with fakes. The texting path was proven only by a direct API send, not yet from a live call.
