@@ -216,3 +216,160 @@ test('a label with numbers keeps using its own numbers', async () => {
   assert.equal(result.source, 'label');
   assert.equal(result.nutrients.sodiumMg, 860);
 });
+
+// ---- Web results and generic seed matches ----
+const OATLY_ANSWER = `I found this on the Oatly website.
+PRODUCT: Oatly Oat Milk
+SERVING: 1 cup (240 ml)
+SERVING_AMOUNT: 240 ml
+SODIUM_MG: 100
+POTASSIUM_MG: 390
+PHOSPHORUS_MG: 270
+PHOSPHATE_ADDITIVE: no`;
+
+function webAi(text, calls = []) {
+  return {
+    calls,
+    models: {
+      generateContent: async (params) => {
+        calls.push(params);
+        return {
+          text,
+          candidates: [{
+            groundingMetadata: {
+              webSearchQueries: ['q'],
+              groundingChunks: [{ web: { uri: 'https://vertexaisearch.cloud.google.com/x', title: 'oatly.com' } }],
+            },
+          }],
+        };
+      },
+    },
+  };
+}
+const ungroundedAi = (calls = []) => ({
+  calls,
+  models: {
+    generateContent: async (params) => {
+      calls.push(params);
+      return { text: OATLY_ANSWER, candidates: [{ groundingMetadata: { webSearchQueries: ['q'], groundingChunks: [] } }] };
+    },
+  },
+});
+const PROVENANCE = "That is from what I found online, not from your care team's list.";
+const sentences = (say) => say.split(/(?<=\.)\s+/);
+const answerFor = (product, fields = {}) => {
+  let text = OATLY_ANSWER.replace('Oatly Oat Milk', product);
+  for (const [key, value] of Object.entries(fields)) text = text.replace(new RegExp(`^${key}: .*$`, 'm'), `${key}: ${value}`);
+  return text;
+};
+
+test('web result: judged per found serving with source web and the online provenance', async () => {
+  const result = await checkFood({ food: { name: 'oatly oat milk web a' }, profile }, { ai: webAi(answerFor('Oatly Oat Milk Web A')) });
+  assert.equal(result.ok, true);
+  assert.equal(result.source, 'web');
+  assert.equal(result.portion, '1 cup (240 ml)');
+  assert.deepEqual(result.nutrients, { sodiumMg: 100, potassiumMg: 390, phosphorusMg: 270 });
+  assert.equal(result.verdict, 'avoid');
+  assert.match(result.reasons.join(' '), /nutrition found online \(oatly\.com\), per 1 cup \(240 ml\)/);
+  assert.match(result.reasons.join(' '), /counts toward the fluid limit/);
+  const parts = sentences(result.say);
+  assert.equal(parts.length, 2);
+  assert.equal(parts[1], PROVENANCE);
+  assert.match(parts[0], /^Avoid, oatly oat milk web a has about two hundred seventy milligrams of phosphorus per serving; try an unseasoned fresh alternative instead\.$/);
+});
+
+test('web result with unknown phosphorus never implies phosphorus is fine', async () => {
+  const text = answerFor('Oatly Oat Milk Web B', { PHOSPHORUS_MG: 'unknown', PHOSPHATE_ADDITIVE: 'unknown', POTASSIUM_MG: '40', SODIUM_MG: '30' });
+  const result = await checkFood({ food: { name: 'oatly oat milk web b' }, profile }, { ai: webAi(text) });
+  assert.equal(result.verdict, 'ok');
+  assert.equal(result.nutrients.phosphorusMg, null);
+  assert.match(result.say, /I could not find its phosphorus/);
+  assert.equal(sentences(result.say).length, 2);
+  assert.ok(result.say.endsWith(PROVENANCE));
+});
+
+test('web result with a phosphate additive is raised to limit and says so', async () => {
+  const text = answerFor('Oatly Oat Milk Web C', { PHOSPHORUS_MG: '10', PHOSPHATE_ADDITIVE: 'yes', POTASSIUM_MG: '40', SODIUM_MG: '30' });
+  const result = await checkFood({ food: { name: 'oatly oat milk web c' }, profile }, { ai: webAi(text) });
+  assert.equal(result.verdict, 'limit');
+  assert.equal(result.source, 'web');
+  assert.match(result.reasons.join(' '), /phosphate additive/);
+  assert.match(result.say, /phosphate additive/);
+  assert.ok(result.say.endsWith(PROVENANCE));
+});
+
+test('cola rule still raises an ok web cola to limit but the source stays web', async () => {
+  const text = `Found on a site.
+PRODUCT: Cola Zero Web
+SERVING: 1 can (355 ml)
+SERVING_AMOUNT: 355 ml
+SODIUM_MG: 30
+POTASSIUM_MG: 10
+PHOSPHORUS_MG: 20
+PHOSPHATE_ADDITIVE: unknown`;
+  const result = await checkFood({ food: { name: 'cola zero web' }, profile }, { ai: webAi(text) });
+  assert.equal(result.verdict, 'limit');
+  assert.equal(result.source, 'web');
+  assert.match(result.reasons.join(' '), /phosphate additives/);
+  assert.ok(result.say.endsWith(PROVENANCE));
+});
+
+test('web result scales by grams over the found serving amount', async () => {
+  const result = await checkFood({ food: { name: 'oatly oat milk web d', grams: 480 }, profile }, { ai: webAi(answerFor('Oatly Oat Milk Web D')) });
+  assert.deepEqual(result.nutrients, { sodiumMg: 200, potassiumMg: 780, phosphorusMg: 540 });
+  assert.equal(result.portion, '480 g (online serving: 1 cup (240 ml))');
+  assert.doesNotMatch(result.say, /per serving/);
+});
+
+test('web result without a known serving amount is not rescaled', async () => {
+  const text = answerFor('Oatly Oat Milk Web E', { SERVING_AMOUNT: 'unknown' });
+  const result = await checkFood({ food: { name: 'oatly oat milk web e', grams: 100 }, profile }, { ai: webAi(text) });
+  assert.deepEqual(result.nutrients, { sodiumMg: 100, potassiumMg: 390, phosphorusMg: 270 });
+  assert.match(result.portion, /online serving; your amount was not converted/);
+});
+
+test('acceptance F: a brand-qualified lettuce is judged as lettuce with no network', async () => {
+  process.env.USDA_API_KEY = 'k';
+  globalThis.fetch = failIfCalled();
+  const ai = { models: { generateContent: async () => assert.fail('ai must not be used') } };
+  const result = await checkFood({ food: { name: 'Local Bounti Crispy Green Leaf lettuce' }, profile }, { ai });
+  assert.equal(result.ok, true);
+  assert.notEqual(result.verdict, 'unknown');
+  assert.equal(result.source, 'usda');
+  assert.match(result.reasons.join(' '), /judged as lettuce/);
+  assert.match(result.portion, /judged as lettuce/);
+});
+
+test('acceptance F: an unmatched brand mix with USDA 429 and no grounding is unknown', async () => {
+  process.env.USDA_API_KEY = 'k';
+  let usdaCalls = 0;
+  globalThis.fetch = async () => {
+    usdaCalls += 1;
+    return { ok: false, status: 429, json: async () => ({}) };
+  };
+  const aiCalls = [];
+  const result = await checkFood({ food: { name: 'Local Bounti Spring Mix' }, profile }, { ai: ungroundedAi(aiCalls) });
+  assert.equal(result.ok, true);
+  assert.equal(result.verdict, 'unknown');
+  assert.equal(result.source, 'none');
+  assert.equal(result.say, 'I do not have reliable nutrition numbers for Local Bounti Spring Mix, so I cannot judge it yet.');
+  assert.equal(usdaCalls, 1);
+  assert.equal(aiCalls.length, 1);
+});
+
+test('acceptance F: pina colada is never judged as cola', async () => {
+  globalThis.fetch = failIfCalled();
+  const result = await checkFood({ food: { name: 'pina colada' }, profile }, { ai: ungroundedAi() });
+  assert.equal(result.verdict, 'unknown');
+  assert.doesNotMatch(result.reasons.join(' '), /cola|phosphate/i);
+  assert.notEqual(result.source, 'rule');
+});
+
+test('acceptance F: star fruit juice stays avoid without any lookup', async () => {
+  process.env.USDA_API_KEY = 'k';
+  globalThis.fetch = failIfCalled();
+  const ai = { models: { generateContent: async () => assert.fail('ai must not be used') } };
+  const result = await checkFood({ food: { name: 'star fruit juice' }, profile }, { ai });
+  assert.equal(result.verdict, 'avoid');
+  assert.equal(result.source, 'rule');
+});

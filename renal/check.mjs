@@ -80,7 +80,9 @@ function spokenVerdict(verdict) {
   return { ok: 'Okay', limit: 'Limit', avoid: 'Avoid' }[verdict];
 }
 
-export async function checkFood(input = {}) {
+const WEB_PROVENANCE = "That is from what I found online, not from your care team's list.";
+
+export async function checkFood(input = {}, { ai } = {}) {
   const food = input?.food;
   const profile = input?.profile;
   if (!food || typeof food.name !== 'string' || !food.name.trim()) {
@@ -124,6 +126,11 @@ export async function checkFood(input = {}) {
     let canonical = null;
     let countsAsFluid = /\b(soup|broth|drink|juice|cola|coffee|water|tea|ice)\b/i.test(name);
     let labelHasNumbers = false;
+    let fromWeb = false;
+    let webMultiplier = null;
+    let webHost = null;
+    let phosphateAdditiveOnline = false;
+    const ruleReasons = [];
     if (isLabel) {
       const label = food.label;
       if (!label || typeof label !== 'object') return { ok: false, error: 'food label is invalid' };
@@ -144,7 +151,7 @@ export async function checkFood(input = {}) {
     } else {
       // No label numbers (or not a label): judge by name, seed first, then guarded USDA.
       const lookupName = name; // food.name is validated non-empty; a label's product is only a fallback if that ever changes
-      const lookup = await lookupFood({ ...food, name: lookupName });
+      const lookup = await lookupFood({ ...food, name: lookupName }, { ai });
       if (!isLabel && !lookup.ok) return lookup;
       if (!lookup.ok || !lookup.found) {
         if (isLabel) {
@@ -185,6 +192,28 @@ export async function checkFood(input = {}) {
           const lateAvoid = avoidFor([normalizedName, canonical]);
           if (lateAvoid) return lateAvoid;
         }
+        fromWeb = lookup.source === 'web';
+        if (fromWeb) {
+          // Per found serving: the online numbers are never rescaled by guesswork.
+          const canScale = food.grams != null && Number.isFinite(lookup.servingAmount) && lookup.servingAmount > 0;
+          webMultiplier = canScale ? food.grams / lookup.servingAmount : 1;
+          portion = canScale
+            ? `${food.grams} g (online serving: ${lookup.servingText})`
+            : food.grams == null
+              ? lookup.servingText
+              : `${lookup.servingText} (online serving; your amount was not converted)`;
+          nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => {
+            const value = lookup.nutrients?.[key];
+            if (typeof value !== 'number') return [key, null];
+            const scaled = Math.round(value * webMultiplier);
+            return [key, isFiniteNonNegative(scaled) ? scaled : null];
+          }));
+          countsAsFluid ||= lookup.servingUnit === 'ml';
+          source = 'web';
+          webHost = typeof lookup.host === 'string' ? lookup.host : null;
+          phosphateAdditiveOnline = lookup.phosphateAdditive === true;
+        } else {
+        if (lookup.genericFrom) ruleReasons.push(`judged as ${lookup.name}`);
         const knownServing = Number.isFinite(lookup.servingGrams) && lookup.servingGrams > 0;
         const grams = food.grams ?? (knownServing ? lookup.servingGrams : 100);
         per100 = food.grams == null && !knownServing;
@@ -202,10 +231,11 @@ export async function checkFood(input = {}) {
             ? lookup.portion
             : `${food.grams} g${lookup.portion ? ` (${lookup.portion} typical serving)` : ''}`;
         source = lookup.source;
+        if (lookup.genericFrom) portion = `${portion} (judged as ${lookup.name})`;
+        }
       }
     }
 
-    const ruleReasons = [];
     let verdict = 'ok';
     let worst = null;
     for (const [key, label] of NUTRIENTS) {
@@ -242,7 +272,17 @@ export async function checkFood(input = {}) {
       }
     }
 
+    if (fromWeb) {
+      if (phosphateAdditiveOnline) {
+        if (verdict === 'ok') verdict = 'limit';
+        ruleReasons.push('the ingredients found online list a phosphate additive, which can add phosphorus');
+      }
+      // Provenance beats rule attribution: online numbers are always announced as online.
+      source = 'web';
+    }
+
     const reasons = buildReasons(nutrients, profile, ruleReasons, countsAsFluid);
+    if (fromWeb) reasons.push(`nutrition found online${webHost ? ` (${webHost})` : ''}, per ${portion}`);
     const swap = verdict === 'avoid' ? ((canonical && SWAPS[canonical]) ?? SWAPS[normalizedName] ?? 'an unseasoned fresh alternative') : null;
     let say;
     if (!worst) {
@@ -258,10 +298,19 @@ export async function checkFood(input = {}) {
       }
     } else {
       const amount = numberWords(worst.amount);
+      if (fromWeb) {
+        say = `${spokenVerdict(verdict)}, ${name} has about ${amount} milligrams of ${worst.label}${webMultiplier === 1 ? ' per serving' : ''}`;
+        if (swap) say += `; try ${swap} instead`;
+        else if (phosphateAdditiveOnline) say += ', and it has a phosphate additive';
+        else if (nutrients.phosphorusMg === null) say += ', and I could not find its phosphorus';
+        else if (verdict === 'limit') say += ', so a smaller portion may fit better';
+        say += `. ${WEB_PROVENANCE}`;
+      } else {
       say = `${spokenVerdict(verdict)}, ${name} has about ${amount} milligrams of ${worst.label}${per100 ? ' in 100 grams' : ''}.`;
       if (swap) say += ` Try ${swap} instead.`;
       else if (ruleEscalated && alwaysLimit) say += ` ${sentenceCase(alwaysLimit.reason)}.`;
       else if (verdict === 'limit') say += ' A smaller portion may fit better.';
+      }
     }
 
     return {
