@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineAgent, voice } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
-import { LocalVideoTrack, TrackSource, VideoBufferType, VideoFrame, VideoSource } from '@livekit/rtc-node';
+import { LocalVideoTrack, TrackPublishOptions, TrackSource, VideoBufferType, VideoFrame, VideoSource } from '@livekit/rtc-node';
 import { createFaceFrames } from './face.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
@@ -11,18 +11,29 @@ import { createVideoPicker } from './video.mjs';
 import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
-import { greeting, instructions } from './prompt.mjs';
+import { outboundCall, parseJobMetadata } from './outbound.mjs';
+import { checkinGreeting, greeting, instructions } from './prompt.mjs';
 
 
 const agent = defineAgent({
   entry: async ctx => {
+    // Outbound (twist 3): Track C's callPatient dispatches with metadata naming the Chert bridge. Anything else is inbound.
+    const call = outboundCall(parseJobMetadata(ctx.job?.metadata));
     // Registered before connecting so no caller video track is missed.
     const camera = watchCaller(ctx.room);
     await ctx.connect();
     // Chert prepares a room before a caller exists. Join promptly so Chert can
     // find us, but wait before opening a paid model session or sending video.
-    const caller = await ctx.waitForParticipant();
-    console.log(`[agent] call joined caller=${caller.identity}`);
+    let linkedIdentity;
+    if (call) {
+      // No waiting: Chert dials only after the agent is publishing, so the bridge joins after us.
+      console.log(`[agent] outbound call reason=${call.reason}`);
+      linkedIdentity = call.bridgeIdentity;
+    } else {
+      const caller = await ctx.waitForParticipant();
+      console.log(`[agent] call joined caller=${caller.identity}`);
+      linkedIdentity = caller.identity;
+    }
 
     const joinedAt = Date.now();
 
@@ -70,6 +81,21 @@ const agent = defineAgent({
       } catch { /* logging must never break the call */ }
     });
 
+    // Outbound only: Chert needs the agent publishing audio and video before it dials, and RoomIO in
+    // @livekit/agents 1.8.0 publishes its audio only after the linked participant joins. So the one audio
+    // track is published here, and RoomIO keeps this pre-set output instead of making a second track.
+    let audioAbort = null, audioOut = null;
+    if (call) {
+      audioAbort = new AbortController();
+      audioOut = new voice.ParticipantAudioOutput(ctx.room, {
+        sampleRate: 24000,
+        numChannels: 1,
+        trackPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+        queueSizeMs: 200,
+      });
+      session.output.audio = audioOut;
+    }
+
     // Registered before anything is opened, so a throw while publishing or starting still cleans up.
     ctx.addShutdownCallback(async () => {
       console.log('[agent] call ended');
@@ -79,6 +105,8 @@ const agent = defineAgent({
       const steps = [
         ['cart', () => endCall()],
         ['session', () => session.close()],
+        ['audioAbort', () => audioAbort?.abort()],
+        ['audioOut', () => audioOut?.close()],
         ['track', () => track.close()],
         ['source', () => source.close()],
         ['camera', () => camera.close()],
@@ -102,8 +130,9 @@ const agent = defineAgent({
       const requestedAt = Date.now();
       try {
         await sessionReady;
-        console.log(`[agent] greeting requested waited_ms=${Date.now() - requestedAt}`);
-        await session.generateReply({ instructions: greeting });
+        const kind = call ? 'checkin' : 'inbound';
+        console.log(`[agent] greeting requested kind=${kind} waited_ms=${Date.now() - requestedAt}`);
+        await session.generateReply({ instructions: call ? checkinGreeting : greeting });
       } catch (error) {
         console.error(`[agent] greeting failed ${error?.name ?? 'Error'}: ${String(error?.message ?? 'unknown').slice(0, 200)}`);
       }
@@ -114,12 +143,14 @@ const agent = defineAgent({
       frame();
       await ctx.room.localParticipant.publishTrack(track, { source: TrackSource.SOURCE_CAMERA });
       timer = setInterval(frame, 1000 / FPS);
+      // Not awaited: it resolves only once someone subscribes.
+      audioOut?.start(audioAbort.signal).catch(error => console.error(`[agent] audio publish failed ${error?.name ?? 'Error'}`));
       await session.start({
         room: ctx.room,
         agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo' }) }),
         record: false,
         inputOptions: {
-          participantIdentity: caller.identity,
+          participantIdentity: linkedIdentity,
           audioEnabled: true,
           videoEnabled: false,
           textEnabled: false,

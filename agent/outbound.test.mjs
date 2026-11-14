@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { checkinGreeting, greeting } from './prompt.mjs';
 import { outboundCall, parseJobMetadata, safeReason } from './outbound.mjs';
 
 const VALID = '{"outbound":true,"reason":"dinner_checkin","bridgeIdentity":"chert-bridge-out-sim"}';
@@ -39,4 +40,10 @@ test('safeReason sanitises', () => {
   assert.equal(safeReason('a'.repeat(100)).length, 40);
   for (const v of ['', '$$$', undefined, 42]) assert.equal(safeReason(v), 'unspecified');
   assert.doesNotMatch(safeReason('x\n[agent] fake'), /[\n\s[\]]/);
+});
+
+test('checkinGreeting content and greeting unchanged', () => {
+  assert.ok(checkinGreeting.length > 0 && checkinGreeting !== greeting);
+  for (const phrase of ['AI renal dietitian', 'mealtime', 'care team', 'plate']) assert.ok(checkinGreeting.includes(phrase), phrase);
+  assert.ok(greeting.includes('what food they want to check'));
 });
