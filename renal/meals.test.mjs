@@ -86,24 +86,24 @@ test('T1 every ingredient goes to missing with exact totals', async () => {
 
 test('T2 avoid drops the meal', async () => {
   for (const bad of ['potato', 'ham']) {
-    const r = await scratch([meal({ uses: ['white rice', bad], missing: [] })]);
+    const r = await scratch([meal({ title: 'Rejected dish', uses: ['white rice', bad], missing: [] })]);
     assert.equal(r.ok, true);
-    assert.deepEqual(r.meals, []);
-    assert.ok(typeof r.message === 'string' && r.message.length > 0);
+    assert.ok(!r.meals.some((m) => m.title === 'Rejected dish'));
   }
 });
 
 test('T3 unknown or off-list drops the meal', async () => {
-  const r = await scratch([meal({ uses: ['white rice', 'dragon fruit'], missing: [] })]);
-  assert.deepEqual(r.meals, []);
+  const r = await scratch([meal({ title: 'Rejected dish', uses: ['white rice', 'dragon fruit'], missing: [] })]);
+  assert.ok(!r.meals.some((m) => m.title === 'Rejected dish'));
   const r2 = await scratch(
-    [meal({ uses: ['white rice', 'cabbage'], missing: [] })],
+    [meal({ title: 'Rejected dish', uses: ['white rice', 'cabbage'], missing: [] })],
     {},
     { check: async ({ food }) => (food.name === 'cabbage'
       ? { ok: true, verdict: 'unknown', nutrients: null }
       : { ok: true, verdict: 'ok', nutrients: { sodiumMg: 1, potassiumMg: 1, phosphorusMg: 1 } }) },
   );
-  assert.deepEqual(r2.meals, []);
+  assert.ok(!r2.meals.some((m) => m.title === 'Rejected dish'));
+  assert.ok(!r2.meals.some((m) => m.missing.some((x) => x.name === 'cabbage')));
 });
 
 test('T4 null numbers drop the meal', async () => {
@@ -136,10 +136,28 @@ test('T5 the per-meal share', async () => {
 test('T6 too many ingredients', async () => {
   const names = ['apple', 'grapes', 'cabbage', 'white rice', 'cucumber', 'lettuce', 'onion'];
   const small = okCheck({ sodiumMg: 1, potassiumMg: 1, phosphorusMg: 1 });
-  const seven = await scratch([meal({ uses: names, missing: [] })], {}, { check: small });
-  assert.deepEqual(seven.meals, []);
+  const seven = await scratch([meal({ title: 'Rejected dish', uses: names, missing: [] })], {}, { check: small });
+  assert.ok(!seven.meals.some((m) => m.title === 'Rejected dish'));
   const six = await scratch([meal({ uses: names.slice(0, 6), missing: [] })], {}, { check: small });
   assert.equal(six.meals.length, 1);
+});
+
+test('T6b built-in meals are offered when no proposed dish passes, through the same checks', async () => {
+  const r = await scratch([meal({ title: 'Rejected dish', uses: ['white rice', 'dragon fruit'], missing: [] })]);
+  assert.equal(r.ok, true);
+  assert.ok(r.meals.length >= 1);
+  for (const m of r.meals) {
+    assert.notEqual(m.title, 'Rejected dish');
+    for (const key of ['sodiumMg', 'potassiumMg', 'phosphorusMg']) assert.ok(m.totals[key] <= P.limits[key] / 3);
+  }
+  // Nothing is offered when the built-in meals fail the checks too.
+  const none = await scratch(
+    [meal({ title: 'Rejected dish', uses: ['dragon fruit'], missing: [] })],
+    {},
+    { check: async () => ({ ok: true, verdict: 'unknown', nutrients: null }) },
+  );
+  assert.deepEqual(none.meals, []);
+  assert.ok(typeof none.message === 'string' && none.message.length > 0);
 });
 
 test('T7 fallback works from scratch', async () => {

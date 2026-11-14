@@ -289,7 +289,7 @@ async function suggestFromScratch({ profile, requestedCount, catalog, check, ai 
     .filter(validMeal)
     .slice(0, proposalCount);
 
-  const checked = await Promise.all(proposals.map(async (meal) => {
+  const checkMeal = async (meal) => {
     const ingredients = new Map();
     for (const item of meal.missing) {
       if (isPantryStaple(item.name)) continue;
@@ -318,8 +318,11 @@ async function suggestFromScratch({ profile, requestedCount, catalog, check, ai 
       };
     });
     return { ...meal, uses: meal.uses.filter(isPantryStaple), missing, totals };
-  }));
-  const meals = checked.filter(Boolean).slice(0, requestedCount);
+  };
+  const passing = async (list) => (await Promise.all(list.map(checkMeal))).filter(Boolean).slice(0, requestedCount);
+  let meals = await passing(proposals);
+  // When none of the model's dishes pass, the built-in meals go through the same checks before giving up.
+  if (meals.length === 0) meals = await passing(FALLBACK_MEALS.filter(validMeal));
   if (meals.length === 0) {
     return { ok: true, meals: [], message: "I couldn't put together a meal I could check fully against your limits." };
   }
