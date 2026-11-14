@@ -38,6 +38,13 @@ const dispatch = new AgentDispatchClient(host, apiKey, apiSecret);
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const identity = 'chert-bridge-sim';
+const QUIET_WINDOW_MS = 3000;
+let activeRoom = null; // the room being used now, so the watchdog can delete it
+
+async function deleteRoomQuietly(name) {
+  try { await rooms.deleteRoom(name); }
+  catch (error) { console.error(`[sim] WARNING: could not delete room ${name}: ${error?.message ?? 'unknown'}`); }
+}
 
 async function runCall(n) {
   const t0 = Date.now();
@@ -48,6 +55,7 @@ async function runCall(n) {
   const stats = { audioFrames: 0, loudFrames: 0, firstLoudAt: null, peak: 0, videoFrames: 0, videoSize: null, agentIdentity: null };
   try {
     await rooms.createRoom({ name: roomName, emptyTimeout: 60 });
+    activeRoom = roomName;
     const grant = new AccessToken(apiKey, apiSecret, { identity, ttl: '10m' });
     grant.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
 
@@ -99,6 +107,9 @@ async function runCall(n) {
     const deadline = Date.now() + 20000;
     while (Date.now() < deadline && stats.audioFrames === 0) await sleep(250);
     if (stats.audioFrames === 0) log('WARNING: no agent audio within 20 s');
+    // The agent's track is subscribed (silence frames count). Watch it for a quiet window before the
+    // signal: an agent that greets on join would speak here, and must fail spokeBeforeReady.
+    await sleep(QUIET_WINDOW_MS);
     const preReadyLoud = stats.loudFrames;
 
     await rooms.updateRoomMetadata(roomName, JSON.stringify({ chert_call: 'sim', chert_bridge_ready: true, at: new Date().toISOString() }));
@@ -110,7 +121,7 @@ async function runCall(n) {
       call: n,
       agentIdentity: stats.agentIdentity,
       spokeBeforeReady: preReadyLoud > 0,
-      greeted: Boolean(stats.firstLoudAt && stats.firstLoudAt >= readyAt - 200) || stats.loudFrames > preReadyLoud,
+      greeted: stats.loudFrames > preReadyLoud,
       secondsFromReadyToFirstSound: stats.firstLoudAt ? Number(((stats.firstLoudAt - readyAt) / 1000).toFixed(2)) : null,
       audibleSeconds: Number((stats.loudFrames * 0.01).toFixed(1)),
       audioFrames: stats.audioFrames, peak: stats.peak,
@@ -127,11 +138,16 @@ async function runCall(n) {
   } finally {
     if (micTimer) clearInterval(micTimer);
     await room.disconnect().catch(() => {});
-    await rooms.deleteRoom(roomName).catch(() => {});
+    await deleteRoomQuietly(roomName);
+    activeRoom = null;
   }
 }
 
-const watchdog = setTimeout(() => { console.log('[sim] FAIL timeout'); process.exit(1); }, CALLS * (SECONDS + 45) * 1000);
+const watchdog = setTimeout(async () => {
+  console.log('[sim] FAIL timeout');
+  if (activeRoom) await deleteRoomQuietly(activeRoom);
+  process.exit(1);
+}, CALLS * (SECONDS + 45) * 1000);
 watchdog.unref();
 
 const results = [];
