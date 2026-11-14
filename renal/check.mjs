@@ -32,8 +32,10 @@ const SMALL_NUMBERS = [
 ];
 const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
 
-function numberWords(number) {
+export function numberWords(number) {
+  if (typeof number !== 'number' || !Number.isFinite(number)) return null;
   const value = Math.max(0, Math.round(number));
+  if (value >= 1_000_000) return value.toLocaleString('fullwide', { useGrouping: false });
   if (value < 20) return SMALL_NUMBERS[value];
   if (value < 100) return `${TENS[Math.floor(value / 10)]}${value % 10 ? ` ${SMALL_NUMBERS[value % 10]}` : ''}`;
   if (value < 1000) {
@@ -103,6 +105,7 @@ export async function checkFood(input = {}) {
     let nutrients;
     let portion;
     let source;
+    let per100 = false;
     let countsAsFluid = /\b(soup|broth|drink|juice|cola|coffee|water|tea|ice)\b/i.test(name);
     if (isLabel) {
       const label = food.label;
@@ -131,18 +134,22 @@ export async function checkFood(input = {}) {
           source: 'none',
         };
       }
-      const grams = food.grams ?? lookup.servingGrams;
+      const knownServing = Number.isFinite(lookup.servingGrams) && lookup.servingGrams > 0;
+      const grams = food.grams ?? (knownServing ? lookup.servingGrams : 100);
+      per100 = food.grams == null && !knownServing;
       const multiplier = grams / 100;
-      nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => [
-        key,
-        lookup.nutrients[key] === null || lookup.nutrients[key] === undefined
-          ? null
-          : Math.round(lookup.nutrients[key] * multiplier),
-      ]));
+      nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => {
+        const value = lookup.nutrients?.[key];
+        if (typeof value !== 'number') return [key, null];
+        const scaled = Math.round(value * multiplier);
+        return [key, isFiniteNonNegative(scaled) ? scaled : null];
+      }));
       countsAsFluid ||= lookup.fluid === true;
-      portion = food.grams == null
-        ? lookup.portion
-        : `${food.grams} g${lookup.portion ? ` (${lookup.portion} typical serving)` : ''}`;
+      portion = per100
+        ? '100 g (no typical serving size known)'
+        : food.grams == null
+          ? lookup.portion
+          : `${food.grams} g${lookup.portion ? ` (${lookup.portion} typical serving)` : ''}`;
       source = lookup.source;
     }
 
@@ -197,7 +204,7 @@ export async function checkFood(input = {}) {
       }
     } else {
       const amount = numberWords(worst.amount);
-      say = `${spokenVerdict(verdict)}, ${name} has about ${amount} milligrams of ${worst.label}.`;
+      say = `${spokenVerdict(verdict)}, ${name} has about ${amount} milligrams of ${worst.label}${per100 ? ' in 100 grams' : ''}.`;
       if (swap) say += ` Try ${swap} instead.`;
       else if (verdict === 'limit') say += ' A smaller portion may fit better.';
     }
