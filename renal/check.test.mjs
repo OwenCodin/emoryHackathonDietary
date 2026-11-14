@@ -90,6 +90,30 @@ test('a USDA food without a serving size is judged per 100 g without crashing', 
   assert.equal(result.source, 'usda');
 });
 
+test('USDA household serving records are preferred to the per-100 g fallback', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  const cereal = hit('Cereals, ready-to-eat, corn flakes', 5, 100, 500, 30);
+  cereal.foodPortions = [{
+    amount: 1,
+    modifier: 'cup',
+    portionDescription: '1 cup',
+    gramWeight: 28,
+  }];
+  globalThis.fetch = usdaFetch([cereal]);
+  const result = await checkFood({ food: { name: 'corn flakes' }, profile });
+  assert.equal(result.nutrients.sodiumMg, 140);
+  assert.equal(result.portion, '1 cup (28 g)');
+  assert.doesNotMatch(result.portion, /estimated/);
+});
+
+test('cereal with no USDA household serving uses a clearly marked typical portion', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  globalThis.fetch = usdaFetch([hit('Cereals, corn cereal', 6, 100, 500, 30)]);
+  const result = await checkFood({ food: { name: 'corn cereal' }, profile });
+  assert.equal(result.nutrients.sodiumMg, 150);
+  assert.match(result.portion, /30 g.*estimated typical serving/);
+});
+
 test('a non-finite USDA nutrient becomes unknown instead of being spoken', async () => {
   process.env.USDA_API_KEY = 'test-key';
   globalThis.fetch = usdaFetch([hit('Breadfruit, raw', 2, null, null, null)]);

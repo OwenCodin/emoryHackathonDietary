@@ -228,7 +228,7 @@ export async function checkFood(input = {}, { ai } = {}) {
         portion = per100
           ? '100 g (no typical serving size known)'
           : food.grams == null
-            ? lookup.portion
+            ? `${lookup.portion}${lookup.servingEstimated ? ' (estimated typical serving)' : ''}`
             : `${food.grams} g${lookup.portion ? ` (${lookup.portion} typical serving)` : ''}`;
         source = lookup.source;
         if (lookup.genericFrom) portion = `${portion} (judged as ${lookup.name})`;

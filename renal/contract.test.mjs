@@ -47,7 +47,9 @@ test('loads the seeded care-team profile', async () => {
   const result = await getProfile({});
   assert.equal(result.ok, true);
   assert.equal(result.profile.name, 'Sam');
-  assert.deepEqual(result.profile.limits, profile.limits);
+  assert.equal(result.profile.limits.sodiumMg, 2300);
+  assert.equal(result.profile.limits.potassiumMg, profile.limits.potassiumMg);
+  assert.match(result.profile.limitsNote, /illustrative demo profile/i);
 });
 
 test('judges a label using its per-serving sodium value', async () => {

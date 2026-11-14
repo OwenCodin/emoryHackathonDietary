@@ -184,6 +184,98 @@ test('suggestMeals uses the fallback model instead of the canned meals', async (
   assert.equal(result.meals[0].title, 'Rice and cabbage bowl');
 });
 
+test('meal prompt requests recognizable dishes and supplies preferred built-in foods', async () => {
+  process.env.GOOGLE_API_KEY = 'dummy-key';
+  const meal = {
+    title: 'Chicken and rice soup',
+    uses: ['white rice', 'cabbage'],
+    missing: [{ name: 'apple', quantity: '1 medium' }],
+    minutes: 25,
+    steps: ['Cook the rice.', 'Add cabbage and apple.'],
+    why: 'A simple meal.',
+  };
+  let prompt = '';
+  const ai = fakeClient({
+    'gemini-3.8-flash': async (params) => {
+      prompt = params.contents;
+      return { text: JSON.stringify({ meals: [meal] }) };
+    },
+  });
+  const profile = {
+    limits: { sodiumMg: 2300, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
+    avoid: ['star fruit'],
+  };
+  const result = await suggestMeals({ foods: ['white rice', 'cabbage'], profile, count: 1 }, { ai });
+  assert.equal(result.ok, true);
+  assert.equal(result.meals[0].title, meal.title);
+  assert.deepEqual(result.meals[0].missing, meal.missing);
+  assert.match(prompt, /real, recognizable dishes/i);
+  assert.match(prompt, /up to three missing food ingredients/i);
+  assert.match(prompt, /white rice/);
+  assert.match(prompt, /banana/);
+});
+
+test('pantry staples are removed from missing ingredients and food checks', async () => {
+  process.env.GOOGLE_API_KEY = 'dummy-key';
+  const meal = {
+    title: 'Cabbage and rice bowl',
+    uses: ['white rice', 'cabbage', 'water', 'oil', 'black pepper', 'oregano'],
+    missing: [
+      { name: 'water', quantity: '1 cup' },
+      { name: 'olive oil', quantity: '1 teaspoon' },
+      { name: 'black pepper', quantity: 'to taste' },
+      { name: 'oregano', quantity: 'to taste' },
+      { name: 'apple', quantity: '1 medium' },
+    ],
+    minutes: 15,
+    steps: ['Cook rice and cabbage.'],
+    why: 'A simple meal.',
+  };
+  const ai = fakeClient({ 'gemini-3.8-flash': async () => ({ text: JSON.stringify({ meals: [meal] }) }) });
+  const profile = {
+    limits: { sodiumMg: 2300, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
+    avoid: ['star fruit'],
+  };
+  const result = await suggestMeals({ foods: ['white rice', 'cabbage'], profile, count: 1 }, { ai });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.meals[0].missing, [{ name: 'apple', quantity: '1 medium' }]);
+  assert.ok(result.meals[0].uses.includes('white rice'));
+  assert.ok(result.meals[0].uses.includes('cabbage'));
+});
+
+test('rejects a recipe when a missing ingredient is unsafe', async () => {
+  process.env.GOOGLE_API_KEY = 'dummy-key';
+  const meal = {
+    title: 'Rice with star fruit',
+    uses: ['white rice'],
+    missing: [{ name: 'star fruit', quantity: '1 fruit' }],
+    minutes: 10,
+    steps: ['Cook rice and serve with star fruit.'],
+    why: 'A meal.',
+  };
+  const ai = fakeClient({ 'gemini-3.8-flash': async () => ({ text: JSON.stringify({ meals: [meal] }) }) });
+  const profile = {
+    limits: { sodiumMg: 2300, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
+    avoid: ['star fruit'],
+  };
+  const result = await suggestMeals({ foods: ['white rice'], profile, count: 1 }, { ai });
+  assert.deepEqual(result.meals, []);
+  assert.match(result.message, /show me the cupboards/i);
+});
+
+test('asks to see cupboards when no kitchen ingredients were provided', async () => {
+  const result = await suggestMeals({
+    foods: [],
+    profile: {
+      limits: { sodiumMg: 2300, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
+      avoid: ['star fruit'],
+    },
+    count: 1,
+  });
+  assert.deepEqual(result.meals, []);
+  assert.match(result.message, /show me the cupboards/i);
+});
+
 test('generateJsonWithFallback passes the full response as the second argument to parse', async () => {
   const response = { text: 'hello', candidates: [{ marker: 1 }] };
   const ai = { models: { generateContent: async () => response } };
