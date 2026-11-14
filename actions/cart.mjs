@@ -8,7 +8,7 @@ import {
   setCartFrame,
   setCartFrameActive,
 } from './frames.mjs';
-import { downloadPicture, renderCartCard } from './cart-card.mjs';
+import { PREVIEW_FOOTER, PREVIEW_TITLE, downloadPicture, renderCartCard } from './cart-card.mjs';
 import {
   getStoreUrl,
   isAllowedStoreUrl,
@@ -28,6 +28,11 @@ import { resumeKrogerSignIn } from './kroger-signin.mjs';
 
 // How long the Kroger cart card stays on the call after the run ends.
 const CARD_HOLD_MS = 20_000;
+
+// previewCart: at most this many list items, a search budget, and a bounded product cache.
+const PREVIEW_MAX_ITEMS = 12;
+const PREVIEW_BUDGET_MS = 6000;
+const PREVIEW_CACHE_MAX = 40;
 
 const KROGER_LOGIN_COMMAND = 'node --env-file=.env.local actions/kroger-login.mjs';
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -121,6 +126,17 @@ function validateItems(items) {
     item.quantity.trim().length === 0
   )) {
     return 'each item needs a name and quantity';
+  }
+  return null;
+}
+
+// Items for the list preview: 0 to 12 objects with a 1-80 character name. Returns an error text or null.
+function validatePreviewItems(items) {
+  if (!Array.isArray(items)) return 'items must be an array';
+  if (items.length > PREVIEW_MAX_ITEMS) return `at most ${PREVIEW_MAX_ITEMS} items`;
+  if (items.some((item) => !item || typeof item.name !== 'string' ||
+    item.name.trim().length === 0 || item.name.trim().length > 80)) {
+    return 'each item needs a name of 1 to 80 characters';
   }
   return null;
 }
@@ -316,7 +332,11 @@ export function createCartController({
   let runPromise = null;
   let holdTimer = null;
   let cardShown = false;
+  let cardKind = 'cart'; // 'cart' or 'preview': previewCart never hides a real cart card
   let cardItems = [];
+  let previewGeneration = 0;
+  let previewClient = null;
+  const previewCache = new Map();
   let status = {
     state: 'idle',
     step: '',
@@ -368,9 +388,101 @@ export function createCartController({
       if (publishFrame(rgba)) {
         activateFrame(true);
         cardShown = true;
+        cardKind = 'cart';
       }
     } catch {
       // no card
+    }
+  }
+
+  // Read-only list card: app-token product search and pictures only. No sign-in, no user token, no cart call.
+  async function previewOne(client, item) {
+    const key = item.name.trim().toLowerCase();
+    let hit = previewCache.get(key);
+    if (!hit) {
+      const found = await client.searchProducts(item.name.trim());
+      if (!found?.ok) return null;
+      const product = chooseProduct(item.name, found.products);
+      if (!product) return null;
+      let picture = null;
+      const imageUrl = pickImageUrl(found.products.find((p) => p?.upc === product.upc));
+      if (imageUrl) {
+        try {
+          picture = (await fetchPicture(imageUrl)) ?? null;
+        } catch {
+          picture = null;
+        }
+      }
+      hit = { description: product.description, unitPrice: product.unitPrice, picture };
+      if (previewCache.size >= PREVIEW_CACHE_MAX) previewCache.delete(previewCache.keys().next().value);
+      previewCache.set(key, hit);
+    }
+    return hit;
+  }
+
+  async function previewCart({ items } = {}) {
+    try {
+      const error = validatePreviewItems(items);
+      if (error) return { ok: false, error };
+      const config = getKrogerConfig();
+      if (!config) return { ok: false, error: 'not_configured' };
+      if (runPromise) return { ok: false, error: 'busy' };
+      const generation = ++previewGeneration;
+      if (items.length === 0) {
+        if (cardShown && cardKind === 'preview') hideCard();
+        return { ok: true, shown: false };
+      }
+
+      previewClient ??= createKroger(config);
+      const client = previewClient;
+      let budgetTimer;
+      const budget = new Promise((resolve) => {
+        budgetTimer = setTimeout(() => resolve(null), PREVIEW_BUDGET_MS);
+        budgetTimer.unref?.();
+      });
+      let hits;
+      try {
+        hits = await Promise.all(items.map((item) =>
+          Promise.race([previewOne(client, item).catch(() => null), budget])));
+      } finally {
+        clearTimeout(budgetTimer);
+      }
+      if (generation !== previewGeneration || runPromise) return { ok: true, shown: false };
+
+      let total = 0;
+      let found = 0;
+      const tiles = items.map((item, i) => {
+        const hit = hits[i];
+        if (!hit) return { name: item.name.trim(), price: null, quantity: 1, picture: null };
+        const quantity = parseQuantity(item.quantity);
+        const price = round2(hit.unitPrice * quantity);
+        found += 1;
+        total = round2(total + price);
+        return { name: hit.description, price, quantity, picture: hit.picture };
+      });
+      let rgba;
+      try {
+        rgba = await renderCard({
+          storeName: 'Kroger',
+          items: tiles,
+          step: `Kroger prices \u00b7 ${found} of ${items.length} found`,
+          total,
+          title: PREVIEW_TITLE,
+          footer: PREVIEW_FOOTER,
+          totalLabel: 'About',
+        });
+      } catch {
+        return { ok: false, error: 'render_failed' };
+      }
+      if (generation !== previewGeneration || runPromise) return { ok: true, shown: false };
+      if (!publishFrame(rgba)) return { ok: false, error: 'render_failed' };
+      activateFrame(true);
+      cardShown = true;
+      cardKind = 'preview';
+      scheduleHold();
+      return { ok: true, shown: true, found, notFound: items.length - found, total };
+    } catch {
+      return { ok: false, error: 'preview_failed' };
     }
   }
 
@@ -689,6 +801,7 @@ export function createCartController({
     const error = validateItems(items);
     if (error) return { ok: false, error };
 
+    previewGeneration += 1;
     hideCard();
     status = {
       state: 'running',
@@ -709,6 +822,7 @@ export function createCartController({
 
   async function stopCart() {
     stopRequested = true;
+    previewGeneration += 1;
     hideCard();
     if (context) {
       try {
@@ -724,11 +838,12 @@ export function createCartController({
     return { ok: true };
   }
 
-  return { startCart, getCartStatus, stopCart };
+  return { startCart, previewCart, getCartStatus, stopCart };
 }
 
 const controller = createCartController();
 
 export const startCart = (input) => controller.startCart(input);
+export const previewCart = (input) => controller.previewCart(input);
 export const getCartStatus = async () => controller.getCartStatus();
 export const stopCart = () => controller.stopCart();
