@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-kle: product pictures on the call for the Kroger cart
+Last activity: 2026-11-14 - Completed quick task 261114-kvi: meal ideas from scratch within the renal limits
 
 Progress: [██████████] 100%
 
@@ -103,6 +103,7 @@ None yet.
 | fast | Agent prompt: always speak English unless the caller clearly asks for another language (the agent had switched to Spanish on a call; no language was set anywhere) | 2026-11-14 | 5c02273 | - |
 | fast | text_cart_link waits up to 8 s for a running cart before giving up (a live call asked for the link 0.4 s after start_cart and got no_cart_link) (443/443 pass) | 2026-11-14 | b6d5de7 | - |
 | 261114-kle | Product pictures on the call for the Kroger cart: a 1280x720 cart card (photos, names, prices, total, nothing-is-paid line) offered through getCartFrame after each add and held 20 s after the run; pictures only from www.kroger.com/product/images (464/464 pass). Rendered live from product search; not yet seen on a call | 2026-11-14 | 8dbeb03 | [261114-kle-product-pictures-on-the-call-for-the-kro](./quick/261114-kle-product-pictures-on-the-call-for-the-kro/) |
+| 261114-kvi | Meal ideas from scratch within the renal limits: suggestMeals fromScratch (built-in foods only, every ingredient judged from real numbers, summed sodium, potassium and phosphorus each within one third of the daily limit, totals returned), suggest_meal from_scratch, no_safe_meal, shared contract row updated in all three READMEs (483/483 pass). Live: Gemini meals in about 3.2 s after putting the quick model first (763acc5) | 2026-11-14 | 050d5f8 | [261114-kvi-meal-ideas-from-scratch-within-the-renal](./quick/261114-kvi-meal-ideas-from-scratch-within-the-renal/) |
 
 ## Session Continuity
 
