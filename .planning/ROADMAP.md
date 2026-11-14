@@ -145,7 +145,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 05-02-PLAN.md — A call back continues the same shopping list and the caller is warned before the time limit: per-patient state file, three list tools, resume greeting, four-minute warning (D-04 to D-12)
+- [x] 05-02-PLAN.md — A call back continues the same shopping list and the caller is warned before the time limit: per-patient state file, three list tools, resume greeting, four-minute warning (D-04 to D-12)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -159,4 +159,4 @@ Plans:
 | 2. First call | 1/1 | Complete   | 2026-11-14 |
 | 3. Camera and tools | 2/2 | Complete   | 2026-11-14 |
 | 4. Browser on the call and the agent calls you | 2/2 | Complete   | 2026-11-14 |
-| 5. In the aisle | 1/3 | In Progress|  |
+| 5. In the aisle | 2/3 | In Progress|  |

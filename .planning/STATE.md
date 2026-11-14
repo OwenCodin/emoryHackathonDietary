@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Roadmap created, ready to plan Phase 1
-last_updated: "2026-11-14T03:50:06.115Z"
+last_updated: "2026-11-14T03:54:49.208Z"
 last_activity: 2026-11-14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 9
-  completed_plans: 7
-  percent: 78
+  completed_plans: 8
+  percent: 80
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 ## Current Position
 
 Phase: 05 (in-the-aisle) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-11-14
 
-Progress: [████████░░] 78%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Progress: [████████░░] 78%
 | Phase 04 P01 | 25min | 3 tasks | 8 files |
 | Phase 04 P02 | 20min | 3 tasks | 5 files |
 | Phase 05 P01 | 25min | 3 tasks | 7 files |
+| Phase 05 P02 | 40min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,7 @@ Progress: [████████░░] 78%
 - [Phase 04]: Fake cart provider only when AGENT_FAKE_CART is exactly 1; cached face frames with painted moving bar
 - [Phase 04]: 04-02: outbound only for outbound===true with chert-bridge-* identity; outbound audio via external ParticipantAudioOutput before session.start
 - [Phase 05]: Barge-in off by default via NO_INTERRUPTION; reply watchdog guarantees an answer
+- [Phase 05]: 05-02: shopping list state folder refused unless a real directory owned by the user, tightened to 700; resume greeting carries a count only
 
 ### Pending Todos
 
@@ -83,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-11-14T03:50:03.617Z
+Last session: 2026-11-14T03:54:45.990Z
 Stopped at: Roadmap created, ready to plan Phase 1
 Resume file: None

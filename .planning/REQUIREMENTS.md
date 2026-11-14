@@ -50,8 +50,8 @@
 ### In the aisle
 
 - [ ] **AISL-01**: Patient can point at a shelf and hear which product in view is the best choice
-- [ ] **AISL-02**: Patient who calls back after a call ends continues with the same shopping list and approved items
-- [ ] **AISL-03**: Patient is told at about four minutes that the call will end soon and to call back
+- [x] **AISL-02**: Patient who calls back after a call ends continues with the same shopping list and approved items
+- [x] **AISL-03**: Patient is told at about four minutes that the call will end soon and to call back
 - [x] **AISL-04**: Verdicts are one sentence and start with "Yes", "No" or "Small portion"
 
 ## v2 Requirements
@@ -109,8 +109,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OUT-01 | Phase 4 | Complete |
 | OUT-02 | Phase 4 | Complete |
 | AISL-01 | Phase 5 | Pending |
-| AISL-02 | Phase 5 | Pending |
-| AISL-03 | Phase 5 | Pending |
+| AISL-02 | Phase 5 | Complete |
+| AISL-03 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 26 total
