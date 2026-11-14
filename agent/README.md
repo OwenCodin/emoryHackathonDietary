@@ -77,6 +77,7 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `AGENT_DEBUG_FRAME_DIR` | A | Optional | A folder outside this repo where each camera picture sent to `describeImage` is also saved. Empty saves nothing. The pictures show what the caller shows, so keep them out of git. |
 | `AGENT_FAKE_CART` | A | Optional | `1` shows a built-in magenta test frame as the cart, for the simulated proof only. Leave empty for real calls. |
 | `AGENT_ALLOW_BARGE_IN` | A | Optional | `1` lets the caller interrupt the agent mid-reply. Empty keeps replies uninterrupted. |
+| `AGENT_END_SILENCE_MS` | A | Optional | How long the caller must be silent before the agent treats their turn as finished, in milliseconds (300 to 3000). Empty means 1000. Raise it if the agent answers while the caller is still talking. |
 | `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only) and the caller's chosen voice, reply length, language and preferred name. Empty uses a folder in the system temp directory. |
 | `AGENT_CALL_WARN_SECONDS` | A | Optional | Seconds after the greeting before the agent warns the call will end soon. Empty means 240. |
 | `AGENT_SKIP_ONBOARDING` | A | Optional | `1` stops first-call setup from starting by itself ("update my setup" still works). Empty means a caller with no finished setup is set up on their first call. |

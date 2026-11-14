@@ -14,7 +14,7 @@ import { greetOnBridgeReady } from './greet.mjs';
 import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata } from './outbound.mjs';
 import { buildInstructions, chooseGreeting, replyNudge, timeWarning } from './prompt.mjs';
 import { readPreferences, realtimeOptions } from './prefs.mjs';
-import { bargeInConfig, callWarnMs, createReplyWatchdog, turnHandlingConfig } from './turns.mjs';
+import { bargeInConfig, callWarnMs, createReplyWatchdog, realtimeInputConfig as buildRealtimeInputConfig, turnHandlingConfig } from './turns.mjs';
 import { createMemory } from './memory.mjs';
 import { toolLogLine } from './toollog.mjs';
 
@@ -88,9 +88,10 @@ const agent = defineAgent({
     const model = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live';
     // Barge-in is off by default: caller noise must not cancel a reply (AGENT_ALLOW_BARGE_IN=1 turns it back on).
     // Two halves: Gemini's own activity handling, and LiveKit's speech interruption (see turnHandlingConfig).
-    const realtimeInputConfig = bargeInConfig(process.env);
+    const realtimeInputConfig = buildRealtimeInputConfig(process.env);
     const turnHandling = turnHandlingConfig(process.env);
-    console.log(realtimeInputConfig ? '[agent] barge-in off' : '[agent] barge-in on');
+    console.log(bargeInConfig(process.env) ? '[agent] barge-in off' : '[agent] barge-in on');
+    console.log(`[agent] end of speech wait_ms=${realtimeInputConfig.automaticActivityDetection.silenceDurationMs}`);
     // Shopping list kept between calls (one small file per patient, outside the repo).
     const memory = createMemory({ patientId: 'demo' });
     // The voice, reply length and language chosen in first-call setup apply from the start of the call.
