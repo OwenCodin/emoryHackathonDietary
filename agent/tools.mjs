@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 // This is the only file that imports renal/ and actions/.
 import * as renalModule from '../renal/index.mjs';
+import { CONDITIONS, LIMIT_BOUNDS, MAX_AVOID } from '../renal/index.mjs';
 import * as actionsModule from '../actions/index.mjs';
 import { mergePantry, matchPantry, PANTRY_MAX } from './memory.mjs';
+import { VOICE_MENU, cleanCallName } from './prefs.mjs';
 
 const WORDS = { ok: 'Yes', avoid: 'No', limit: 'Small portion' };
 const RANK = { avoid: 0, limit: 1, unknown: 2, ok: 3 };
@@ -108,6 +110,22 @@ const FAILS = {
   memory_unavailable: "I can't keep a shopping list right now, but I can still check foods for you.",
   bad_items: 'Tell me the items you need, a few words each.',
   bad_item: 'Tell me which item you mean, in a few words.',
+  setup_not_started: "Say 'update my setup' and I'll take you through setup.",
+  bad_name: "I didn't catch the name. Tell me the first name you'd like me to use, or say skip.",
+  limit_missing: "I need all four numbers from your care team: sodium, potassium, phosphorus and fluid. Read me the ones on their sheet, or tell me you don't have them.",
+  bad_sodium: "That sodium number doesn't sound right; can you read it again from your care team's sheet?",
+  bad_potassium: "That potassium number doesn't sound right; can you read it again from your care team's sheet?",
+  bad_phosphorus: "That phosphorus number doesn't sound right; can you read it again from your care team's sheet?",
+  bad_fluid: "That fluid number doesn't sound right; can you read it again from your care team's sheet?",
+  no_proposal: "Read me your four limits first, and I'll repeat them back so you can check them.",
+  limits_changed: "Those aren't the numbers I read back. Let me read the new ones back to you first.",
+  limits_not_confirmed: 'Please tell me if the numbers I read back are right.',
+  bad_foods: 'Tell me up to ten foods to avoid, a few words each.',
+  bad_preference: 'I can use an upbeat, firm, warm or mature voice, give brief or detailed answers, and speak English or Spanish. Which would you like?',
+  profile_unsaved: "I couldn't save that just now. You can finish it later by saying 'update my setup'.",
+  prefs_unsaved: "I couldn't save that preference just now. We can try again on your next call.",
+  bad_condition: 'Tell me which fits best: kidney disease without dialysis, hemodialysis, peritoneal dialysis, a kidney transplant, or not sure.',
+  limits_needed: "I don't have your care team's limits yet, so I can't judge foods against them. When you have them, say 'update my setup' and read them to me.",
 };
 // renal/check.mjs composes "Okay, this product has about N milligrams of sodium." from this name.
 const UNNAMED_PRODUCT = 'this product';
@@ -262,6 +280,26 @@ async function saveDebugFrame(dir, picture) {
   console.log('[agent] debug frame saved');
 }
 
+// Minimum time between reading the limits back and accepting the caller's yes. The read-back alone takes longer.
+export const CONFIRM_MIN_MS = 2500;
+const LIMIT_FIELDS = [['sodium', 'sodiumMg', 'sodium_mg'], ['potassium', 'potassiumMg', 'potassium_mg'], ['phosphorus', 'phosphorusMg', 'phosphorus_mg'], ['fluid', 'fluidMl', 'fluid_ml']];
+
+// True when this caller still has to do first-call setup. Never throws; any trouble or delay gives false so the
+// greeting is never held up and nobody is forced into setup by an error.
+export async function setupStatus({ patientId = 'demo', renal = renalModule, timeoutMs = 1000 } = {}) {
+  let timer;
+  try {
+    const late = new Promise(resolve => { timer = setTimeout(() => resolve(null), timeoutMs); });
+    const got = await Promise.race([Promise.resolve().then(() => renal.getSavedProfile({ patientId })).catch(() => null), late]);
+    if (!got || got.ok !== true) return { needsSetup: false };
+    return { needsSetup: got.saved === null || got.saved === undefined || got.saved.setupDone !== true };
+  } catch {
+    return { needsSetup: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const LOOK_LIMIT = 900;
 const MEALS_LIMIT = 900;
 const LIST_LIMIT = 900;
@@ -278,6 +316,9 @@ export function buildTools({
   memory = null,
   onDisplay = () => {},
   cartWaitMs = 8000,
+  setupDue = false,
+  callerHeardAfter = () => null,
+  now = () => Date.now(),
 } = {}) {
   // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
   const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity, display: onDisplay });
@@ -306,6 +347,33 @@ export function buildTools({
     if (names.length) candidates.set(names[0], { names, verdict });
   };
   if (typeof debugFrameDir === 'string' && debugFrameDir) console.log('[agent] debug frames are on; they hold what the caller shows');
+
+  // First-call setup state, for this call only. The draft mirrors the saved profile; each setup tool saves at once.
+  let setupActive = setupDue === true;
+  let draft = null;
+  let pending = null; // limits read back by propose_limits and waiting for the caller's yes
+  const emptyDraft = () => ({ name: null, condition: null, limits: null, avoid: [], setupDone: false });
+  const loadDraft = async () => {
+    if (draft) return draft;
+    let got = null;
+    try { got = await renal.getSavedProfile({ patientId }); } catch { got = null; }
+    if (got?.ok === true) {
+      const s = got.saved;
+      draft = s ? { name: s.name ?? null, condition: s.condition ?? null, limits: s.limits ? { ...s.limits } : null, avoid: Array.isArray(s.avoid) ? [...s.avoid] : [], setupDone: s.setupDone === true } : emptyDraft();
+    } else {
+      // Unknown saved state: never write over it with empty values.
+      draft = { ...emptyDraft(), limitsUnknown: true };
+    }
+    return draft;
+  };
+  const saveDraft = async next => {
+    const { limitsUnknown, ...profile } = next;
+    let r = null;
+    try { r = await renal.saveProfile({ patientId, profile }); } catch { r = null; }
+    if (r?.ok === true) { draft = { ...profile }; return { ok: true }; }
+    return { ok: false, refused: typeof r?.error === 'string' && r.error !== 'profile store unavailable' };
+  };
+  const needSetup = () => (setupActive ? null : fail('setup_not_started'));
 
   return {
     // Anonymous tools: the object key is the tool name.
@@ -343,6 +411,7 @@ export function buildTools({
         // A profile problem never hides what was seen: nothing is judged and the foods are still remembered.
         const got = await renal.getProfile({ patientId });
         const profileOk = got?.ok === true;
+        const limitsNeeded = got?.limitsNeeded === true;
         const verdicts = await Promise.all(foods.map(async food => {
           if (!profileOk) return null;
           try { return await renal.checkFood({ food, profile: got.profile }); } catch { return null; }
@@ -409,12 +478,13 @@ export function buildTools({
           // Never a verdict or a number here: only how many foods were seen and that they could not be checked.
           const seenCount = rows.length;
           const unjudgedSay = unjudged ? `I can see ${seenCount === 1 ? 'one food' : `${seenCount} foods`}, but I couldn't check ${seenCount === 1 ? 'it' : 'them'} against your limits just now.` : '';
-          const say = [unjudgedSay, omittedSay].filter(Boolean).join(' ');
+          const say = [unjudgedSay, limitsNeeded ? FAILS.limits_needed : '', omittedSay].filter(Boolean).join(' ');
           return {
             ok: true,
             kind: seen.kind,
             ...(nameless ? { unnamed: true } : {}),
             ...(unjudged ? { unjudged: true } : {}),
+            ...(limitsNeeded ? { limitsNeeded: true } : {}),
             ...(good.some(g => g.v?.source === 'web') ? { online: true } : {}),
             ...(remembered ? { remembered: true } : {}),
             ...(shelf ? { best: shelf.name, spoken: shelf.spoken } : {}),
@@ -445,6 +515,7 @@ export function buildTools({
         const grams = args.grams ?? null;
         if (grams !== null && !(typeof grams === 'number' && Number.isFinite(grams) && grams > 0 && grams <= 5000)) return fail('bad_amount');
         const got = await renal.getProfile({ patientId });
+        if (got?.limitsNeeded === true) return fail('limits_needed');
         if (!got?.ok) return fail('profile_unavailable');
         const v = await renal.checkFood({ food: { name, grams }, profile: got.profile });
         if (v?.ok !== true) return fail('check_failed');
@@ -466,6 +537,7 @@ export function buildTools({
           if (foods.length === 0) return fail('nothing_seen');
         }
         const got = await renal.getProfile({ patientId });
+        if (got?.limitsNeeded === true) return fail('limits_needed');
         if (!got?.ok) return fail('profile_unavailable');
         const r = fromScratch
           ? await renal.suggestMeals({ foods: [], profile: got.profile, count: 2, fromScratch: true })
@@ -534,6 +606,7 @@ export function buildTools({
       description: 'How much sodium, potassium and phosphorus the caller has had today and how much is left.',
       execute: guard(async () => {
         const r = await renal.getToday({ patientId });
+        if (r?.limitsNeeded === true) return fail('limits_needed');
         if (!r?.ok) return fail('tool_failed');
         const totals = three(r.totals);
         const remaining = three(r.remaining);
@@ -749,6 +822,159 @@ export function buildTools({
         sentRecipes.delete(key);
         return fail('text_failed');
       }, { timeoutMs, onTimeout: () => fail('text_unconfirmed') }),
+    }),
+    start_setup: llm.tool({
+      description: 'Start (or restart) setup when the caller says "update my setup" or asks to change their limits or details. Setup tools only work after this.',
+      execute: guard(async call => {
+        setupActive = true;
+        pending = null;
+        draft = null;
+        await loadDraft();
+        if (call.timedOut) return fail('timeout');
+        return { ok: true, say: "Let's update your setup. You can say skip at any step." };
+      }, { timeoutMs }),
+    }),
+    save_profile_basics: llm.tool({
+      description: 'Setup only. Save the name the caller wants to be called and their kidney condition (ckd, hemodialysis, peritoneal_dialysis, transplant or unsure). Pass null for a step they skipped.',
+      parameters: z.object({ name: z.string().max(80).nullish(), condition: z.string().max(40).nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const gate = needSetup();
+        if (gate) return gate;
+        let name = null;
+        if (args?.name !== null && args?.name !== undefined) {
+          name = cleanCallName(args.name);
+          if (!name) return fail('bad_name');
+        }
+        let condition = null;
+        if (args?.condition !== null && args?.condition !== undefined) {
+          const c = String(args.condition).toLowerCase().trim();
+          if (!CONDITIONS.includes(c)) return fail('bad_condition');
+          condition = c;
+        }
+        const d = await loadDraft();
+        if (d.limitsUnknown) return fail('profile_unsaved');
+        if (call.timedOut) return fail('timeout');
+        const saved = await saveDraft({ ...d, name: name ?? d.name, condition: condition ?? d.condition });
+        if (!saved.ok) return fail('profile_unsaved');
+        if (name && memory) { try { await memory.savePreferences({ name }); } catch { /* a preference failure never fails this tool */ } }
+        return { ok: true };
+      }, { timeoutMs }),
+    }),
+    propose_limits: llm.tool({
+      description: "Setup only. Step 1 of 2 for the caller's daily limits as read from their care team: sodium, potassium and phosphorus in milligrams, fluid in milliliters. Returns a sentence to read back. Nothing is saved until confirm_limits.",
+      parameters: z.object({ sodium_mg: z.number().nullish(), potassium_mg: z.number().nullish(), phosphorus_mg: z.number().nullish(), fluid_ml: z.number().nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const gate = needSetup();
+        if (gate) return gate;
+        pending = null;
+        if (LIMIT_FIELDS.some(([, , arg]) => args?.[arg] === null || args?.[arg] === undefined)) return fail('limit_missing');
+        const limits = {};
+        for (const [nutrient, key, arg] of LIMIT_FIELDS) {
+          const v = args[arg];
+          const [min, max] = LIMIT_BOUNDS[key];
+          if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) return fail(`bad_${nutrient}`);
+          limits[key] = v;
+        }
+        if (call.timedOut) return fail('timeout');
+        pending = { limits, at: now() };
+        return { ok: true, pending: true, say: `I heard sodium ${limits.sodiumMg} milligrams, potassium ${limits.potassiumMg} milligrams, phosphorus ${limits.phosphorusMg} milligrams and fluid ${limits.fluidMl} milliliters a day. Is that right?` };
+      }, { timeoutMs }),
+    }),
+    confirm_limits: llm.tool({
+      description: 'Setup only. Step 2 of 2: call this only after the caller has said yes to the numbers you read back, with exactly those same four numbers. This is the only thing that saves limits.',
+      parameters: z.object({ sodium_mg: z.number().nullish(), potassium_mg: z.number().nullish(), phosphorus_mg: z.number().nullish(), fluid_ml: z.number().nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const gate = needSetup();
+        if (gate) return gate;
+        if (!pending) return fail('no_proposal');
+        if (LIMIT_FIELDS.some(([, key, arg]) => args?.[arg] !== pending.limits[key])) { pending = null; return fail('limits_changed'); }
+        const asked = pending;
+        if (now() - asked.at < CONFIRM_MIN_MS) return fail('limits_not_confirmed');
+        let heard = null;
+        try { heard = callerHeardAfter(asked.at + 1000); } catch { heard = null; }
+        if (heard === false) return fail('limits_not_confirmed');
+        const d = await loadDraft();
+        if (call.timedOut) return fail('timeout');
+        const saved = await saveDraft({ ...d, limits: { ...asked.limits } });
+        if (!saved.ok) return fail('profile_unsaved');
+        pending = null;
+        return { ok: true, saved: true, say: "Saved. These are the limits you told me your care team gave you, and I'll use them from now on." };
+      }, { timeoutMs }),
+    }),
+    set_avoid_foods: llm.tool({
+      description: "Setup only. Save foods the caller's care team told them to avoid, or their food allergies. An empty list is fine.",
+      parameters: z.object({ foods: z.array(z.string().max(80)).max(20) }),
+      execute: guard(async (call, args = {}) => {
+        const gate = needSetup();
+        if (gate) return gate;
+        const seen = new Set();
+        const foods = [];
+        for (const raw of Array.isArray(args?.foods) ? args.foods : []) {
+          const f = clean(raw, 40);
+          if (!f || seen.has(f.toLowerCase())) continue;
+          seen.add(f.toLowerCase());
+          foods.push(f);
+        }
+        if (foods.length > MAX_AVOID) return fail('bad_foods');
+        const d = await loadDraft();
+        if (d.limitsUnknown) return fail('profile_unsaved');
+        if (call.timedOut) return fail('timeout');
+        const saved = await saveDraft({ ...d, avoid: foods });
+        if (!saved.ok) return fail(saved.refused ? 'bad_foods' : 'profile_unsaved');
+        return { ok: true, count: draft.avoid.length };
+      }, { timeoutMs }),
+    }),
+    set_preferences: llm.tool({
+      description: 'Save how the caller wants the agent to sound: voice (upbeat, firm, warm or mature), reply_style (brief or detailed) and language (english or spanish). Pass null for what they did not choose.',
+      parameters: z.object({ voice: z.string().max(20).nullish(), reply_style: z.string().max(20).nullish(), language: z.string().max(20).nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const given = v => v !== null && v !== undefined;
+        const word = v => String(v).toLowerCase().trim();
+        const next = {};
+        if (given(args?.voice)) {
+          const v = word(args.voice);
+          const name = Object.hasOwn(VOICE_MENU, v) ? VOICE_MENU[v] : Object.values(VOICE_MENU).find(x => x.toLowerCase() === v);
+          if (!name) return fail('bad_preference');
+          next.voice = name;
+        }
+        if (given(args?.reply_style)) {
+          const v = word(args.reply_style);
+          if (v !== 'brief' && v !== 'detailed') return fail('bad_preference');
+          next.replyStyle = v;
+        }
+        if (given(args?.language)) {
+          const v = word(args.language);
+          const code = v === 'english' || v === 'en' ? 'en' : v === 'spanish' || v === 'es' ? 'es' : null;
+          if (!code) return fail('bad_preference');
+          next.language = code;
+        }
+        if (Object.keys(next).length === 0) return fail('bad_preference');
+        if (!memory || typeof memory.savePreferences !== 'function') return fail('prefs_unsaved');
+        let before = null;
+        if (next.voice) { try { before = (await memory.loadPreferences())?.prefs?.voice ?? null; } catch { before = null; } }
+        if (call.timedOut) return fail('timeout');
+        let r = null;
+        try { r = await memory.savePreferences(next); } catch { r = null; }
+        if (!r?.ok) return fail('prefs_unsaved');
+        return { ok: true, say: next.voice && next.voice !== (before ?? 'Puck') ? 'Saved. Your new voice starts on your next call.' : 'Saved.' };
+      }, { timeoutMs }),
+    }),
+    finish_onboarding: llm.tool({
+      description: 'Setup only. Call once at the end of setup, after telling the caller what you can do. Marks setup finished and says whether limits were saved.',
+      execute: guard(async call => {
+        const gate = needSetup();
+        if (gate) return gate;
+        pending = null;
+        const d = await loadDraft();
+        if (d.limitsUnknown) return fail('profile_unsaved');
+        if (call.timedOut) return fail('timeout');
+        const saved = await saveDraft({ ...d, setupDone: true });
+        if (!saved.ok) return fail('profile_unsaved');
+        setupActive = false;
+        return draft.limits
+          ? { ok: true, complete: true, say: "You're all set. I'll use the limits you told me your care team gave you." }
+          : { ok: true, complete: false, say: "Your setup is saved, but without your care team's limits I can't judge foods yet. When you have them, say 'update my setup'." };
+      }, { timeoutMs }),
     }),
   };
 }

@@ -6,8 +6,28 @@ const LIMITS = { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000, fluidMl:
 
 export function makeFakeRenal({ scenes } = {}) {
   let sceneIndex = 0;
+  const saved = new Map(); // in-memory saved profiles, by patient id
   return {
+    // Saved-profile functions: same shapes as renal/profile.mjs, but in memory and without validation
+    // (the real bounds are tested in renal/profile.test.mjs). Override saveProfile in a test to make it fail.
+    async getSavedProfile({ patientId } = {}) {
+      const s = saved.get(patientId || 'demo');
+      return { ok: true, saved: s ? JSON.parse(JSON.stringify(s)) : null };
+    },
+    async saveProfile({ patientId, profile } = {}) {
+      const s = { id: patientId || 'demo', ...JSON.parse(JSON.stringify(profile)), setBy: 'patient, as told by their care team', setOn: '2026-11-14' };
+      saved.set(s.id, s);
+      return { ok: true, saved: s };
+    },
+    async resetProfile({ patientId } = {}) {
+      return { ok: true, removed: saved.delete(patientId || 'demo') };
+    },
     async getProfile({ patientId } = {}) {
+      const s = saved.get(patientId || 'demo');
+      if (s) {
+        if (!s.limits) return { ok: false, error: 'limits not set', limitsNeeded: true };
+        return { ok: true, profile: { ...s, name: s.name ?? '', limits: { ...s.limits }, source: 'patient' } };
+      }
       return {
         ok: true,
         profile: {
