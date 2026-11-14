@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-ecm: merge all three tracks into merge/all-tracks
+Last activity: 2026-11-14 - Completed quick task 261114-ej7: renal fixes, Gemini fallback and stub-era test repairs on merge/all-tracks
 
 Progress: [██████████] 100%
 
@@ -90,6 +90,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 261114-ecm | Merge all three tracks into integration branch merge/all-tracks (origin/main + origin/track-b/renal); 248 tests, 12 stub-era failures, not pushed | 2026-11-14 | 4791f8a | [261114-ecm-merge-all-tracks](./quick/261114-ecm-merge-all-tracks/) |
+| 261114-ej7 | Fix renal food-check crash, cola brand resolution and USDA match guard, numberless-label fallback, Gemini fallback model, test isolation; repair 12 stub-era agent tests (270/270 pass) | 2026-11-14 | 618fd3e | [261114-ej7-fix-renal-and-tests](./quick/261114-ej7-fix-renal-and-tests/) |
 
 ## Session Continuity
 
