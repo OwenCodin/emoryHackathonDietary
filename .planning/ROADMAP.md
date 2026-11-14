@@ -106,7 +106,20 @@ Plans:
   4. **[real call]** A patient who answers an outbound call hears a mealtime check-in such as "It's dinner time. Show me your plate."
 
 **Human checkpoint**: Asking Chert staff whether the trial line may place outbound calls and to which verified numbers (with Track C); placing the real outbound test within the shared minute budget.
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Video out: cart frames when a cart runs, cached face otherwise; simulated face-cart-face proof (VID-01, VID-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — Outbound entry: publish before the bridge joins, silent until ready, mealtime check-in; simulated outbound and inbound proof (OUT-01, OUT-02)
+
+**Cross-cutting constraints:**
+
+- D-15: agent/greet.mjs, agent/chert-rooms.mjs, package.json, renal/, actions/ and agent/README.md are identical to commit 70b8a21
 
 ### Phase 5: In the aisle
 
