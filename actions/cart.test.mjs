@@ -435,8 +435,10 @@ const defaultSearch = (term) => ({
   },
 });
 
-function makeKrogerController({ stored = { refreshToken: 'test-refresh' }, search = defaultSearch, add, refreshStatus = 200, openContext } = {}) {
+function makeKrogerController({ stored: initialStored = { refreshToken: 'test-refresh' }, search = defaultSearch, add, refreshStatus = 200, openContext, resumeSignIn, resumeWaitMs } = {}) {
   const calls = [];
+  const store = { stored: initialStored, loads: 0 };
+  const resumes = { count: 0 };
   const urls = [];
   const frames = { published: [], active: [] };
   const timers = { set: [], cleared: [] };
@@ -471,9 +473,15 @@ function makeKrogerController({ stored = { refreshToken: 'test-refresh' }, searc
   controller = createCartController({
     openContext: openContext ?? (async () => { throw new Error('browser must not open'); }),
     getKrogerConfig: () => KROGER_CONFIG,
+    resumeSignIn: async (config) => {
+      resumes.count += 1;
+      assert.equal(config, KROGER_CONFIG); // the cart's own token folder, never the default one
+      return resumeSignIn ? resumeSignIn(store) : { resumed: 'none' };
+    },
+    ...(resumeWaitMs === undefined ? {} : { resumeWaitMs }),
     createKroger: (config) => createKrogerClient({
       ...config,
-      tokenStore: { load: async () => stored, save: async () => ({ ok: true }) },
+      tokenStore: { load: async () => { store.loads += 1; return store.stored; }, save: async () => ({ ok: true }) },
       fetchImpl,
     }),
     fetchPicture: (url) => downloadPicture(url, { fetchImpl }),
@@ -489,7 +497,7 @@ function makeKrogerController({ stored = { refreshToken: 'test-refresh' }, searc
     },
     clearTimer: (handle) => { timers.cleared.push(handle); },
   });
-  return { controller, calls, urls, frames, timers };
+  return { controller, calls, urls, frames, timers, store, resumes };
 }
 
 test('browser path is used when there is no Kroger config', async () => {
@@ -555,6 +563,45 @@ test('kroger path with no stored sign-in fails with the login command', async ()
   await waitForState(controller, 'failed');
   assert.equal(controller.getCartStatus().step, `Sign in to Kroger first: ${LOGIN}`);
   assert.equal(calls.length, 0);
+});
+
+test('kroger path resumes a late sign-in once and then fills the cart', async () => {
+  const { controller, calls, store, resumes } = makeKrogerController({
+    stored: null,
+    resumeSignIn: (st) => { st.stored = { refreshToken: 'late-refresh' }; return { resumed: 'connected' }; },
+  });
+  await controller.startCart({ items: [{ name: 'apples', quantity: '1' }] });
+  await waitForState(controller, 'done');
+  assert.equal(resumes.count, 1);
+  assert.equal(store.loads >= 2, true);
+  assert.ok(calls.some((c) => c.path === '/v1/cart/add'));
+});
+
+test('kroger path with no sign-in and nothing to resume asks once, then fails with the login command', async () => {
+  const { controller, resumes } = makeKrogerController({ stored: null });
+  await controller.startCart({ items: ITEMS });
+  await waitForState(controller, 'failed');
+  assert.equal(resumes.count, 1);
+  assert.equal(controller.getCartStatus().step, `Sign in to Kroger first: ${LOGIN}`);
+});
+
+test('a throwing or never-answering resume still ends in the same failure, within the cap', async () => {
+  for (const resumeSignIn of [() => { throw new Error('boom'); }, () => new Promise(() => {})]) {
+    const { controller, resumes } = makeKrogerController({ stored: null, resumeSignIn, resumeWaitMs: 50 });
+    const t = Date.now();
+    await controller.startCart({ items: ITEMS });
+    await waitForState(controller, 'failed');
+    assert.equal(controller.getCartStatus().step, `Sign in to Kroger first: ${LOGIN}`);
+    assert.equal(resumes.count, 1);
+    assert.ok(Date.now() - t < 1500);
+  }
+});
+
+test('a stored sign-in never triggers a resume', async () => {
+  const { controller, resumes } = makeKrogerController();
+  await controller.startCart({ items: ITEMS });
+  await waitForState(controller, 'done');
+  assert.equal(resumes.count, 0);
 });
 
 test('kroger refresh rejected fails with the expired message', async () => {

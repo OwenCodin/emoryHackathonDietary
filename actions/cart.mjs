@@ -24,6 +24,7 @@ import {
   pickImageUrl,
   readKrogerConfig,
 } from './kroger.mjs';
+import { resumeKrogerSignIn } from './kroger-signin.mjs';
 
 // How long the Kroger cart card stays on the call after the run ends.
 const CARD_HOLD_MS = 20_000;
@@ -308,6 +309,8 @@ export function createCartController({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   cardHoldMs = CARD_HOLD_MS,
+  resumeSignIn = (config) => resumeKrogerSignIn({ config }),
+  resumeWaitMs = 3000,
 } = {}) {
   let context = null;
   let runPromise = null;
@@ -378,7 +381,22 @@ export function createCartController({
     const expired = `Kroger sign-in expired: run ${KROGER_LOGIN_COMMAND} again`;
     try {
       const kroger = createKroger(config);
-      const auth = await kroger.getUserToken();
+      let auth = await kroger.getUserToken();
+      if (!auth.ok && auth.error === 'no_sign_in') {
+        // A sign-in the patient finished after the call that texted the link: claim it once (bounded), then look again.
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, resumeWaitMs); // real timer: the injected one belongs to the card hold
+          t.unref?.();
+          Promise.resolve()
+            .then(() => resumeSignIn(config))
+            .catch(() => null)
+            .then(() => {
+              clearTimeout(t);
+              resolve();
+            });
+        });
+        auth = await kroger.getUserToken();
+      }
       if (!auth.ok) {
         if (auth.error === 'no_sign_in') fail(`Sign in to Kroger first: ${KROGER_LOGIN_COMMAND}`);
         else if (auth.error === 'sign_in_rejected') fail(expired);

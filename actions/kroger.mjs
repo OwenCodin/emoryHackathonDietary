@@ -15,7 +15,10 @@ const DEFAULT_REDIRECT_URI = 'http://localhost:8765/callback';
 const USER_SCOPE = 'cart.basic:write';
 const APP_SCOPE = 'product.compact';
 const TOKEN_FILE = 'kroger-tokens.json';
+const PENDING_FILE = 'kroger-signin-pending.json';
 const MAX_FILE_BYTES = 8192;
+const MAX_PENDING_BYTES = 1024;
+const STATE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const REQUEST_TIMEOUT_MS = 10_000;
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -149,24 +152,28 @@ const isInside = (root, target) => {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 };
 
+// Shared folder check for the token store and the pending sign-in record: outside the repo, a real directory owned
+// by this user, mode 700.
+async function secureFolder(folder) {
+  try {
+    if (isInside(REPO_ROOT, folder)) return false;
+    await mkdir(folder, { recursive: true, mode: 0o700 });
+    const st = await lstat(folder);
+    if (!st.isDirectory() || st.isSymbolicLink()) return false;
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false;
+    if (isInside(REPO_ROOT, await realpath(folder))) return false;
+    if ((st.mode & 0o777) !== 0o700) await chmod(folder, 0o700);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createTokenStore({ dir } = {}) {
   const folder = resolve(dir ?? defaultTokenDir());
   const file = join(folder, TOKEN_FILE);
 
-  async function folderOk() {
-    try {
-      if (isInside(REPO_ROOT, folder)) return false;
-      await mkdir(folder, { recursive: true, mode: 0o700 });
-      const st = await lstat(folder);
-      if (!st.isDirectory() || st.isSymbolicLink()) return false;
-      if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false;
-      if (isInside(REPO_ROOT, await realpath(folder))) return false;
-      if ((st.mode & 0o777) !== 0o700) await chmod(folder, 0o700);
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  const folderOk = () => secureFolder(folder);
 
   return {
     async load() {
@@ -191,6 +198,80 @@ export function createTokenStore({ dir } = {}) {
         return { ok: true };
       } catch {
         try { await unlink(tmp); } catch { /* nothing to remove */ }
+        return { ok: false };
+      }
+    },
+  };
+}
+
+// The pending relay sign-in: { state, startedAt } only, mode 600 in the 700 token folder, so a later process can
+// finish a sign-in the patient completes after the starting process has ended. Nothing here throws.
+export function createPendingSignInStore({ dir } = {}) {
+  const folder = resolve(dir ?? defaultTokenDir());
+  const file = join(folder, PENDING_FILE);
+  const valid = (r) => r && typeof r.state === 'string' && STATE_PATTERN.test(r.state) && Number.isFinite(r.startedAt);
+
+  async function unlinkRegular() {
+    try {
+      const st = await lstat(file);
+      if (!st.isFile()) return;
+      await unlink(file);
+    } catch {
+      // nothing to remove
+    }
+  }
+
+  async function load() {
+    try {
+      if (isInside(REPO_ROOT, folder)) return null;
+      const st = await lstat(file);
+      if (!st.isFile()) return null; // symlinks and anything else: never followed, never deleted
+      if (st.size > MAX_PENDING_BYTES) {
+        await unlinkRegular();
+        return null;
+      }
+      let data;
+      try {
+        data = JSON.parse(await readFile(file, 'utf8'));
+      } catch {
+        await unlinkRegular();
+        return null;
+      }
+      if (!valid(data)) {
+        await unlinkRegular();
+        return null;
+      }
+      return { state: data.state, startedAt: data.startedAt };
+    } catch {
+      return null;
+    }
+  }
+
+  return {
+    load,
+    async save({ state, startedAt } = {}) {
+      if (!valid({ state, startedAt })) return { ok: false };
+      if (!(await secureFolder(folder))) return { ok: false };
+      const tmp = join(folder, `.kroger-signin-pending.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
+      try {
+        await writeFile(tmp, JSON.stringify({ state, startedAt }), { mode: 0o600, flag: 'wx' });
+        await rename(tmp, file);
+        return { ok: true };
+      } catch {
+        try { await unlink(tmp); } catch { /* nothing to remove */ }
+        return { ok: false };
+      }
+    },
+    async remove({ ifState } = {}) {
+      try {
+        if (isInside(REPO_ROOT, folder)) return { ok: false };
+        if (ifState !== undefined) {
+          const current = await load();
+          if (!current || current.state !== ifState) return { ok: true };
+        }
+        await unlinkRegular();
+        return { ok: true };
+      } catch {
         return { ok: false };
       }
     },
