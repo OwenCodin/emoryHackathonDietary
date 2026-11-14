@@ -12,6 +12,20 @@ export function bargeInConfig(env = process.env) {
   return { activityHandling: ActivityHandling.NO_INTERRUPTION };
 }
 
+// LiveKit side of barge-in off (AgentSessionOptions.turnHandling). The Google plugin emits input_speech_started
+// whenever Gemini opens a generation that was not requested with generateReply, including the follow-up
+// generation inside one reply (realtime_api.js startNewGeneration). AgentActivity.onInputSpeechStarted then calls
+// interrupt(), which cancels the current SpeechHandle when it allows interruptions, and the running tool call with
+// it (agent_activity.js onInputSpeechStarted, interrupt, "Aborting all realtime generation tasks due to
+// interruption"). With interruption.enabled false every SpeechHandle is created non-interruptible
+// (agent_activity.js allowInterruptions getter, onGenerationCreated, generateReply), so that interrupt() leaves it
+// running. discardAudioIfUninterruptible is false so caller audio still reaches Gemini while the agent speaks,
+// as it does today (the default true would drop a question asked over the agent).
+export function turnHandlingConfig(env = process.env) {
+  if (env?.AGENT_ALLOW_BARGE_IN === '1') return undefined;
+  return { interruption: { enabled: false, discardAudioIfUninterruptible: false } };
+}
+
 // Seconds before the time warning: Number(raw) || 240, only positive finite numbers, capped at 3600. Returns milliseconds.
 export function callWarnMs(raw) {
   let seconds = 240;

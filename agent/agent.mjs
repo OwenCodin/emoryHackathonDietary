@@ -13,7 +13,7 @@ import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
 import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata } from './outbound.mjs';
 import { chooseGreeting, instructions, replyNudge, timeWarning } from './prompt.mjs';
-import { bargeInConfig, callWarnMs, createReplyWatchdog } from './turns.mjs';
+import { bargeInConfig, callWarnMs, createReplyWatchdog, turnHandlingConfig } from './turns.mjs';
 import { createMemory } from './memory.mjs';
 
 
@@ -84,10 +84,13 @@ const agent = defineAgent({
 
     const model = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live';
     // Barge-in is off by default: caller noise must not cancel a reply (AGENT_ALLOW_BARGE_IN=1 turns it back on).
+    // Two halves: Gemini's own activity handling, and LiveKit's speech interruption (see turnHandlingConfig).
     const realtimeInputConfig = bargeInConfig(process.env);
+    const turnHandling = turnHandlingConfig(process.env);
     console.log(realtimeInputConfig ? '[agent] barge-in off' : '[agent] barge-in on');
     const session = new voice.AgentSession({
       llm: new google.realtime.RealtimeModel({ model, voice: 'Puck', ...(realtimeInputConfig ? { realtimeInputConfig } : {}) }),
+      ...(turnHandling ? { turnHandling } : {}),
     });
     // Reply watchdog: nudges the model once when a caller turn ends with no reply and no tool run.
     const watchdog = createReplyWatchdog();

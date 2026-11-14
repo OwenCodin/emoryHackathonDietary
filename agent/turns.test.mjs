@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { bargeInConfig, callWarnMs, createReplyWatchdog } from './turns.mjs';
+import { bargeInConfig, callWarnMs, createReplyWatchdog, turnHandlingConfig } from './turns.mjs';
 import { replyNudge } from './prompt.mjs';
 
 const clock = () => { const c = { t: 1000, now: () => c.t, tick: ms => { c.t += ms; } }; return c; };
@@ -15,6 +15,18 @@ describe('bargeInConfig', () => {
   });
   it('keeps default behaviour with "1"', () => {
     assert.equal(bargeInConfig({ AGENT_ALLOW_BARGE_IN: '1' }), undefined);
+  });
+});
+
+describe('turnHandlingConfig', () => {
+  it('turns LiveKit speech interruption off by default and for anything but "1", keeping caller audio', () => {
+    for (const v of [undefined, '', '0', 'true', ' 1']) {
+      assert.deepEqual(turnHandlingConfig(v === undefined ? {} : { AGENT_ALLOW_BARGE_IN: v }),
+        { interruption: { enabled: false, discardAudioIfUninterruptible: false } });
+    }
+  });
+  it('leaves LiveKit defaults (interruptible) with "1"', () => {
+    assert.equal(turnHandlingConfig({ AGENT_ALLOW_BARGE_IN: '1' }), undefined);
   });
 });
 
