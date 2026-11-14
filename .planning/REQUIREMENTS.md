@@ -16,11 +16,11 @@
 
 ### Call
 
-- [ ] **CALL-01**: A patient can FaceTime the line and the agent answers
-- [ ] **CALL-02**: The patient hears a greeting within 10 seconds of FaceTime being ready, triggered by the `chert_bridge_ready` room signal and never by a participant joining
-- [ ] **CALL-03**: The patient can hold a spoken two-way conversation with a renal dietitian persona using a Gemini voice model, or the starter's OpenAI voice if no Gemini Live model works with the pinned plugin
-- [ ] **CALL-04**: The patient hears, once per call, that the agent follows limits set by their care team and does not replace it
-- [ ] **CALL-05**: After the patient hangs up, a second call is answered and greeted the same way
+- [x] **CALL-01**: A patient can FaceTime the line and the agent answers
+- [x] **CALL-02**: The patient hears a greeting within 10 seconds of FaceTime being ready, triggered by the `chert_bridge_ready` room signal and never by a participant joining
+- [x] **CALL-03**: The patient can hold a spoken two-way conversation with a renal dietitian persona using a Gemini voice model, or the starter's OpenAI voice if no Gemini Live model works with the pinned plugin
+- [x] **CALL-04**: The patient hears, once per call, that the agent follows limits set by their care team and does not replace it
+- [x] **CALL-05**: After the patient hangs up, a second call is answered and greeted the same way
 
 ### Camera
 
@@ -89,11 +89,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCAF-02 | Phase 1 | Complete |
 | SCAF-03 | Phase 1 | Complete |
 | SCAF-04 | Phase 1 | Complete |
-| CALL-01 | Phase 2 | Pending |
-| CALL-02 | Phase 2 | Pending |
-| CALL-03 | Phase 2 | Pending |
-| CALL-04 | Phase 2 | Pending |
-| CALL-05 | Phase 2 | Pending |
+| CALL-01 | Phase 2 | Complete |
+| CALL-02 | Phase 2 | Complete |
+| CALL-03 | Phase 2 | Complete |
+| CALL-04 | Phase 2 | Complete |
+| CALL-05 | Phase 2 | Complete |
 | CAM-01 | Phase 3 | Pending |
 | CAM-02 | Phase 3 | Pending |
 | CAM-03 | Phase 3 | Pending |

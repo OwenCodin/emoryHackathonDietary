@@ -9,7 +9,7 @@ Real FaceTime calls are scarce (about 49 minutes left on the trial, 5 minutes pe
 ## Phases
 
 - [x] **Phase 1: Scaffold and stubs** - Repo starts with `npm start`, shared video size, and stub renal and actions modules so all three tracks can work alone (completed 2026-11-14)
-- [ ] **Phase 2: First call** - A FaceTime call is answered, greeted in time, and conversational, twice in a row
+- [x] **Phase 2: First call** - A FaceTime call is answered, greeted in time, and conversational, twice in a row (completed 2026-11-14)
 - [ ] **Phase 3: Camera and tools** - The patient shows or names food and hears a one-sentence verdict tied to their limits
 - [ ] **Phase 4: Browser on the call and the agent calls you** - The patient sees the shopping browser during a cart run, and an outbound call opens with a mealtime check-in
 - [ ] **Phase 5: In the aisle** - The patient points at a shelf and hears the best choice, and a callback continues the same shopping list
@@ -49,7 +49,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 02-01-PLAN.md — Simulated Chert caller in the repo, dietitian persona and care-team greeting in prompt.mjs, [agent] lifecycle log lines, and a two-call no-phone proof against one running agent
+- [x] 02-01-PLAN.md — Simulated Chert caller in the repo, dietitian persona and care-team greeting in prompt.mjs, [agent] lifecycle log lines, and a two-call no-phone proof against one running agent
 
 ### Phase 3: Camera and tools
 **Goal**: A patient shows or names a food and hears a short, correct verdict based on their own limits, and the agent never guesses when it cannot see
@@ -99,7 +99,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Scaffold and stubs | 1/1 | Complete   | 2026-11-14 |
-| 2. First call | 0/1 | Planned | - |
+| 2. First call | 1/1 | Complete   | 2026-11-14 |
 | 3. Camera and tools | 0/0 | Not started | - |
 | 4. Browser on the call and the agent calls you | 0/0 | Not started | - |
 | 5. In the aisle | 0/0 | Not started | - |
