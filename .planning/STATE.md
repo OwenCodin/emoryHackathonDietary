@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: Roadmap created, ready to plan Phase 1
-last_updated: "2026-11-14T03:02:35.145Z"
+last_updated: "2026-11-14T03:02:37.193Z"
 last_activity: 2026-11-14
 progress:
   total_phases: 5
@@ -47,6 +47,7 @@ Progress: [██████████] 100%
 | 01 | 1 | - | - |
 | Phase 02 P01 | 20min | 3 tasks | 3 files |
 | Phase 03 P01 | 45min | 3 tasks | 12 files |
+| Phase 03 P02 | 30min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -60,6 +61,7 @@ Progress: [██████████] 100%
 - [Phase ?]: [Phase 01] face.mjs offsets scaled by HEIGHT/360 for 1280x720
 - [Phase 02]: Keep gemini-3.8-live default; agent logs only caller identity, model, tool name+ok
 - [Phase 03]: 03-01: jpeg() drops frames that arrive while muted; tool failures use only our own error codes
+- [Phase 03]: text_cart_link has no parameters; destination only PATIENT_PHONE validated as E.164
 
 ### Pending Todos
 
