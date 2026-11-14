@@ -410,6 +410,9 @@ The API key needs the `facetime:write` and `facetime:read` scopes. The project o
 
 ### Demo video
 
+The written product overview and verification status are in
+[the demo write-up](./demo/write-up.md).
+
 The team wants an impressive demo using Higgsfield. The rule: generated footage tells the story, real recordings show the product. Never use a generated shot where the product is supposed to be working.
 
 | Shot | Source |
