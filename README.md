@@ -28,9 +28,11 @@ Built and tested with fakes, not yet proven on a live call:
 - The outbound mealtime call. It has not been seen working on a live call since the merge.
 - The online lookup as part of a call. It ran from the command line with billing on, but no caller has heard an online answer yet.
 
+- First-call setup (name, condition, limits read out and confirmed, foods to avoid, voice and reply preferences). Simulated only.
+
 Parked: receiving photos by iMessage.
 
-`npm test` passes 350 tests with no keys and no network.
+`npm test` passes 557 tests with no keys and no network.
 
 ## Setup from a fresh clone
 
@@ -76,6 +78,8 @@ Rules:
 ## Test without spending FaceTime minutes
 
 `npm test` runs everything on fakes with no keys and no network.
+
+First-call setup, with no keys and no call: `node agent/sim/onboarding-run.mjs` drives the setup tools in throwaway folders and prints the stored profile, the stored voice and an estimate of the spoken length. `node --env-file-if-exists=.env.local agent/sim/reset-setup.mjs` forgets the saved profile and preferences so setup runs again in a demo (set `AGENT_SKIP_ONBOARDING=1` to skip setup while testing other features).
 
 To call `renal/` directly with real keys, run these from the repo root. They use a throwaway state folder so nothing in `renal/data` changes, and they spend USDA and Gemini quota.
 
