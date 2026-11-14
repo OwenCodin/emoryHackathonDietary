@@ -10,5 +10,5 @@ export {
 export { describeImage } from './vision.mjs';
 export { checkFood } from './check.mjs';
 export { suggestMeals } from './meals.mjs';
-export { dishIngredients } from './dish.mjs';
+export { dishIngredients, dishRecipe } from './dish.mjs';
 export { logFood, getToday } from './diary.mjs';
