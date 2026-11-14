@@ -146,7 +146,7 @@ Track A imports everything below and exports nothing. B and C do not import each
 | `getProfile({ patientId })` | `{ ok, profile }` |
 | `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
-| `suggestMeals({ foods, profile, count }, { ai }?)` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
+| `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
 | `logFood({ patientId, verdict })` | `{ ok }` |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
 

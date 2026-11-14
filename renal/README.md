@@ -146,7 +146,7 @@ Track A imports everything below and exports nothing. B and C do not import each
 | `getProfile({ patientId })` | `{ ok, profile }` |
 | `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
-| `suggestMeals({ foods, profile, count }, { ai }?)` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
+| `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
 | `logFood({ patientId, verdict })` | `{ ok }` |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
 
@@ -408,6 +408,12 @@ One call with `@google/genai`, image plus a fixed instruction, JSON out, through
 ### `suggestMeals`
 
 Given the foods seen and the profile, return up to `count` meals (default 2). Each meal's `missing` list uses the `CartItem` shape, because Track A passes it straight to Track C's `startCart`. Gemini proposes the meals as JSON, then every ingredient goes through `checkFood` and any meal containing an `avoid` is dropped. The model proposes; the rules decide. The model is `RENAL_MEALS_MODEL` with `RENAL_MEALS_FALLBACK_MODEL`, same defaults as vision, about 5.1 s in total.
+
+From-scratch mode (`fromScratch: true`): Gemini gets its own prompt listing only the built-in foods that check `ok` or `limit` for this patient, with their per-portion numbers from `checkFood`. Every non-staple ingredient must be on the built-in list, pass `checkFood` (not `avoid` or `unknown`) with three real numbers, and number at most `FROM_SCRATCH_MAX_INGREDIENTS` (6). The summed totals must each be at most `MEAL_SHARE_OF_DAILY_LIMIT` (one third) of the daily limit, otherwise the meal is dropped. Totals count one typical portion of each ingredient and nothing is estimated. `FALLBACK_MEALS` work in this mode too, with every ingredient moved to `missing`.
+
+The second argument also accepts a `check` option, a test seam that defaults to `checkFood`. It is not part of the shared contract.
+
+Follow-up: the from-the-kitchen mode does not check totals yet, because kitchen foods can be judged from USDA, online or label numbers with different serving bases, or with missing phosphorus.
 
 ### Tests
 
