@@ -5,7 +5,7 @@ import { LocalVideoTrack, TrackSource, VideoBufferType, VideoFrame, VideoSource 
 import { drawFace } from './face.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
-import { buildTools } from './tools.mjs';
+import { buildTools, endCall, withTimeout } from './tools.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
 import { greeting, instructions } from './prompt.mjs';
@@ -62,9 +62,18 @@ const agent = defineAgent({
     ctx.addShutdownCallback(async () => {
       console.log('[agent] call ended');
       if (timer) clearInterval(timer);
-      // Close each resource even if an earlier one fails.
-      for (const close of [() => session.close(), () => track.close(), () => source.close(), () => camera.close()]) {
-        try { await close(); } catch (error) { console.error('[agent] shutdown step failed', error); }
+      // Close each resource even if an earlier one fails or hangs: every step has its own time limit.
+      // stopCart goes first so a cart from this call cannot block or leak into the next one.
+      const steps = [
+        ['cart', () => endCall()],
+        ['session', () => session.close()],
+        ['track', () => track.close()],
+        ['source', () => source.close()],
+        ['camera', () => camera.close()],
+      ];
+      for (const [name, close] of steps) {
+        const r = await withTimeout(close, 4000);
+        if (!r.ok) console.error(`[agent] shutdown step ${name} ${r.timedOut ? 'timed out' : 'failed'}`);
       }
     });
 
