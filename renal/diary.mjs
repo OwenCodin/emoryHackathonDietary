@@ -1,4 +1,5 @@
 import { errorResult, isFiniteNonNegative, readData, writeData } from './data.mjs';
+import { getProfile } from './profile.mjs';
 
 const NUTRIENT_KEYS = ['sodiumMg', 'potassiumMg', 'phosphorusMg'];
 let pendingWrite = Promise.resolve();
@@ -74,9 +75,11 @@ export async function getToday(input = {}) {
       key,
       items.reduce((sum, item) => sum + (item.nutrients?.[key] ?? 0), 0),
     ]));
-    const profileFile = await readData('patients.json');
-    const limits = profileFile[patientId]?.limits;
-    if (!limits) return { ok: false, error: 'patient not found' };
+    const got = await getProfile({ patientId });
+    if (!got.ok) {
+      return got.limitsNeeded ? { ok: false, error: 'limits not set', limitsNeeded: true } : { ok: false, error: 'patient not found' };
+    }
+    const limits = got.profile.limits;
     const remaining = Object.fromEntries(NUTRIENT_KEYS.map((key) => [key, limits[key] - totals[key]]));
     return { ok: true, totals, remaining, items };
   } catch (error) {
