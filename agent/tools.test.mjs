@@ -25,7 +25,7 @@ after(async () => {
 
 const camOk = { jpeg: async () => jpeg };
 const camOff = { jpeg: async () => null };
-const build = (over = {}) => tools.buildTools({ camera: camOk, patientId: 'demo', renal, actions, debugFrameDir: '', timeoutMs: 2000, ...over });
+const build = (over = {}) => tools.buildTools({ camera: camOk, patientId: 'demo', renal, actions, debugFrameDir: '', timeoutMs: 2000, cartWaitMs: 0, ...over });
 const verdictFor = (food, verdict = 'ok', say = 'Fine today.') => ({ ok: true, food, verdict, say, reasons: [], nutrients: null, portion: 'x', swap: null, source: 'none' });
 
 describe('spokenVerdict', () => {
@@ -523,6 +523,21 @@ describe('WR-06 text_cart_link', () => {
       assert.equal((await build({ actions: mod, phone: PHONE }).text_cart_link.execute({})).error, 'no_cart_link');
       assert.equal(calls.length, 0);
     }
+  });
+  it('waits for a running cart to finish, then sends', async () => {
+    let n = 0;
+    const slow = { ...actions, getCartStatus: async () => ({ ok: true, state: ++n < 3 ? 'running' : 'done', step: '', added: [], missing: [], total: 1, cartUrl: n < 3 ? null : 'https://example.com/cart' }) };
+    const { mod, calls } = rec(slow, 'sendText');
+    const r = await build({ actions: mod, phone: PHONE, cartWaitMs: 3000, timeoutMs: 5000 }).text_cart_link.execute({});
+    assert.deepEqual(r, { ok: true, sent: true });
+    assert.equal(calls.length, 1);
+    assert.equal(n, 3);
+  });
+  it('gives up when the cart is still running after the wait', async () => {
+    const { mod, calls } = rec(status({ state: 'running', cartUrl: null }), 'sendText');
+    const r = await build({ actions: mod, phone: PHONE, cartWaitMs: 500 }).text_cart_link.execute({});
+    assert.equal(r.error, 'no_cart_link');
+    assert.equal(calls.length, 0);
   });
   it('rejects a link that is not http or https', async () => {
     for (const cartUrl of ['javascript:alert(1)', 'file:///etc/passwd', 'not a url', '']) {

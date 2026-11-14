@@ -276,6 +276,7 @@ export function buildTools({
   onToolActivity = () => {},
   memory = null,
   onDisplay = () => {},
+  cartWaitMs = 8000,
 } = {}) {
   // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
   const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity, display: onDisplay });
@@ -578,8 +579,15 @@ export function buildTools({
       description: 'Text the caller a link to their filled cart so they can review it and check out themselves.',
       execute: guard(async () => {
         if (!phoneOk) return fail('no_phone');
-        const s = await actions.getCartStatus();
+        let s = await actions.getCartStatus();
         if (!s?.ok) return fail('tool_failed');
+        // The model often asks for the link right after start_cart: give a running cart a short time to finish.
+        const waitUntil = Date.now() + Math.max(0, Math.min(Number(cartWaitMs) || 0, 10000));
+        while (s.state === 'running' && Date.now() < waitUntil) {
+          await new Promise(resolve => setTimeout(resolve, 400));
+          s = await actions.getCartStatus();
+          if (!s?.ok) return fail('tool_failed');
+        }
         let link = null;
         try {
           const u = new URL(String(s.cartUrl ?? ''));
