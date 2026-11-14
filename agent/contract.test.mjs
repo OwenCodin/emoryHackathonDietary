@@ -102,7 +102,7 @@ describe('renal stub', () => {
   });
 });
 
-describe('actions stub', () => {
+describe('actions contract', () => {
   it('getCartFrame is synchronous and returns null', () => {
     const r = actions.getCartFrame();
     assert.ok(!(r instanceof Promise));
@@ -121,20 +121,36 @@ describe('actions stub', () => {
     assert.ok(s.cartUrl === null || isStr(s.cartUrl));
   });
 
-  it('startCart, stopCart, sendText, callPatient return ok', async () => {
-    assert.equal((await actions.startCart({ items: [{ name: 'broth', quantity: '1' }] })).ok, true);
-    assert.equal((await actions.stopCart()).ok, true);
-    assert.equal((await actions.sendText({ phone: '+15551234567', text: 'hi' })).ok, true);
-    const c = await actions.callPatient({ phone: '+15551234567', reason: 'dinner' });
-    assert.equal(c.ok, true);
-    assert.ok(isStr(c.callId));
+  it('rejects external actions without configuration without performing them', async () => {
+    const configKeys = [
+      'CHERT_API_KEY',
+      'CHERT_PROJECT_ID',
+      'CHERT_LINE_ID',
+      'PATIENT_PHONE',
+      'LIVEKIT_URL',
+      'LIVEKIT_API_KEY',
+      'LIVEKIT_API_SECRET',
+      'AGENT_NAME',
+    ];
+    const previous = Object.fromEntries(configKeys.map(key => [key, process.env[key]]));
+    for (const key of configKeys) delete process.env[key];
+    try {
+      assert.equal((await actions.startCart()).ok, false);
+      assert.equal((await actions.sendText({ phone: '+15551234567', text: 'hi' })).ok, false);
+      assert.equal((await actions.callPatient({ phone: '+15551234567', reason: 'dinner' })).ok, false);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
-  it('every async function returns a Promise resolving ok: true, with or without an argument', async () => {
+  it('every async function returns a Promise with an ok result', async () => {
     for (const name of ['startCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText']) {
       const p = actions[name]();
       assert.ok(p instanceof Promise, `${name} returns a Promise`);
-      assert.equal((await p).ok, true, `${name}() ok`);
+      assert.equal(typeof (await p).ok, 'boolean', `${name}() returns an ok result`);
     }
   });
 });
