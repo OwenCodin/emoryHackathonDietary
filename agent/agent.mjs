@@ -15,6 +15,7 @@ import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJ
 import { chooseGreeting, instructions, replyNudge, timeWarning } from './prompt.mjs';
 import { bargeInConfig, callWarnMs, createReplyWatchdog, turnHandlingConfig } from './turns.mjs';
 import { createMemory } from './memory.mjs';
+import { toolLogLine } from './toollog.mjs';
 
 
 const agent = defineAgent({
@@ -105,16 +106,13 @@ const agent = defineAgent({
         watchdog.heard({ itemId: event?.itemId ?? null, isFinal: event?.isFinal === true, length });
       } catch { /* never breaks the call */ }
     });
-    // Tool name and ok only: arguments and outputs contain what the caller said.
+    // Tool name, ok and a short validated error code only: arguments and outputs contain what the caller said.
     session.on(voice.AgentSessionEventTypes.FunctionToolsExecuted, event => {
       // Restarts the reply clock; a tool run is not an answer.
       try { watchdog.toolsExecuted(); } catch { /* never breaks the call */ }
       try {
         event.functionCalls.forEach((call, i) => {
-          const out = event.functionCallOutputs[i];
-          let ok = false;
-          try { ok = Boolean(out) && !out.isError && JSON.parse(out.output)?.ok === true; } catch { ok = false; }
-          console.log(`[agent] tool ${call.name} ok=${ok}`);
+          console.log(toolLogLine(call?.name, event.functionCallOutputs[i]));
         });
       } catch { /* logging must never break the call */ }
     });
