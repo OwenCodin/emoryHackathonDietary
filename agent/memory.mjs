@@ -293,6 +293,40 @@ export function createMemory({ patientId = 'demo', dir = defaultStateDir(), now 
         } catch { return { ok: false, error: 'unavailable' }; }
       });
     },
+    remove(names) {
+      return serial(async () => {
+        try {
+          if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+          const state = await readState();
+          const removed = [];
+          const notFound = [];
+          for (const raw of Array.isArray(names) ? names : []) {
+            const hits = [...new Set([...matchPantry(state.needed, raw), ...matchPantry(state.approved, raw)])];
+            if (!hits.length) { notFound.push(cleanName(raw)); continue; }
+            for (const h of hits) if (!removed.includes(h)) removed.push(h);
+            const gone = new Set(hits.map(h => h.toLowerCase()));
+            state.needed = state.needed.filter(x => !gone.has(x.toLowerCase()));
+            state.approved = state.approved.filter(x => !gone.has(x.toLowerCase()));
+          }
+          const w = await writeState(state);
+          if (!w.ok) return w;
+          return { ok: true, removed, notFound, state: w.state };
+        } catch { return { ok: false, error: 'unavailable' }; }
+      });
+    },
+    clearList() {
+      return serial(async () => {
+        try {
+          if (!(await checkFolder())) return { ok: false, error: 'unavailable' };
+          const state = await readState();
+          state.needed = [];
+          state.approved = [];
+          const w = await writeState(state);
+          if (!w.ok) return w;
+          return { ok: true, state: w.state };
+        } catch { return { ok: false, error: 'unavailable' }; }
+      });
+    },
     mark(name, status) {
       return serial(async () => {
         try {

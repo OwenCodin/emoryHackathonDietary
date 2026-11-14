@@ -94,7 +94,15 @@ const FAILS = {
   no_safe_meal: "I couldn't put together a meal I'm sure fits your limits right now. Tell me a food you have or want, and I'll check it for you.",
   not_enough_food: "I couldn't find a complete meal from what I've seen so far. Show me your cupboards or pantry and I'll try again.",
   nothing_to_log: 'Tell me or show me what you ate first, and then I can log it.',
-  nothing_to_buy: "I don't have anything on a shopping list yet. Tell me what you need, or ask me for a meal idea first.",
+  nothing_to_buy: 'Your list is empty. What would you like to buy?',
+  dish_unknown: "I'm not sure what usually goes in that. Tell me the main ingredients and I'll check each one.",
+  not_on_list: "That isn't on your list.",
+  confirm_list: "Before I add anything to your Kroger cart, here is what's on your list. Shall I add these?",
+  already_in_cart: 'Those are already in your Kroger cart from this call. I can text you the cart link.',
+  nothing_to_text: "There's nothing on your list yet. Tell me a dish or the items you need first.",
+  list_already_sent: "I've already texted you that list. Please check your messages.",
+  list_text_unconfirmed: "I tried to text the list but couldn't confirm it went through. Please check your messages before we try again.",
+  list_text_failed: "I couldn't send the list just now. I can try again if you like.",
   cart_busy: "A cart is already being filled. I can tell you how it's going.",
   cart_unconfirmed: "I asked for the cart but haven't heard back yet. Let me check how it's going before we try again.",
   cart_failed: "The cart didn't work out. I can try again if you like.",
@@ -145,6 +153,9 @@ const TOO_LONG = "Done, but there's too much detail to read out. Ask me about on
 const fail = (error, extra = {}) => ({ ok: false, error, say: FAILS[error], ...extra });
 
 const RECIPE_CLOSING = 'This recipe follows the limits set by your care team and does not replace their advice.';
+export const LIST_CLOSING = 'This list follows the limits set by your care team and does not replace their advice.';
+// The Kroger public API can only add to a cart: it has no remove or read route. This sentence is fixed and said as given.
+export const KROGER_NO_REMOVE = "Kroger doesn't let me take items out of your cart. I've taken it off your list so it won't be added again, and I can text you the cart link so you can remove it there.";
 
 // Plain text for one suggested meal, built only from cleaned fields (see lastMeals in suggest_meal). Pure.
 export function recipeText(meal) {
@@ -172,6 +183,63 @@ export function recipeText(meal) {
 }
 
 const size = value => JSON.stringify(value).length;
+
+// Two food names mean the same thing: equal, or one holds the other as whole words ("deli ham" holds "ham").
+const sameFood = (a, b) => {
+  const x = norm(a), y = norm(b);
+  return x.length > 0 && y.length > 0 && (x === y || ` ${x} `.includes(` ${y} `) || ` ${y} `.includes(` ${x} `));
+};
+
+const DISH_LIMIT = 900;
+// Shorter and shorter forms of the dish result. An avoid row is never dropped, only shortened.
+const DISH_LEVELS = [
+  { qty: 20, name: 30, swap: 40, limit: true, unknown: true, okRows: true },
+  { qty: 0, name: 30, swap: 40, limit: true, unknown: true, okRows: true },
+  { qty: 0, name: 20, swap: 30, limit: true, unknown: true, okRows: true },
+  { qty: 0, name: 16, swap: 24, limit: false, unknown: false, okRows: true },
+  { qty: 0, name: 14, swap: 20, limit: false, unknown: false, okRows: false },
+  // Last resort: the swap stays on its row, not in the sentence.
+  { qty: 0, name: 12, swap: 16, limit: false, unknown: false, okRows: false, swapSay: false, dish: 20 },
+];
+
+// Said from names and verdict words only: no nutrient number ever appears in it.
+function dishSay(dish, rows, caps) {
+  const nm = r => r.name.slice(0, caps.name);
+  const names = rows.map(nm);
+  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? 'nothing');
+  const swapBit = r => (r.swap && caps.swapSay !== false ? `; ${r.swap.slice(0, caps.swap)} is a good swap` : '');
+  const parts = [`For ${dish.slice(0, caps.dish ?? 40)}, you usually need ${list}.`];
+  for (const r of rows) if (r.verdict === 'avoid') parts.push(`${nm(r)} is a no for your limits${swapBit(r)}.`);
+  if (caps.limit) for (const r of rows) if (r.verdict === 'limit') parts.push(`Keep ${nm(r)} to a small portion${swapBit(r)}.`);
+  if (caps.unknown) for (const r of rows) if (r.verdict === 'unknown') parts.push(`I couldn't check ${nm(r)}.`);
+  return parts.join(' ');
+}
+
+export function dishResult(dishName, rows, omitted) {
+  const dish = clean(dishName, 40);
+  const hasSwap = rows.some(r => r.swap);
+  const ask = hasSwap ? 'Use the swap or keep the original, and shall I put these on your list?' : 'Shall I put these on your list?';
+  let last = null;
+  for (const caps of DISH_LEVELS) {
+    const shown = caps.okRows ? rows : rows.filter(r => r.verdict !== 'ok');
+    const result = {
+      ok: true,
+      dish,
+      ingredients: shown.map(r => ({
+        name: r.name.slice(0, caps.name),
+        ...(caps.qty ? { quantity: r.quantity.slice(0, caps.qty) } : {}),
+        verdict: r.verdict,
+        ...(r.swap ? { swap: r.swap.slice(0, caps.swap) } : {}),
+      })),
+      ...(omitted > 0 ? { omitted } : {}),
+      say: dishSay(dish, rows, caps),
+      ask,
+    };
+    last = result;
+    if (size(result) <= DISH_LIMIT) return result;
+  }
+  return last;
+}
 
 // Shortens text and lists, and says how many list entries were left out; never drops them silently.
 function shrink(value) {
@@ -210,7 +278,7 @@ function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout
       if (!result || typeof result !== 'object') return fail('tool_failed');
       const fitted = fit(result, limit);
       // A card is shown only for a finished, successful verdict (never a timeout, a failure or the TOO_LONG summary).
-      if (!call.timedOut && call.display && fitted?.ok === true && (typeof fitted.verdict === 'string' || Array.isArray(fitted.results))) {
+      if (!call.timedOut && call.display && fitted?.ok === true && (typeof fitted.verdict === 'string' || Array.isArray(fitted.results) || Array.isArray(fitted.ingredients))) {
         try { display(call.display); } catch { /* a hook never changes a result */ }
       }
       return fitted;
@@ -349,6 +417,34 @@ export function buildTools({
   };
   const phoneOk = typeof phone === 'string' && /^\+[1-9]\d{6,14}$/.test(phone);
   const cut = v => String(v ?? '').trim().slice(0, 80);
+
+  // Dish-to-cart state, for this call only. Quantities are not stored in memory (it keeps names only).
+  const qty = new Map(); // lowercase name -> quantity text (at most 40 characters)
+  let lastDish = null; // { name, items: [{ name, quantity }] } from the last dish_ingredients
+  const avoidNames = new Set(); // lowercase names judged avoid this call (dish ingredients and judged foods)
+  const heldNames = new Set(); // avoid names left off the list; keep_after_warning only works for these
+  let listShownSig = ''; // the list as last handed back to the model (names and quantities)
+  const sentToKroger = new Set(); // lowercase names sent to the Kroger cart this call
+  const sentLists = new Set(); // list texts already sent this call
+  const quantityOf = name => qty.get(name.toLowerCase()) || '1';
+  const sig = list => list.map(i => `${i.name.toLowerCase()}|${i.quantity.toLowerCase()}`).join('\n');
+  // The current shopping list as CartItems: the remembered list when memory works, else this call's missing items.
+  const listNow = async () => {
+    let names = null;
+    if (memory) { try { const l = await memory.load(); if (l?.ok) names = l.state.needed; } catch { /* fall back to this call's items */ } }
+    if (names === null) names = lastMissing.map(i => i.name);
+    return names.map(cut).filter(Boolean).map(name => ({ name, quantity: quantityOf(name) }));
+  };
+  // Best effort and never awaited: the preview card is decoration, a failure never changes a result.
+  const showList = (list, call) => {
+    if (call?.timedOut || typeof actions.previewCart !== 'function') return;
+    try { Promise.resolve(actions.previewCart({ items: list.slice(0, 12).map(i => ({ name: i.name, quantity: i.quantity })) })).catch(() => {}); } catch { /* ignore */ }
+  };
+  const listResult = (list, key = 'list') => {
+    listShownSig = sig(list);
+    return { [key]: list.slice(0, 8).map(i => i.name.slice(0, 40)), ...(list.length > 8 ? { listMore: list.length - 8 } : {}) };
+  };
+  const isSent = name => [...sentToKroger].some(s => sameFood(s, name));
   const three = o => {
     const v = { sodiumMg: o?.sodiumMg, potassiumMg: o?.potassiumMg, phosphorusMg: o?.phosphorusMg };
     return Object.values(v).every(Number.isFinite) ? v : null;
@@ -536,6 +632,48 @@ export function buildTools({
         return { ok: true, food: clean(v.food ?? name, 80), verdict, spoken: spokenVerdict({ ...v, verdict }), swap: clean(v.swap, 60) || null };
       }, { timeoutMs }),
     }),
+    dish_ingredients: llm.tool({
+      description: 'Get the usual ingredients of a dish, with a quantity, a verdict for the caller\'s limits and a swap for each. Call it after look_at_camera when they showed the dish, or straight away when they name it, and for "what is in it", "get the ingredients" or "buy what it needs". Never list ingredients yourself. Say its say, then ask its ask.',
+      parameters: z.object({ dish: z.string().trim().min(1).max(80) }),
+      execute: guard(async (call, args = {}) => {
+        const dish = typeof args.dish === 'string' ? args.dish.trim() : '';
+        if (!dish || dish.length > 80) return fail('bad_food');
+        const got = await renal.getProfile({ patientId });
+        if (got?.limitsNeeded === true) return fail('limits_needed');
+        if (!got?.ok) return fail('profile_unavailable');
+        if (typeof renal.dishIngredients !== 'function') return fail('check_failed');
+        const r = await renal.dishIngredients({ dish, profile: got.profile });
+        if (r?.ok !== true) return fail('check_failed');
+        const raw = Array.isArray(r.ingredients) ? r.ingredients : [];
+        const rows = raw.slice(0, 8).map(i => ({
+          name: clean(i?.name, 60),
+          quantity: clean(i?.quantity, 40) || '1',
+          verdict: normalVerdict(i?.verdict),
+          swap: clean(i?.swap, 60),
+          nutrients: i?.nutrients ?? null,
+          portion: i?.portion ?? null,
+          source: i?.source,
+        })).filter(i => i.name);
+        if (rows.length === 0) return fail('dish_unknown');
+        if (!call.timedOut) {
+          lastDish = { name: clean(r.dish ?? dish, 40) || clean(dish, 40), items: rows.map(i => ({ name: i.name, quantity: i.quantity })) };
+          for (const i of rows) {
+            qty.set(i.name.toLowerCase(), i.quantity.slice(0, 40));
+            if (i.swap) qty.set(i.swap.toLowerCase(), i.quantity.slice(0, 40));
+            if (i.verdict === 'avoid') avoidNames.add(i.name.toLowerCase());
+          }
+        }
+        const sorted = [...rows].sort((a, b) => RANK[a.verdict] - RANK[b.verdict]);
+        call.display = {
+          items: sorted.slice(0, 6).map(i => displayItem({ food: i.name, nutrients: i.nutrients, portion: i.portion, source: i.source }, i.name, i.verdict)),
+          more: Math.max(0, rows.length - 6),
+          unjudged: false,
+          seen: rows.length,
+          online: rows.some(i => i.source === 'web'),
+        };
+        return dishResult(r.dish ?? dish, rows, Number.isInteger(r.omitted) ? r.omitted : 0);
+      }, { timeoutMs, limit: DISH_LIMIT }),
+    }),
     suggest_meal: llm.tool({
       description: "Suggest meals within the caller's limits. By default it cooks from everything the caller showed from their kitchen (fridge, pantry, cupboards). Set from_scratch true when the caller wants an idea without showing their kitchen, has nothing at home, or says to just suggest something; then every ingredient is a shopping item.",
       parameters: z.object({ from_scratch: z.boolean().nullish() }),
@@ -564,6 +702,7 @@ export function buildTools({
         }
         if (!call.timedOut) {
           lastMissing = [...seen.values()];
+          for (const i of lastMissing) if (i.quantity) qty.set(i.name.toLowerCase(), i.quantity.slice(0, 40));
           lastMeals = meals.slice(0, 5).map(m => ({
             title: clean(m?.title, 80),
             uses: (Array.isArray(m?.uses) ? m.uses : []).slice(0, 12).map(u => clean(u, 60)).filter(Boolean),
@@ -626,17 +765,20 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     start_cart: llm.tool({
-      description: 'Start filling an online grocery cart with items the caller needs. Pass an empty list to use the missing items from the last meal suggestion, or the remembered shopping list when that meal had nothing missing. This never pays or checks out. If it says it has not heard back, check cart_status before trying again.',
+      description: 'Add exactly the caller\'s current shopping list to their online Kroger cart. Pass an empty list to use that list. Call it only after the caller has heard the list and clearly said to put it in their Kroger cart. If it fails with confirm_list, read the items back, ask, and call again only after they say yes. It says which items it is adding, and never pays or checks out. If it says it has not heard back, check cart_status before trying again.',
       parameters: z.object({ items: z.array(z.object({ name: z.string(), quantity: z.string() })) }),
       execute: guard(async (call, args = {}) => {
         let list = (Array.isArray(args.items) ? args.items : []).map(i => ({ name: cut(i?.name), quantity: cut(i?.quantity) })).filter(i => i.name);
-        if (list.length === 0) list = lastMissing.map(i => ({ name: cut(i.name), quantity: cut(i.quantity) })).filter(i => i.name);
-        if (list.length === 0 && memory) {
-          const l = await memory.load();
-          if (l?.ok) list = l.state.needed.map(name => ({ name: cut(name), quantity: '1' })).filter(i => i.name);
+        if (list.length === 0) {
+          // Exactly the current list, and only after the caller has heard it in this call.
+          const full = await listNow();
+          if (full.length === 0) return fail('nothing_to_buy');
+          const unsent = full.filter(i => !isSent(i.name));
+          if (unsent.length === 0) return fail('already_in_cart');
+          if (sig(full) !== listShownSig) return fail('confirm_list', listResult(full, 'items'));
+          list = unsent;
         }
         list = list.slice(0, 12);
-        if (list.length === 0) return fail('nothing_to_buy');
         // Kroger configured but nobody signed in: say so plainly and offer the texted link, instead of failing the cart.
         if (typeof actions.getKrogerStatus === 'function') {
           let ks = null;
@@ -648,7 +790,8 @@ export function buildTools({
         const r = await actions.startCart({ items: list });
         if (r?.error === 'busy') return fail('cart_busy');
         if (!r?.ok) return fail('tool_failed');
-        return { ok: true, started: true, items: list.slice(0, 5).map(i => i.name.slice(0, 50)), ...(list.length > 5 ? { more: list.length - 5 } : {}) };
+        if (!call.timedOut) for (const i of list) sentToKroger.add(i.name.toLowerCase());
+        return { ok: true, started: true, items: list.slice(0, 5).map(i => i.name.slice(0, 50)), ...(list.length > 5 ? { more: list.length - 5 } : {}), say: "I'm adding these to your Kroger cart now." };
         // A timeout cannot cancel startCart, which may still start: report it as unconfirmed, not as failed.
       }, { timeoutMs, onTimeout: () => fail('cart_unconfirmed') }),
     }),
@@ -714,26 +857,128 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     add_to_shopping_list: llm.tool({
-      description: 'Add things the caller wants to buy to their shopping list. The list is kept between calls. Pass short item names.',
-      parameters: z.object({ items: z.array(z.string().trim().min(1).max(80)).min(1).max(20) }),
+      description: 'Add things the caller wants to buy to their shopping list, which is kept between calls and shown on the video as not in the Kroger cart yet. Pass short item names (swap names if they chose swaps). A food that was judged a no for their limits is left off with a warning; pass keep_after_warning true only after they said to keep it anyway.',
+      parameters: z.object({ items: z.array(z.string().trim().min(1).max(80)).min(1).max(20), keep_after_warning: z.boolean().nullish() }),
       execute: guard(async (call, args = {}) => {
         const items = Array.isArray(args.items) ? args.items : [];
         if (items.length < 1 || items.length > 20 || !items.every(x => typeof x === 'string' && x.trim().length >= 1 && x.trim().length <= 80)) return fail('bad_items');
         if (!memory || call.timedOut) return fail('memory_unavailable');
-        const r = await memory.add(items.map(x => x.trim()));
-        if (!r?.ok) return fail('memory_unavailable');
-        return { ok: true, added: r.added.slice(0, 5).map(x => x.slice(0, 50)), ...(r.added.length > 5 ? { addedMore: r.added.length - 5 } : {}), left: r.state.needed.length };
+        for (const c of candidates.values()) if (c.verdict?.verdict === 'avoid') for (const n of c.names) avoidNames.add(n);
+        const keep = args.keep_after_warning === true;
+        const toAdd = [];
+        const held = [];
+        for (const raw of items) {
+          const name = raw.trim();
+          const isAvoid = [...avoidNames].some(a => sameFood(a, name));
+          const wasHeld = [...heldNames].some(h => sameFood(h, name));
+          if (isAvoid && !(keep && wasHeld)) { held.push(name); heldNames.add(name.toLowerCase()); } else toAdd.push(name);
+        }
+        for (const n of toAdd) if (!qty.get(n.toLowerCase())) qty.set(n.toLowerCase(), '1');
+        let r = null;
+        if (toAdd.length > 0) r = await memory.add(toAdd);
+        else { const l = await memory.load(); r = l?.ok ? { ok: true, added: [], state: l.state } : null; }
+        if (!r?.ok || !r.state) return fail('memory_unavailable');
+        const list = await listNow();
+        const shown = listResult(list);
+        showList(list, call);
+        const heldSay = held.length > 0 ? `I left ${held.slice(0, 3).map(x => x.slice(0, 30)).join(', ')} off your list because it's not a good fit for your limits. Tell me if you still want to keep it.` : '';
+        return {
+          ok: true,
+          added: r.added.slice(0, 5).map(x => x.slice(0, 50)), ...(r.added.length > 5 ? { addedMore: r.added.length - 5 } : {}),
+          left: r.state.needed.length,
+          ...(held.length > 0 ? { held: held.slice(0, 3).map(x => x.slice(0, 30)), say: heldSay } : {}),
+          ...shown,
+        };
       }, { timeoutMs, limit: LIST_LIMIT }),
     }),
+    remove_from_list: llm.tool({
+      description: 'Take items off the caller\'s shopping list, or clear it with all true. Pass short item names. Set from_kroger_cart true when they ask to remove something from their Kroger cart or something already sent to it; then say its say sentence exactly and never say it left the Kroger cart.',
+      parameters: z.object({ items: z.array(z.string().trim().min(1).max(80)).max(20).nullish(), all: z.boolean().nullish(), from_kroger_cart: z.boolean().nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const asked = (Array.isArray(args.items) ? args.items : []).map(x => (typeof x === 'string' ? x.trim() : '')).filter(Boolean);
+        const all = args.all === true;
+        if (!all && asked.length === 0) return fail('bad_items');
+        if (asked.length > 20 || asked.some(x => x.length > 80)) return fail('bad_items');
+        const honest = args.from_kroger_cart === true || (all && sentToKroger.size > 0) || asked.some(isSent);
+        if (call.timedOut) return fail('timeout');
+        const before = await listNow();
+        const gone = new Set();
+        let memoryFailed = false;
+        if (memory) {
+          try {
+            const r = all ? await memory.clearList() : await memory.remove(asked);
+            if (r?.ok) {
+              if (all) for (const i of before) gone.add(i.name.toLowerCase());
+              else for (const n of r.removed) gone.add(n.toLowerCase());
+            } else memoryFailed = true;
+          } catch { memoryFailed = true; }
+        }
+        const stillMissing = lastMissing.filter(i => !all && !asked.some(a => matchPantry([i.name], a).length > 0));
+        for (const i of lastMissing) if (!stillMissing.includes(i)) gone.add(i.name.toLowerCase());
+        lastMissing = stillMissing;
+        for (const g of gone) qty.delete(g);
+        if (gone.size === 0 && !honest) return fail(memoryFailed ? 'memory_unavailable' : 'not_on_list');
+        const list = await listNow();
+        const shown = listResult(list);
+        showList(list, call);
+        return { ok: true, removed: [...gone].slice(0, 5).map(x => x.slice(0, 50)), ...shown, ...(honest ? { say: KROGER_NO_REMOVE } : {}) };
+      }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    set_quantity: llm.tool({
+      description: 'Change how much of one item is on the shopping list, for example "make it two loaves". Pass the item name and the new quantity as a few words.',
+      parameters: z.object({ name: z.string().trim().min(1).max(80), quantity: z.string().trim().min(1).max(40) }),
+      execute: guard(async (call, args = {}) => {
+        const name = typeof args.name === 'string' ? args.name.trim() : '';
+        const quantity = clean(args.quantity, 40);
+        if (!name || name.length > 80 || !quantity) return fail('bad_item');
+        const before = await listNow();
+        const hit = matchPantry(before.map(i => i.name), name)[0];
+        if (!hit) return fail('not_on_list');
+        if (call.timedOut) return fail('timeout');
+        qty.set(hit.toLowerCase(), quantity);
+        const list = await listNow();
+        const shown = listResult(list);
+        showList(list, call);
+        return { ok: true, name: hit.slice(0, 50), quantity: quantity.slice(0, 40), ...shown };
+      }, { timeoutMs, limit: LIST_LIMIT }),
+    }),
+    text_list: llm.tool({
+      description: 'Text the caller their shopping list (the items and quantities) when they ask for it, for example "text me the ingredients". It sends one text and never includes health numbers.',
+      execute: guard(async call => {
+        if (!phoneOk) return fail('no_phone');
+        let items = await listNow();
+        let title = 'Shopping list from your AI renal dietitian:';
+        if (items.length === 0 && lastDish && lastDish.items.length > 0) {
+          items = lastDish.items;
+          title = `Ingredients for ${lastDish.name} from your AI renal dietitian:`;
+        }
+        if (items.length === 0) return fail('nothing_to_text');
+        const lines = items.slice(0, 20).map(i => `- ${clean(i.name, 60)} (${clean(i.quantity, 30) || '1'})`);
+        let text = [title, ...lines, LIST_CLOSING].join('\n');
+        if (text.length > 1500) text = [title, ...lines.slice(0, 10), LIST_CLOSING].join('\n');
+        if (sentLists.has(text)) return fail('list_already_sent');
+        // Marked before sending: a send that times out may still arrive, and a repeat would duplicate it.
+        sentLists.add(text);
+        let r;
+        try { r = await actions.sendText({ phone, text }); }
+        catch { sentLists.delete(text); return fail('list_text_failed'); }
+        if (r?.ok) return { ok: true, sent: true, count: Math.min(items.length, 20) };
+        if (typeof r?.error === 'string' && /outcome is unknown/i.test(r.error)) return fail('list_text_unconfirmed');
+        sentLists.delete(text);
+        return fail('list_text_failed');
+      }, { timeoutMs, onTimeout: () => fail('list_text_unconfirmed') }),
+    }),
     shopping_list: llm.tool({
-      description: "What is on the caller's shopping list, kept between calls: still needed, approved and rejected items.",
-      execute: guard(async () => {
+      description: "What is on the caller's shopping list, kept between calls: still needed, approved and rejected items. It also shows the list on the video as not in the Kroger cart yet.",
+      execute: guard(async call => {
         if (!memory) return fail('memory_unavailable');
         const r = await memory.load();
         if (!r?.ok) return fail('memory_unavailable');
         const part = (list, n) => ({ names: list.slice(0, n).map(x => x.slice(0, 40)), more: list.length - n });
         const { needed, approved, rejected } = r.state;
         const a = part(needed, 8), b = part(approved, 5), c = part(rejected, 3);
+        const list = needed.map(cut).filter(Boolean).map(name => ({ name, quantity: quantityOf(name) }));
+        if (list.length > 0) { listShownSig = sig(list); showList(list, call); }
         return {
           ok: true,
           needed: a.names, ...(a.more > 0 ? { neededMore: a.more } : {}),
@@ -892,7 +1137,7 @@ export function buildTools({
       }, { timeoutMs, onTimeout: () => fail('kroger_text_unconfirmed') }),
     }),
     start_setup: llm.tool({
-      description: 'Start (or restart) setup when the caller says "update my setup" or asks to change their limits or details. Setup tools only work after this.',
+      description: 'Only when the caller explicitly asks to change their setup, limits, voice or preferences (for example "update my setup"). Never for a food, a dish, ingredients, a list or a cart. Setup tools only work after this.',
       execute: guard(async call => {
         setupActive = true;
         pending = null;

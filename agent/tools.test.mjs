@@ -51,7 +51,7 @@ describe('spokenVerdict', () => {
 describe('buildTools shape', () => {
   it('has the eight tools, anonymous', () => {
     const t = build();
-    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'shopping_list', 'mark_item', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'text_recipe', 'kroger_status', 'text_kroger_sign_in', 'start_setup', 'save_profile_basics', 'propose_limits', 'confirm_limits', 'set_avoid_foods', 'set_preferences', 'finish_onboarding']);
+    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'dish_ingredients', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'remove_from_list', 'set_quantity', 'text_list', 'shopping_list', 'mark_item', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'text_recipe', 'kroger_status', 'text_kroger_sign_in', 'start_setup', 'save_profile_basics', 'propose_limits', 'confirm_limits', 'set_avoid_foods', 'set_preferences', 'finish_onboarding']);
     for (const tool of Object.values(t)) assert.ok(!Object.hasOwn(tool, 'name'));
   });
 });
@@ -267,9 +267,14 @@ describe('cart tools', () => {
     const t = build({ actions: mod });
     await t.look_at_camera.execute({});
     await t.suggest_meal.execute({});
+    // The caller has not heard this list yet: nothing starts until it has been read back.
+    const first = await t.start_cart.execute({ items: [] });
+    assert.equal(first.error, 'confirm_list');
+    assert.deepEqual(first.items, ['unsalted chicken broth']);
+    assert.equal(calls.length, 0);
     const r = await t.start_cart.execute({ items: [] });
     assert.deepEqual(calls[0].items, [{ name: 'unsalted chicken broth', quantity: '1 carton' }]);
-    assert.deepEqual(r, { ok: true, started: true, items: ['unsalted chicken broth'] });
+    assert.deepEqual(r, { ok: true, started: true, items: ['unsalted chicken broth'], say: "I'm adding these to your Kroger cart now." });
   });
   it('start_cart trims and caps explicit items', async () => {
     const { mod, calls } = rec(actions, 'startCart');
@@ -1403,6 +1408,7 @@ describe('quick 261114-kvi: meal ideas from scratch', () => {
     const { mod, calls } = rec(actions, 'startCart');
     const t = build({ renal: renalMod, actions: mod });
     await t.suggest_meal.execute({ from_scratch: true });
+    assert.equal((await t.start_cart.execute({ items: [] })).error, 'confirm_list');
     await t.start_cart.execute({ items: [] });
     assert.deepEqual(calls[0].items, THREE);
   });
@@ -1468,5 +1474,224 @@ describe('quick 261114-kvi: meal ideas from scratch', () => {
     const r = await build({ renal: renalMod }).suggest_meal.execute({ from_scratch: true });
     assert.ok(JSON.stringify(r).length <= 900);
     assert.ok(Array.isArray(r.meals));
+  });
+});
+
+// ---- quick 261114-oyc: dish -> list -> preview -> remove -> text -> cart ----
+describe('quick 261114-oyc: dish to cart', async () => {
+  const { createMemory } = await import('./memory.mjs');
+  let n = 0;
+  const stateDir = () => join(dir, `oyc-${n++}`);
+  const flow = (over = {}) => {
+    const previews = [];
+    const starts = [];
+    const texts = [];
+    const acts = {
+      ...actions,
+      previewCart: async a => { previews.push(a.items); return { ok: true, shown: a.items.length > 0 }; },
+      startCart: async a => { starts.push(a.items); return { ok: true }; },
+      sendText: async a => { texts.push(a); return { ok: true }; },
+    };
+    const t = build({ memory: createMemory({ patientId: 'demo', dir: stateDir() }), actions: acts, phone: PHONE, ...over });
+    return { t, previews, starts, texts };
+  };
+
+  it('dish_ingredients returns names, quantities, verdict words and swaps with no digits in say', async () => {
+    const shown = [];
+    const { t } = flow({ onDisplay: d => shown.push(d) });
+    const r = await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.ingredients.map(i => i.name), ['white bread', 'ham', 'lettuce', 'mayonnaise']);
+    assert.equal(r.ingredients[1].verdict, 'avoid');
+    assert.equal(r.ingredients[1].swap, 'fresh unsalted chicken');
+    assert.equal(r.ingredients[0].quantity, '2 slices');
+    assert.ok(!/\d/.test(r.say), r.say);
+    assert.match(r.say, /ham is a no for your limits; fresh unsalted chicken is a good swap/);
+    assert.match(r.say, /couldn't check mayonnaise/);
+    assert.match(r.ask, /shall I put these on your list/);
+    assert.ok(JSON.stringify(r).length <= 900);
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].items[0].verdict, 'avoid');
+  });
+
+  it('dish_ingredients failures: empty, limits needed, not ok', async () => {
+    const empty = { ...renal, dishIngredients: async () => ({ ok: true, dish: 'x', source: 'none', ingredients: [] }) };
+    assert.equal((await build({ renal: empty }).dish_ingredients.execute({ dish: 'zzz' })).error, 'dish_unknown');
+    const needed = { ...renal, getProfile: async () => ({ ok: false, limitsNeeded: true }) };
+    assert.equal((await build({ renal: needed }).dish_ingredients.execute({ dish: 'ham sandwich' })).error, 'limits_needed');
+    const broken = { ...renal, dishIngredients: async () => ({ ok: false, error: 'SECRET123' }) };
+    const r = await build({ renal: broken }).dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal(r.error, 'check_failed');
+    assert.ok(!JSON.stringify(r).includes('SECRET123'));
+  });
+
+  it('eight long-named ingredients fit in 900 characters and never drop an avoid row', async () => {
+    const rows = Array.from({ length: 8 }, (_, i) => ({
+      name: `${'w'.repeat(55)}${i}`, quantity: 'q'.repeat(38), verdict: i % 3 === 0 ? 'avoid' : i % 3 === 1 ? 'limit' : 'unknown',
+      swap: i % 3 === 0 ? 's'.repeat(58) : null, nutrients: null, portion: null, source: 'none', checked: false,
+    }));
+    const big = { ...renal, dishIngredients: async () => ({ ok: true, dish: 'd'.repeat(70), source: 'model', ingredients: rows }) };
+    const r = await build({ renal: big }).dish_ingredients.execute({ dish: 'big' });
+    assert.equal(r.ok, true);
+    assert.ok(JSON.stringify(r).length <= 900, String(JSON.stringify(r).length));
+    assert.equal(r.ingredients.filter(i => i.verdict === 'avoid').length, 3);
+  });
+
+  it('an avoid ingredient is held until the caller keeps it after the warning', async () => {
+    const { t, previews } = flow();
+    await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    const first = await t.add_to_shopping_list.execute({ items: ['white bread', 'ham', 'lettuce'] });
+    assert.deepEqual(first.held, ['ham']);
+    assert.match(first.say, /^I left ham off your list because it's not a good fit for your limits\./);
+    assert.deepEqual(first.list, ['white bread', 'lettuce']);
+    assert.deepEqual(previews.at(-1), [{ name: 'white bread', quantity: '2 slices' }, { name: 'lettuce', quantity: '1 leaf' }]);
+    // keep_after_warning on a never-held name does not bypass the hold
+    const { t: t2 } = flow();
+    await t2.dish_ingredients.execute({ dish: 'ham sandwich' });
+    const bypass = await t2.add_to_shopping_list.execute({ items: ['ham'], keep_after_warning: true });
+    assert.deepEqual(bypass.held, ['ham']);
+    // kept after hearing the warning
+    const kept = await t.add_to_shopping_list.execute({ items: ['ham'], keep_after_warning: true });
+    assert.equal(kept.held, undefined);
+    assert.ok(kept.list.includes('ham'));
+  });
+
+  it('remove, add and set_quantity re-show the list; all clears it', async () => {
+    const { t, previews } = flow();
+    await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    await t.add_to_shopping_list.execute({ items: ['white bread', 'lettuce', 'mayonnaise'] });
+    const gone = await t.remove_from_list.execute({ items: ['mayo'] });
+    assert.equal(gone.ok, true);
+    assert.deepEqual(gone.removed, ['mayonnaise']);
+    assert.deepEqual(previews.at(-1).map(i => i.name), ['white bread', 'lettuce']);
+    assert.equal((await t.remove_from_list.execute({ items: ['caviar'] })).error, 'not_on_list');
+    const q = await t.set_quantity.execute({ name: 'white bread', quantity: '2 loaves' });
+    assert.equal(q.ok, true);
+    assert.deepEqual(previews.at(-1)[0], { name: 'white bread', quantity: '2 loaves' });
+    assert.equal((await t.set_quantity.execute({ name: 'caviar', quantity: '1' })).error, 'not_on_list');
+    const all = await t.remove_from_list.execute({ all: true });
+    assert.equal(all.ok, true);
+    assert.deepEqual(previews.at(-1), []);
+  });
+
+  it('text_list sends one text with names, quantities and the closing line, once per content', async () => {
+    const { t, texts } = flow();
+    await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    await t.add_to_shopping_list.execute({ items: ['white bread', 'lettuce'] });
+    const r = await t.text_list.execute({});
+    assert.equal(r.ok, true);
+    assert.equal(texts.length, 1);
+    assert.equal(texts[0].phone, PHONE);
+    assert.equal(texts[0].text, `Shopping list from your AI renal dietitian:\n- white bread (2 slices)\n- lettuce (1 leaf)\n${tools.LIST_CLOSING}`);
+    assert.ok(!/sodium|milligram|\d{3}/.test(texts[0].text));
+    assert.equal((await t.text_list.execute({})).error, 'list_already_sent');
+    assert.equal(texts.length, 1);
+    assert.equal((await flow({ phone: '' }).t.text_list.execute({})).error, 'no_phone');
+    assert.equal((await flow().t.text_list.execute({})).error, 'nothing_to_text');
+  });
+
+  it('text_list falls back to the dish ingredients when the list is empty', async () => {
+    const { t, texts } = flow();
+    await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal((await t.text_list.execute({})).ok, true);
+    assert.ok(texts[0].text.startsWith('Ingredients for ham sandwich from your AI renal dietitian:'));
+  });
+
+  it('text_list unconfirmed and failed sends', async () => {
+    const mk = impl => flow({ actions: { ...actions, previewCart: async () => ({ ok: true }), sendText: impl } });
+    const a = mk(async () => ({ ok: false, error: 'outcome is unknown' }));
+    await a.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal((await a.t.text_list.execute({})).error, 'list_text_unconfirmed');
+    const b = mk(async () => { throw new Error('boom'); });
+    await b.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal((await b.t.text_list.execute({})).error, 'list_text_failed');
+  });
+
+  it('start_cart with an empty list: nothing_to_buy, then exactly the list the caller was shown', async () => {
+    const { t, starts } = flow();
+    assert.equal((await t.start_cart.execute({ items: [] })).error, 'nothing_to_buy');
+    await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    await t.add_to_shopping_list.execute({ items: ['white bread', 'lettuce'] });
+    await t.set_quantity.execute({ name: 'lettuce', quantity: '2 heads' });
+    const go = await t.start_cart.execute({ items: [] });
+    assert.deepEqual(go, { ok: true, started: true, items: ['white bread', 'lettuce'], say: "I'm adding these to your Kroger cart now." });
+    assert.deepEqual(starts[0], [{ name: 'white bread', quantity: '2 slices' }, { name: 'lettuce', quantity: '2 heads' }]);
+    // nothing new: not sent twice
+    assert.equal((await t.start_cart.execute({ items: [] })).error, 'already_in_cart');
+    assert.equal(starts.length, 1);
+  });
+
+  it('a list changed behind the model back (another add elsewhere) must be read back first', async () => {
+    const d = stateDir();
+    const mem = createMemory({ patientId: 'demo', dir: d });
+    const starts = [];
+    const t = build({ memory: mem, actions: { ...actions, previewCart: async () => ({ ok: true }), startCart: async a => { starts.push(a.items); return { ok: true }; } } });
+    await t.add_to_shopping_list.execute({ items: ['white rice'] });
+    await mem.add(['surprise item']);
+    const r = await t.start_cart.execute({ items: [] });
+    assert.equal(r.error, 'confirm_list');
+    assert.equal(r.say, "Before I add anything to your Kroger cart, here is what's on your list. Shall I add these?");
+    assert.deepEqual(r.items, ['white rice', 'surprise item']);
+    assert.equal(starts.length, 0);
+    assert.equal((await t.start_cart.execute({ items: [] })).ok, true);
+    assert.equal(starts.length, 1);
+  });
+
+  it('a leftover list from an earlier call is read back before it is bought', async () => {
+    const d = stateDir();
+    await createMemory({ patientId: 'demo', dir: d }).add(['old leftover']);
+    const starts = [];
+    const t = build({ memory: createMemory({ patientId: 'demo', dir: d }), actions: { ...actions, startCart: async a => { starts.push(a.items); return { ok: true }; } } });
+    const r = await t.start_cart.execute({ items: [] });
+    assert.equal(r.error, 'confirm_list');
+    assert.deepEqual(r.items, ['old leftover']);
+    assert.equal(starts.length, 0);
+  });
+
+  it('removing something already sent to Kroger always gets the honest sentence', async () => {
+    const { t, starts } = flow();
+    await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    await t.add_to_shopping_list.execute({ items: ['white bread', 'lettuce'] });
+    await t.start_cart.execute({ items: [] });
+    assert.equal(starts.length, 1);
+    const r = await t.remove_from_list.execute({ items: ['lettuce'] });
+    assert.equal(r.ok, true);
+    assert.equal(r.say, tools.KROGER_NO_REMOVE);
+    assert.ok(!r.list.includes('lettuce'));
+    assert.ok(!/removed from your (Kroger )?cart/i.test(JSON.stringify(r)));
+    // from_kroger_cart true says it even when the name is not on the list
+    const again = await t.remove_from_list.execute({ items: ['lettuce'], from_kroger_cart: true });
+    assert.equal(again.ok, true);
+    assert.equal(again.say, tools.KROGER_NO_REMOVE);
+  });
+
+  it('a failing or missing previewCart never changes a result', async () => {
+    const throwing = flow({ actions: { ...actions, previewCart: () => { throw new Error('boom'); } } });
+    await throwing.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal((await throwing.t.add_to_shopping_list.execute({ items: ['lettuce'] })).ok, true);
+    const none = flow({ actions: { ...actions, previewCart: undefined } });
+    assert.equal((await none.t.add_to_shopping_list.execute({ items: ['lettuce'] })).ok, true);
+  });
+
+  it('the whole flow logs no item names and no limit numbers', async () => {
+    const lines = [];
+    const spies = ['log', 'error', 'warn', 'info'].map(k => { const o = console[k]; console[k] = (...a) => lines.push(a.join(' ')); return [k, o]; });
+    try {
+      const { t } = flow();
+      await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      await t.add_to_shopping_list.execute({ items: ['white bread', 'ham'] });
+      await t.remove_from_list.execute({ items: ['bread'] });
+      await t.text_list.execute({});
+      await t.start_cart.execute({ items: [] });
+      await t.start_cart.execute({ items: [] });
+    } finally { for (const [k, o] of spies) console[k] = o; }
+    const all = lines.join('\n');
+    assert.ok(!/bread|ham|lettuce|2000|1000/.test(all), all);
+  });
+
+  it('start_setup is described as explicit-request only', () => {
+    const d = build().start_setup.description;
+    assert.match(d, /explicitly asks to change their setup, limits, voice or preferences/);
+    assert.match(d, /Never for a food, a dish, ingredients, a list or a cart/);
   });
 });
