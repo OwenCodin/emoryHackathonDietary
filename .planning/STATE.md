@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-leq: new-patient setup on the first call
+Last activity: 2026-11-14 - Completed quick task 261114-m9n: Kroger sign-in by texted link
 
 Progress: [██████████] 100%
 
@@ -108,6 +108,7 @@ None yet.
 | 261114-lep | Safe area for the call video: all content (brand screen, verdict cards, voice wave, drawn face, Kroger cart card, browser cart frame) drawn inside the centre 80% of the frame, VIDEO_SAFE_SCALE to tune it (505/505 pass). Rendered pictures checked; not yet seen on a phone | 2026-11-14 | a566c56 | [261114-lep-safe-area-so-the-call-video-is-not-cut-o](./quick/261114-lep-safe-area-so-the-call-video-is-not-cut-o/) |
 | 261114-leq | New-patient setup on the first call: saved profile store in renal (limits as read out by the caller, validated, never the built-in demo limits), seven setup tools with a two-step limit confirmation enforced in code, agent preferences (voice menu, reply style, language, name) applied at the start of the next call, reset and skip switches, shared contract updated in all three READMEs (557/557 pass). Simulated run about 164 s; not yet run on a call | 2026-11-14 | 1e0c8a3 | [261114-leq-new-patient-onboarding-call-with-agent-p](./quick/261114-leq-new-patient-onboarding-call-with-agent-p/) |
 | fast | Kroger product matching accepts joined or split word pairs (SportWater); text_cart_link and cart_status say nothing_added when the cart finished empty instead of not ready (559/559 pass) | 2026-11-14 | dc352aa | - |
+| 261114-m9n | Kroger sign-in by texted link: kroger-relay (short link, callback page, one-time claim; holds only the short-lived code), relay sign-in in actions (startKrogerSignIn, getKrogerStatus), agent tools kroger_status and text_kroger_sign_in, a Kroger step in setup, shared contract updated in all three READMEs (615/615 pass). Local end-to-end test passes; the deployed relay and a real sign-in are not yet verified | 2026-11-14 | 4bf20bb | [261114-m9n-kroger-sign-in-by-texted-link-during-onb](./quick/261114-m9n-kroger-sign-in-by-texted-link-during-onb/) |
 
 ## Session Continuity
 
