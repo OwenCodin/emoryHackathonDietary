@@ -32,9 +32,9 @@
 
 - [x] **TOOL-01**: Patient can show a label, plate, fridge or shelf and hear a verdict for what is in view (`look_at_camera`: frame, `describeImage`, `checkFood`)
 - [x] **TOOL-02**: Patient can name a food without showing it and hear a verdict (`check_food`)
-- [ ] **TOOL-03**: Patient can ask what to cook from the foods last seen and hear a meal that fits their limits (`suggest_meal`)
-- [ ] **TOOL-04**: Patient can say they ate something and ask how much of each limit is left today (`log_meal`, `todays_totals`)
-- [ ] **TOOL-05**: Patient can ask the agent to shop for missing items, hear progress, and get the cart link by text (`start_cart`, `cart_status`, `text_cart_link`)
+- [x] **TOOL-03**: Patient can ask what to cook from the foods last seen and hear a meal that fits their limits (`suggest_meal`)
+- [x] **TOOL-04**: Patient can say they ate something and ask how much of each limit is left today (`log_meal`, `todays_totals`)
+- [x] **TOOL-05**: Patient can ask the agent to shop for missing items, hear progress, and get the cart link by text (`start_cart`, `cart_status`, `text_cart_link`)
 - [x] **TOOL-06**: When a renal or actions function returns `ok: false`, the patient hears a plain explanation and the call continues
 
 ### Video out
@@ -99,9 +99,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CAM-03 | Phase 3 | Complete |
 | TOOL-01 | Phase 3 | Complete |
 | TOOL-02 | Phase 3 | Complete |
-| TOOL-03 | Phase 3 | Pending |
-| TOOL-04 | Phase 3 | Pending |
-| TOOL-05 | Phase 3 | Pending |
+| TOOL-03 | Phase 3 | Complete |
+| TOOL-04 | Phase 3 | Complete |
+| TOOL-05 | Phase 3 | Complete |
 | TOOL-06 | Phase 3 | Complete |
 | AISL-04 | Phase 3 | Complete |
 | VID-01 | Phase 4 | Pending |
