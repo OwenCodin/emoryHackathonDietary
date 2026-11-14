@@ -2,6 +2,11 @@ import { checkFood } from './check.mjs';
 import { errorResult, normalizeFoodName, readData } from './data.mjs';
 import { generateJsonWithFallback } from './gemini.mjs';
 
+// Usual rule of thumb: one third of the daily limit per meal.
+export const MEAL_SHARE_OF_DAILY_LIMIT = 1 / 3;
+export const FROM_SCRATCH_MAX_INGREDIENTS = 6;
+const TOTAL_KEYS = ['sodiumMg', 'potassiumMg', 'phosphorusMg'];
+
 const FALLBACK_MEALS = [
   {
     title: 'Herbed chicken and white rice',
@@ -114,7 +119,33 @@ function parseMeals(text) {
   return Array.isArray(parsed?.meals) ? parsed.meals : null;
 }
 
-async function proposeMeals(foods, profile, count, preferredFoods, injected) {
+function kitchenPrompt(foods, profile, count, preferredFoods) {
+  return [
+    `Suggest up to ${count} real, recognizable dishes (for example, chicken and rice soup or an egg-white vegetable omelet), not generic ingredient combinations.`,
+    `Foods actually seen in the kitchen: ${foods.join(', ')}.`,
+    `Prefer ingredients from this built-in renal food list: ${preferredFoods.join(', ')}.`,
+    'Use the seen foods as the base of each complete meal. You may request up to three missing food ingredients to make each dish a proper, recognizable meal.',
+    'Water, cooking oil, pepper, and ordinary herbs and spices are always available: never list them as missing. Do not list those pantry staples in missing.',
+    'Use plain ingredient names in uses and missing. Put each missing item in {name, quantity} form. Do not invent unavailable foods as if they were seen.',
+    `Patient daily limits are sodium ${profile.limits.sodiumMg} mg, potassium ${profile.limits.potassiumMg} mg, phosphorus ${profile.limits.phosphorusMg} mg. Avoid: ${(profile.avoid ?? []).join(', ')}.`,
+    'Prefer low-sodium preparation without salt substitutes. Return JSON only matching the schema.',
+  ].join('\n');
+}
+
+function fromScratchPrompt(profile, count, lines) {
+  const cap = (key) => Math.floor(profile.limits[key] * MEAL_SHARE_OF_DAILY_LIMIT);
+  return [
+    `Suggest up to ${count} real, recognizable dishes the patient can cook from scratch after shopping (for example, herbed chicken with rice and cabbage, or an egg-white vegetable omelet), not generic ingredient combinations.`,
+    `Use only foods from this built-in renal food list, each shown with one typical portion and its sodium, potassium and phosphorus: ${lines.join('; ')}.`,
+    'Besides those foods, only water, cooking oil, black pepper and ordinary fresh or dried herbs may be used. Never use salt or salt substitutes, and any other ingredient makes the dish unusable.',
+    `Plan one serving using about one typical portion of each listed food, with at most ${FROM_SCRATCH_MAX_INGREDIENTS} listed foods per dish.`,
+    `For one serving the whole meal must stay at or under sodium ${cap('sodiumMg')} mg, potassium ${cap('potassiumMg')} mg and phosphorus ${cap('phosphorusMg')} mg, which is one third of the patient's daily limits.`,
+    "Put every listed food the dish needs in missing as {name, quantity} using the list's exact name. Put only water, oil, pepper or herbs in uses.",
+    `Avoid: ${(profile.avoid ?? []).join(', ')}. Prefer low-sodium preparation without salt substitutes. Return JSON only matching the schema.`,
+  ].join('\n');
+}
+
+async function proposeMeals(contents, injected) {
   if (!injected && !process.env.GOOGLE_API_KEY) return FALLBACK_MEALS;
   try {
     let ai = injected;
@@ -130,16 +161,7 @@ async function proposeMeals(foods, profile, count, preferredFoods, injected) {
       ],
       buildRequest: (model, signal) => ({
         model,
-        contents: [
-          `Suggest up to ${count} real, recognizable dishes (for example, chicken and rice soup or an egg-white vegetable omelet), not generic ingredient combinations.`,
-          `Foods actually seen in the kitchen: ${foods.join(', ')}.`,
-          `Prefer ingredients from this built-in renal food list: ${preferredFoods.join(', ')}.`,
-          'Use the seen foods as the base of each complete meal. You may request up to three missing food ingredients to make each dish a proper, recognizable meal.',
-          'Water, cooking oil, pepper, and ordinary herbs and spices are always available: never list them as missing. Do not list those pantry staples in missing.',
-          'Use plain ingredient names in uses and missing. Put each missing item in {name, quantity} form. Do not invent unavailable foods as if they were seen.',
-          `Patient daily limits are sodium ${profile.limits.sodiumMg} mg, potassium ${profile.limits.potassiumMg} mg, phosphorus ${profile.limits.phosphorusMg} mg. Avoid: ${(profile.avoid ?? []).join(', ')}.`,
-          'Prefer low-sodium preparation without salt substitutes. Return JSON only matching the schema.',
-        ].join('\n'),
+        contents,
         config: { responseMimeType: 'application/json', responseSchema: MEAL_SCHEMA, abortSignal: signal },
       }),
       parse: parseMeals,
@@ -163,19 +185,25 @@ function validMeal(meal) {
     typeof meal.why === 'string';
 }
 
-export async function suggestMeals(input = {}, { ai } = {}) {
+export async function suggestMeals(input = {}, { ai, check = checkFood } = {}) {
   const foods = input?.foods ?? [];
   const profile = input?.profile;
   const count = input?.count ?? 2;
+  const fromScratch = input?.fromScratch ?? false;
+  if (typeof fromScratch !== 'boolean') return { ok: false, error: 'fromScratch must be a boolean' };
   if (!Array.isArray(foods) || !foods.every((food) => typeof food === 'string')) {
     return { ok: false, error: 'foods must be an array of names' };
   }
   if (!profile?.limits || !Array.isArray(profile.avoid)) return { ok: false, error: 'a valid patient profile is required' };
+  if (fromScratch && !TOTAL_KEYS.every((key) => Number.isFinite(profile.limits[key]) && profile.limits[key] > 0)) {
+    return { ok: false, error: 'a valid patient profile is required' };
+  }
   if (!Number.isInteger(count) || count < 1) return { ok: false, error: 'count must be a positive integer' };
 
   try {
     const requestedCount = Math.min(count, 5);
     const catalog = await readData('foods.json');
+    if (fromScratch) return await suggestFromScratch({ profile, requestedCount, catalog, check, ai });
     const available = new Set(foods.map((food) => canonicalFoodName(food, catalog)));
     if (available.size === 0) {
       return {
@@ -186,7 +214,7 @@ export async function suggestMeals(input = {}, { ai } = {}) {
     }
 
     const preferredFoods = [...new Set(Object.values(catalog).map((food) => food.name))];
-    const proposals = (await proposeMeals(foods, profile, requestedCount, preferredFoods, ai))
+    const proposals = (await proposeMeals(kitchenPrompt(foods, profile, requestedCount, preferredFoods), ai))
       .filter(validMeal)
       .slice(0, requestedCount);
 
@@ -212,7 +240,7 @@ export async function suggestMeals(input = {}, { ai } = {}) {
       const ingredientsToCheck = [...new Set([...usedNames, ...missing.map((item) =>
         canonicalFoodName(item.name, catalog))])];
       const results = await Promise.all(ingredientsToCheck.map((name) =>
-        checkFood({ food: { name }, profile })));
+        check({ food: { name }, profile })));
       if (results.some((result) =>
         !result.ok || result.verdict === 'avoid' || result.verdict === 'unknown')) return null;
 
@@ -236,4 +264,57 @@ export async function suggestMeals(input = {}, { ai } = {}) {
   } catch (error) {
     return errorResult(error, 'could not suggest meals');
   }
+}
+
+async function suggestFromScratch({ profile, requestedCount, catalog, check, ai }) {
+  const builtIn = new Set(Object.values(catalog).map((food) => normalizeFoodName(food.name)));
+  const names = [...new Set(Object.values(catalog).map((food) => food.name))];
+  const realNumbers = (result) => result?.ok === true &&
+    (result.verdict === 'ok' || result.verdict === 'limit') &&
+    result.nutrients && typeof result.nutrients === 'object' &&
+    TOTAL_KEYS.every((key) => Number.isFinite(result.nutrients[key]));
+  const judged = await Promise.all(names.map(async (name) => ({ name, result: await check({ food: { name }, profile }) })));
+  const lines = judged.filter(({ result }) => realNumbers(result)).map(({ name, result }) =>
+    `${name}: ${result.portion}, sodium ${result.nutrients.sodiumMg} mg, potassium ${result.nutrients.potassiumMg} mg, phosphorus ${result.nutrients.phosphorusMg} mg`);
+
+  const proposalCount = Math.min(requestedCount + 2, 5);
+  const proposals = (await proposeMeals(fromScratchPrompt(profile, proposalCount, lines), ai))
+    .filter(validMeal)
+    .slice(0, proposalCount);
+
+  const checked = await Promise.all(proposals.map(async (meal) => {
+    const ingredients = new Map();
+    for (const item of meal.missing) {
+      if (isPantryStaple(item.name)) continue;
+      const key = canonicalFoodName(item.name, catalog);
+      if (!ingredients.has(key)) ingredients.set(key, { name: item.name.trim(), quantity: item.quantity.trim() });
+    }
+    for (const name of meal.uses) {
+      if (isPantryStaple(name)) continue;
+      const key = canonicalFoodName(name, catalog);
+      if (!ingredients.has(key)) ingredients.set(key, { name: key, quantity: '' });
+    }
+    const keys = [...ingredients.keys()];
+    if (keys.length === 0 || keys.length > FROM_SCRATCH_MAX_INGREDIENTS) return null;
+    // Off-list foods are unverifiable: reject before any lookup.
+    if (keys.some((key) => !builtIn.has(key))) return null;
+    const results = await Promise.all(keys.map((key) => check({ food: { name: key }, profile })));
+    if (!results.every(realNumbers)) return null;
+    const totals = Object.fromEntries(TOTAL_KEYS.map((key) =>
+      [key, results.reduce((sum, result) => sum + result.nutrients[key], 0)]));
+    if (TOTAL_KEYS.some((key) => totals[key] > profile.limits[key] * MEAL_SHARE_OF_DAILY_LIMIT)) return null;
+    const missing = keys.map((key, i) => {
+      const item = ingredients.get(key);
+      return {
+        name: item.name || key,
+        quantity: item.quantity || String(results[i].portion ?? '1 portion').slice(0, 60),
+      };
+    });
+    return { ...meal, uses: meal.uses.filter(isPantryStaple), missing, totals };
+  }));
+  const meals = checked.filter(Boolean).slice(0, requestedCount);
+  if (meals.length === 0) {
+    return { ok: true, meals: [], message: "I couldn't put together a meal I could check fully against your limits." };
+  }
+  return { ok: true, meals };
 }

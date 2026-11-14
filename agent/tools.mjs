@@ -89,6 +89,7 @@ const FAILS = {
   bad_food: 'Tell me which food you mean, in a few words.',
   bad_amount: "I didn't catch the amount. Tell me roughly how much it is, or skip the amount.",
   nothing_seen: 'Show me your fridge or the food you have first, and then I can suggest a meal.',
+  no_safe_meal: "I couldn't put together a meal I'm sure fits your limits right now. Tell me a food you have or want, and I'll check it for you.",
   not_enough_food: "I couldn't find a complete meal from what I've seen so far. Show me your cupboards or pantry and I'll try again.",
   nothing_to_log: 'Tell me or show me what you ate first, and then I can log it.',
   nothing_to_buy: "I don't have anything on a shopping list yet. Tell me what you need, or ask me for a meal idea first.",
@@ -454,18 +455,25 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     suggest_meal: llm.tool({
-      description: 'Suggest meals to cook from everything the caller showed from their kitchen (fridge, pantry, cupboards), within their limits.',
-      execute: guard(async call => {
-        let foods = await pantryNow();
-        if (foods.length === 0) foods = lastFoods;
-        if (foods.length === 0) return fail('nothing_seen');
+      description: "Suggest meals within the caller's limits. By default it cooks from everything the caller showed from their kitchen (fridge, pantry, cupboards). Set from_scratch true when the caller wants an idea without showing their kitchen, has nothing at home, or says to just suggest something; then every ingredient is a shopping item.",
+      parameters: z.object({ from_scratch: z.boolean().nullish() }),
+      execute: guard(async (call, args = {}) => {
+        const fromScratch = args?.from_scratch === true;
+        let foods = [];
+        if (!fromScratch) {
+          foods = await pantryNow();
+          if (foods.length === 0) foods = lastFoods;
+          if (foods.length === 0) return fail('nothing_seen');
+        }
         const got = await renal.getProfile({ patientId });
         if (!got?.ok) return fail('profile_unavailable');
-        const r = await renal.suggestMeals({ foods, profile: got.profile, count: 2 });
+        const r = fromScratch
+          ? await renal.suggestMeals({ foods: [], profile: got.profile, count: 2, fromScratch: true })
+          : await renal.suggestMeals({ foods, profile: got.profile, count: 2 });
         const meals = Array.isArray(r?.meals) ? r.meals : [];
         if (!r?.ok) return fail('check_failed');
         // Not a failure: the renal module found too little to cook a real, safe meal from.
-        if (meals.length === 0) return fail('not_enough_food');
+        if (meals.length === 0) return fail(fromScratch ? 'no_safe_meal' : 'not_enough_food');
         const seen = new Map();
         for (const m of meals) for (const item of Array.isArray(m?.missing) ? m.missing : []) {
           const key = clean(item?.name, 80).toLowerCase();
@@ -486,11 +494,13 @@ export function buildTools({
         if (memory && !call.timedOut) {
           try { await memory.add([...seen.values()].map(i => i.name)); } catch { /* the list never changes this result */ }
         }
-        return { ok: true, meals: meals.map((m, i) => ({
+        return { ok: true, ...(fromScratch ? { totalsAre: 'per serving, one typical portion of each ingredient' } : {}), meals: meals.map((m, i) => ({
           title: clean(m?.title, 60),
           ...(Number.isFinite(m?.minutes) ? { minutes: m.minutes } : {}),
-          why: clean(m?.why, 90),
-          missing: (Array.isArray(m?.missing) ? m.missing : []).slice(0, 4).map(x => clean(x?.name, 40)).filter(Boolean),
+          // From scratch the result carries the totals and the whole shopping list instead of the reason (the recipe text keeps it).
+          ...(fromScratch ? {} : { why: clean(m?.why, 90) }),
+          ...(three(m?.totals) ? { totals: three(m.totals) } : {}),
+          missing: (Array.isArray(m?.missing) ? m.missing : []).slice(0, 6).map(x => clean(x?.name, fromScratch ? 30 : 40)).filter(Boolean),
           ...(i === 0 ? { steps: (Array.isArray(m?.steps) ? m.steps : []).slice(0, 3).map(s => clean(s, 70)) } : {}),
         })) };
       }, { timeoutMs, limit: MEALS_LIMIT }),

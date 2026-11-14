@@ -146,7 +146,7 @@ Track A imports everything below and exports nothing. B and C do not import each
 | `getProfile({ patientId })` | `{ ok, profile }` |
 | `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
-| `suggestMeals({ foods, profile, count }, { ai }?)` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
+| `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
 | `logFood({ patientId, verdict })` | `{ ok }` |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
 
@@ -305,7 +305,7 @@ The object key in `agent/tools.mjs` is the tool name. Everything a tool returns 
 |---|---|---|
 | `look_at_camera` (optional `place`: `home` or `store`) | Reads the caller's camera, judges each food seen, remembers fridge and shelf foods | `no_camera_picture`, `vision_failed`, `unclear_picture`, `no_food_seen`, `label_unreadable` |
 | `check_food` | Judges a food the caller names | `bad_food`, `bad_amount`, `profile_unavailable`, `check_failed` |
-| `suggest_meal` | Suggests a meal from everything remembered from the kitchen | `nothing_seen`, `profile_unavailable`, `not_enough_food` (too little to cook a real meal; asks to see the cupboards), `check_failed` |
+| `suggest_meal` (optional `from_scratch`) | Suggests a meal from everything remembered from the kitchen; with `from_scratch` true, a meal built only from the built-in food list, with every ingredient on the shopping list and per-serving sodium, potassium and phosphorus totals | `nothing_seen`, `profile_unavailable`, `not_enough_food` (too little to cook a real meal; asks to see the cupboards), `no_safe_meal` (from scratch: no meal could be fully checked within the limits), `check_failed` |
 | `log_meal` | Logs what was eaten | `nothing_to_log`, `tool_failed` |
 | `todays_totals` | Today's totals and what is left | `tool_failed` |
 | `start_cart` | Starts the grocery cart | `nothing_to_buy`, `cart_busy`, `tool_failed`, `cart_unconfirmed` (timeout) |

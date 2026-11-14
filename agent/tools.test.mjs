@@ -1348,3 +1348,114 @@ describe('suggest_meal when the kitchen has too little', () => {
     assert.equal((await t.suggest_meal.execute({})).error, 'check_failed');
   });
 });
+
+describe('quick 261114-kvi: meal ideas from scratch', () => {
+  const M = {
+    title: 'Herbed chicken with rice and cabbage',
+    uses: ['olive oil'],
+    missing: [
+      { name: 'unsalted chicken', quantity: '3 ounces cooked (85 g)' },
+      { name: 'white rice', quantity: '1 cup cooked (158 g)' },
+      { name: 'cabbage', quantity: '1 cup shredded (75 g)' },
+      { name: 'Water', quantity: '1 cup' },
+    ],
+    minutes: 25,
+    steps: ['Cook the rice.', 'Pan-cook the chicken with herbs.', 'Steam the cabbage.'],
+    why: 'Low in sodium.',
+    totals: { sodiumMg: 79, potassiumMg: 370, phosphorusMg: 182 },
+  };
+  const withMeals = meals => {
+    const { mod, calls } = rec(makeFakeRenal(), 'suggestMeals', () => ({ ok: true, meals }));
+    return { renalMod: mod, calls };
+  };
+  const THREE = [
+    { name: 'unsalted chicken', quantity: '3 ounces cooked (85 g)' },
+    { name: 'white rice', quantity: '1 cup cooked (158 g)' },
+    { name: 'cabbage', quantity: '1 cup shredded (75 g)' },
+  ];
+
+  it('S1 from_scratch with nothing seen asks renal for a from-scratch meal', async () => {
+    const { renalMod, calls } = withMeals([M]);
+    const r = await build({ renal: renalMod }).suggest_meal.execute({ from_scratch: true });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].foods, []);
+    assert.equal(calls[0].count, 2);
+    assert.equal(calls[0].fromScratch, true);
+    assert.equal(calls[0].profile.name, 'Sam');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.meals[0].totals, M.totals);
+    for (const n of ['unsalted chicken', 'white rice', 'cabbage']) assert.ok(r.meals[0].missing.includes(n), n);
+    assert.ok(JSON.stringify(r).length <= 900);
+  });
+  it('S2 start_cart after from_scratch buys every ingredient but kitchen basics', async () => {
+    const { renalMod } = withMeals([M]);
+    const { mod, calls } = rec(actions, 'startCart');
+    const t = build({ renal: renalMod, actions: mod });
+    await t.suggest_meal.execute({ from_scratch: true });
+    await t.start_cart.execute({ items: [] });
+    assert.deepEqual(calls[0].items, THREE);
+  });
+  it('S3 text_recipe after from_scratch', async () => {
+    const { renalMod } = withMeals([M]);
+    const { mod, calls } = rec(actions, 'sendText');
+    const t = build({ renal: renalMod, actions: mod, phone: '+15551234567' });
+    await t.suggest_meal.execute({ from_scratch: true });
+    const r = await t.text_recipe.execute({});
+    assert.equal(r.ok, true);
+    assert.ok(calls[0].text.includes(M.title));
+    assert.ok(calls[0].text.includes('olive oil'));
+  });
+  it('S3b text_recipe says nothing from your kitchen when uses is empty', async () => {
+    const { renalMod } = withMeals([{ ...M, uses: [] }]);
+    const { mod, calls } = rec(actions, 'sendText');
+    const t = build({ renal: renalMod, actions: mod, phone: '+15551234567' });
+    await t.suggest_meal.execute({ from_scratch: true });
+    assert.equal((await t.text_recipe.execute({})).ok, true);
+    assert.ok(calls[0].text.includes('nothing from your kitchen'));
+  });
+  it('S4 from_scratch true after a look still sends no foods', async () => {
+    const { renalMod, calls } = withMeals([M]);
+    const t = build({ renal: renalMod });
+    await t.look_at_camera.execute({ place: 'home' });
+    await t.suggest_meal.execute({ from_scratch: true });
+    assert.deepEqual(calls[0].foods, []);
+    assert.equal(calls[0].fromScratch, true);
+  });
+  it('S5 kitchen behaviour is unchanged', async () => {
+    const { renalMod, calls } = withMeals([M]);
+    const t = build({ renal: renalMod });
+    for (const args of [{ from_scratch: false }, {}, { from_scratch: null }]) {
+      assert.equal((await t.suggest_meal.execute(args)).error, 'nothing_seen');
+    }
+    assert.equal(calls.length, 0);
+    const look = build({ renal: renalMod });
+    await look.look_at_camera.execute({});
+    await look.suggest_meal.execute({});
+    assert.equal(Object.hasOwn(calls[0], 'fromScratch'), false);
+    assert.deepEqual(calls[0].foods, ['banana']);
+  });
+  it('S6 an empty from-scratch result is no_safe_meal with a fixed sentence', async () => {
+    const fake = makeFakeRenal();
+    const t = build({ phone: '+15551234567', renal: { ...fake, suggestMeals: async () => ({ ok: true, meals: [], message: 'ignored renal text' }) } });
+    const r = await t.suggest_meal.execute({ from_scratch: true });
+    assert.equal(r.ok, false);
+    assert.equal(r.error, 'no_safe_meal');
+    assert.ok(r.say.length > 0);
+    assert.ok(!JSON.stringify(r).includes('ignored renal text'));
+    assert.equal((await t.text_recipe.execute({})).error, 'no_recipe');
+  });
+  it('S7 bad totals are omitted', async () => {
+    const { renalMod } = withMeals([{ ...M, totals: { sodiumMg: 'lots' } }, { ...M, totals: undefined }]);
+    const r = await build({ renal: renalMod }).suggest_meal.execute({ from_scratch: true });
+    assert.equal(r.ok, true);
+    for (const m of r.meals) assert.equal(Object.hasOwn(m, 'totals'), false);
+  });
+  it('S8 the result stays bounded with long text', async () => {
+    const big = { ...M, title: 'T'.repeat(200), why: 'w'.repeat(400), steps: Array.from({ length: 6 }, () => 's'.repeat(300)),
+      missing: Array.from({ length: 6 }, (_, i) => ({ name: `${i}${'n'.repeat(69)}`, quantity: 'q' })) };
+    const { renalMod } = withMeals([big, big]);
+    const r = await build({ renal: renalMod }).suggest_meal.execute({ from_scratch: true });
+    assert.ok(JSON.stringify(r).length <= 900);
+    assert.ok(Array.isArray(r.meals));
+  });
+});
