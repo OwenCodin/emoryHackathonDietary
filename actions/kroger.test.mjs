@@ -101,6 +101,16 @@ const product = (upc, description, regular, promo) => ({
   upc, description, items: [{ price: { regular, ...(promo === undefined ? {} : { promo }) } }],
 });
 
+test('chooseProduct matches two words the store writes as one, and the reverse', () => {
+  const drinks = [
+    product('1', 'BODYARMOR Zero Sugar Watermelon Strawberry Sports Drink Bottle', 1.59),
+    product('2', 'BODYARMOR SportWater Sports Drink Bottle', 2.29),
+  ];
+  assert.equal(chooseProduct('BODYARMOR SPORT WATER', drinks).upc, '2');
+  assert.equal(chooseProduct('sportwater', [product('3', 'Sport Water Bottle', 1)]).upc, '3');
+  assert.equal(chooseProduct('sport water', [product('4', 'Watermelon Sports Drink', 1)]), null);
+});
+
 test('chooseProduct picks by words, markers, price and order', () => {
   const butter = [product('1', 'Kroger Salted Butter', 3), product('2', 'Kroger Unsalted Butter Sticks', 3.59)];
   assert.deepEqual(chooseProduct('unsalted butter', butter), { upc: '2', description: 'Kroger Unsalted Butter Sticks', unitPrice: 3.59 });

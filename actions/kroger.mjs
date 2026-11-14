@@ -60,6 +60,23 @@ function priceOf(product) {
   return Number.isFinite(regular) && regular > 0 ? regular : null;
 }
 
+// Every wanted word must be in the description. Stores also write two words as one (SportWater) or one as two,
+// so a wanted pair may match one joined description word, and a wanted word may match a joined description pair.
+function coversWords(needed, haveList) {
+  const have = new Set(haveList);
+  const pairs = new Set(haveList.slice(0, -1).map((w, i) => w + haveList[i + 1]));
+  for (let i = 0; i < needed.length; i += 1) {
+    const w = needed[i];
+    if (have.has(w) || pairs.has(w)) continue;
+    const prev = needed[i - 1];
+    if (prev !== undefined && (have.has(prev + w) || have.has(stem(prev + w)))) continue;
+    const next = needed[i + 1];
+    if (next !== undefined && (have.has(w + next) || have.has(stem(w + next)))) { i += 1; continue; }
+    return false;
+  }
+  return true;
+}
+
 export function chooseProduct(itemName, products) {
   if (typeof itemName !== 'string' || !Array.isArray(products)) return null;
   const wantsMarker = new RegExp(MARKERS.source, 'i').test(itemName);
@@ -70,8 +87,8 @@ export function chooseProduct(itemName, products) {
     const description = typeof product?.description === 'string' ? product.description : '';
     const unitPrice = priceOf(product);
     if (!description || typeof product.upc !== 'string' || unitPrice === null) continue;
-    const have = new Set(words(description.replace(MARKERS, ' ')));
-    if (!needed.every((w) => have.has(w))) continue;
+    const haveList = words(description.replace(MARKERS, ' '));
+    if (!coversWords(needed, haveList)) continue;
     const hasMarker = new RegExp(MARKERS.source, 'i').test(description);
     if (wantsMarker && !hasMarker) continue;
     if (!best || (!wantsMarker && hasMarker && !best.hasMarker)) {

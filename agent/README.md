@@ -315,7 +315,7 @@ The object key in `agent/tools.mjs` is the tool name. Everything a tool returns 
 | `todays_totals` | Today's totals and what is left | `limits_needed`, `tool_failed` |
 | `start_cart` | Starts the grocery cart | `nothing_to_buy`, `cart_busy`, `tool_failed`, `cart_unconfirmed` (timeout) |
 | `cart_status` | Reports the cart | `cart_failed`, `tool_failed` |
-| `text_cart_link` | Texts the cart link to the patient phone | `no_phone`, `no_cart_link`, `link_already_sent`, `tool_failed` |
+| `text_cart_link` | Texts the cart link to the patient phone | `no_phone`, `no_cart_link`, `nothing_added` (the cart finished but the store had none of the items), `link_already_sent`, `tool_failed` |
 | `add_to_shopping_list`, `shopping_list`, `mark_item` | The shopping list kept between calls | `bad_items`, `bad_item`, `memory_unavailable` |
 | `pantry_list`, `remove_from_pantry`, `clear_pantry` | What the agent remembers from the kitchen | `bad_items`, `not_in_pantry`, `timeout` |
 | `text_recipe` | Texts one suggested recipe | `no_phone`, `no_recipe`, `which_recipe`, `recipe_already_sent`, `text_failed`, `text_unconfirmed` |

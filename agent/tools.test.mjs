@@ -539,6 +539,17 @@ describe('WR-06 text_cart_link', () => {
     assert.equal(r.error, 'no_cart_link');
     assert.equal(calls.length, 0);
   });
+  it('says nothing was added when the store had none of the items', async () => {
+    const { mod, calls } = rec(status({ cartUrl: null, added: [], missing: ['sport water'], total: 0 }), 'sendText');
+    const t = build({ actions: mod, phone: PHONE });
+    const r = await t.text_cart_link.execute({});
+    assert.equal(r.error, 'nothing_added');
+    assert.ok(r.say.includes('nothing was added'));
+    assert.equal(calls.length, 0);
+    const s = await t.cart_status.execute({});
+    assert.equal(s.ok, true);
+    assert.ok(s.say.includes('nothing was added'));
+  });
   it('rejects a link that is not http or https', async () => {
     for (const cartUrl of ['javascript:alert(1)', 'file:///etc/passwd', 'not a url', '']) {
       const { mod, calls } = rec(status({ cartUrl }), 'sendText');

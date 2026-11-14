@@ -99,6 +99,7 @@ const FAILS = {
   cart_unconfirmed: "I asked for the cart but haven't heard back yet. Let me check how it's going before we try again.",
   cart_failed: "The cart didn't work out. I can try again if you like.",
   no_cart_link: "The cart isn't ready yet, so there's no link to send. I can check on it for you.",
+  nothing_added: "I couldn't find those items at the store, so nothing was added to your cart and there's no link to send. Tell me another name for what you want and I'll try again.",
   link_already_sent: "I've already texted you that link. Please check your messages.",
   no_phone: "I don't have a phone number to text, so I can't send that.",
   no_recipe: "I haven't suggested a meal yet. Ask me for a meal idea first, and then I can text you the recipe.",
@@ -649,8 +650,9 @@ export function buildTools({
         const names = list => (Array.isArray(list) ? list : []).map(x => clean(typeof x === 'object' ? x?.name : x, 50)).filter(Boolean);
         const added = names(s.added);
         const missing = names(s.missing);
+        const nothingAdded = s.state === 'done' && added.length === 0 && missing.length > 0;
         return {
-          ok: true, state: s.state, say: SAY[s.state],
+          ok: true, state: s.state, say: nothingAdded ? FAILS.nothing_added : SAY[s.state],
           ...(clean(s.step, 60) ? { step: clean(s.step, 60) } : {}),
           added: added.slice(0, 5), ...(added.length > 5 ? { addedMore: added.length - 5 } : {}),
           missing: missing.slice(0, 5), ...(missing.length > 5 ? { missingMore: missing.length - 5 } : {}),
@@ -676,6 +678,8 @@ export function buildTools({
           const u = new URL(String(s.cartUrl ?? ''));
           if ((u.protocol === 'https:' || u.protocol === 'http:') && u.href.length <= 500) link = u.href;
         } catch { /* not a link */ }
+        // Done with no link means the store had none of the items: say that, not that the cart is not ready.
+        if (s.state === 'done' && s.cartUrl == null && Array.isArray(s.added) && s.added.length === 0 && Array.isArray(s.missing) && s.missing.length > 0) return fail('nothing_added');
         if (s.state !== 'done' || !link) return fail('no_cart_link');
         if (sentLinks.has(link)) return fail('link_already_sent');
         // Marked before sending: if the send times out it may still arrive, and a repeat would duplicate it.
