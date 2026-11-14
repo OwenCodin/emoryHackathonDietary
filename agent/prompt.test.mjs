@@ -146,6 +146,10 @@ describe('dish and shopping playbook', () => {
     for (const w of ['Dish and shopping list:', 'dish_ingredients', 'add_to_shopping_list', 'remove_from_list', 'set_quantity', 'text_list', 'start_cart', 'confirm_list', 'text_cart_link', 'from_kroger_cart', 'several parts', 'one short question', 'keep_after_warning', 'Never say it left the Kroger cart']) assert.ok(instructions.includes(w), w);
     for (let i = 1; i <= 8; i++) assert.ok(instructions.includes(`\n${i}. `), `step ${i}`);
   });
+  it('offers the full recipe of a dish and texts it only on agreement', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    for (const w of ['offer to text them the full recipe', 'text_recipe only when they agree', 'or the dish name']) assert.ok(instructions.includes(w), w);
+  });
   it('restricts start_setup to explicit setup requests', async () => {
     const { instructions } = await import('./prompt.mjs');
     assert.ok(instructions.includes('Call start_setup only when the caller explicitly asks to change their setup, limits, voice or preferences (for example "update my setup"); never because they showed or named a food or dish, asked for ingredients, or asked to shop.'));
