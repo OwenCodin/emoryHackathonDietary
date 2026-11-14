@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-m9n: Kroger sign-in by texted link
+Last activity: 2026-11-14 - Completed quick task 261114-onw: finish the Kroger sign-in later
 
 Progress: [██████████] 100%
 
@@ -110,6 +110,7 @@ None yet.
 | fast | Kroger product matching accepts joined or split word pairs (SportWater); text_cart_link and cart_status say nothing_added when the cart finished empty instead of not ready (559/559 pass) | 2026-11-14 | dc352aa | - |
 | 261114-m9n | Kroger sign-in by texted link: kroger-relay (short link, callback page, one-time claim; holds only the short-lived code), relay sign-in in actions (startKrogerSignIn, getKrogerStatus), agent tools kroger_status and text_kroger_sign_in, a Kroger step in setup, shared contract updated in all three READMEs (615/615 pass). Local end-to-end test passes; the deployed relay and a real sign-in are not yet verified | 2026-11-14 | 4bf20bb | [261114-m9n-kroger-sign-in-by-texted-link-during-onb](./quick/261114-m9n-kroger-sign-in-by-texted-link-during-onb/) |
 | fast | Docs: kroger-relay deployed and checked live; first real Kroger sign-in through a link texted by Chert, saved on the Mac about 30 s later | 2026-11-14 | bcbb203 | - |
+| 261114-onw | Finish the Kroger sign-in later: the pending sign-in is recorded in the token folder and picked up by any later process within the relay window (getKrogerStatus and the cart path), setup offers later, finish_onboarding says how to finish, relay page wording made honest (639/639 pass). Second-process pick-up passes locally; relay page needs a redeploy | 2026-11-14 | 71f7a81 | [261114-onw-finish-kroger-sign-in-later-during-or-af](./quick/261114-onw-finish-kroger-sign-in-later-during-or-af/) |
 
 ## Session Continuity
 
