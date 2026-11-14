@@ -98,7 +98,7 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 
 1. `async`, takes one plain object, returns one plain object. The one exception is `getCartFrame`, which is synchronous because it is called 15 times a second.
 2. Never throws. On failure it returns `{ ok: false, error: 'short reason' }`. On success the object has `ok: true`.
-3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
+3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model; `dishIngredients` about 8.5 s and `previewCart` about 6 s. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
 4. Works with no network where it can (cached or seeded data), so the demo survives bad wifi.
 
 ### Types
@@ -156,6 +156,7 @@ Track A imports everything below and exports nothing. B and C do not import each
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
 | `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
 | `logFood({ patientId, verdict })` | `{ ok }` |
+| `dishIngredients({ dish, profile }, { ai }?)` | `{ ok, dish, source: 'model' \| 'builtin' \| 'none', ingredients: [{ name, quantity, verdict, swap, nutrients, portion, say, source, checked }], omitted? }`. The model gives names and quantities only; every ingredient is re-checked with `checkFood` and its verdict, swap and numbers come from there. At most 8 ingredients, no water, oil, pepper, herbs or spices. A built-in table covers a few common dishes when the model is absent or slow. About 8.5 s worst case. |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
 
 The optional second argument `{ ai }` is an injected Gemini client. It is a test seam only; the agent never passes it.
@@ -168,6 +169,7 @@ The optional second argument `{ ai }` is an injected Gemini client. It is a test
 | `getCartStatus()` | `{ ok, state: 'idle' \| 'running' \| 'waiting_for_patient' \| 'done' \| 'failed', step, added: [{ name, price }], missing: string[], total, cartUrl }` |
 | `getCartFrame()` (synchronous) | A `Uint8Array` of exactly `WIDTH * HEIGHT * 4` RGBA bytes showing the browser, or `null` when no cart is running. |
 | `stopCart()` | `{ ok }` |
+| `previewCart({ items })` where `items` is `CartItem[]` (at most 12) | `{ ok, shown, found, notFound, total }`, or `{ ok: false, error: 'not_configured' \| 'busy' \| 'render_failed' \| ... }`. Read-only: app-token product search and product pictures only, no sign-in, no user token, no cart call. The card is titled "Your list · not in your Kroger cart yet", held 20 s, and removed by `startCart` or `stopCart`. An empty list shows nothing (and hides a showing preview). |
 | `callPatient({ phone, reason })` | `{ ok, callId }` once Chert has accepted the request |
 | `sendText({ phone, text })` | `{ ok }`. Refuses any recipient other than `PATIENT_PHONE`. |
 | `startKrogerSignIn()` | `{ ok: true, link }`, where `link` is `${KROGER_RELAY_URL}/k/<43-character state>`; otherwise `{ ok: false, error: 'not_configured' \| 'no_relay' }`. Starts polling the relay in the background for up to 4 minutes and saves the Kroger sign-in when the patient finishes. Nothing but the link is returned, and no code, state, secret or token is logged. |
@@ -190,6 +192,7 @@ Seen in live testing on 14 November 2026:
 - A real call runs with `npm start` in one terminal and `npx @trychert/facetime@0.1.0-beta.20 dev --agent renal-dietitian --minutes 30` in another. One `chert dev` session holds the team's single line at a time.
 - The caller's camera now reaches the agent. With `AGENT_DEBUG_FRAME_DIR` set, the saved frames show what the caller shows.
 - iMessage through Chert on the trial line: the agent can only reply. A send is refused with HTTP 403 `shared_reply_window_closed` until the patient's phone has joined the project and has texted the line a message with words in it within the last 24 hours. After that a send returned `{"state":"sent"}`.
+- Kroger's public API only adds to a cart. With a real signed-in token, `GET /v1/carts` returned 403 "required scope not found"; `PUT /v1/cart/add` with quantity 0 or -1 returned 400 ("Quantity is required", "Quantity must be at least 1"); there is no remove route; and the sign-in page accepts only the `cart.basic:write` cart scope (`cart.basic:rw` and `:read` give `invalid_scope`). The agent can neither remove nor read items in the real Kroger cart, so removing happens on the list before anything is sent.
 - The shared USDA `DEMO_KEY` allows 10 requests an hour and ran out during testing.
 - `gemini-3.8-flash` was overloaded all day (503s, timeouts). Vision and meals fall back to `gemini-3.5-flash-lite` after 2.5 s. Google Search grounding needs billing on the Gemini key; without it every grounded request returned 429 "exceeded your current quota".
 
@@ -429,6 +432,10 @@ From-scratch mode (`fromScratch: true`): Gemini gets its own prompt listing only
 The second argument also accepts a `check` option, a test seam that defaults to `checkFood`. It is not part of the shared contract.
 
 Follow-up: the from-the-kitchen mode does not check totals yet, because kitchen foods can be judged from USDA, online or label numbers with different serving bases, or with missing phosphorus.
+
+### `dishIngredients`
+
+`dishIngredients({ dish, profile }, { ai }?)` turns a dish name into its usual ingredients: `{ ok, dish, source: 'model' | 'builtin' | 'none', ingredients: [{ name, quantity, verdict, swap, nutrients, portion, say, source, checked }], omitted? }`. The model gives names and quantities only (a schema allows nothing else, and extra fields are ignored). Every ingredient then goes through `checkFood`, and the verdict, swap, nutrients, portion and say are copied from that result only; a check that fails or runs past 4 s gives `verdict: 'unknown'`, `checked: false`. Water, oils, pepper, herbs, spices and salt are dropped, duplicates are merged, and at most `DISH_MAX_INGREDIENTS` (8) are kept, with `omitted` counting the rest. With no key, a slow model (fast model first, 4.5 s) or an empty answer, `BUILTIN_DISHES` covers ham sandwich, turkey sandwich, omelet and chicken and rice, and those ingredients are re-checked the same way. Any other dish gives `source: 'none'` and no ingredients. The dish is cleaned (80 characters, no links or quotes) and sent as quoted data; no limits and no avoid list are sent to the model. Worst case is about 8.5 s, under the 12 s tool guard. `modelMs`, `checkMs` and `check` are test seams.
 
 ### Tests
 

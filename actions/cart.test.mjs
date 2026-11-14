@@ -779,3 +779,169 @@ test('a failing picture fetcher or renderer never fails the run', async () => {
   assert.equal(broken.getCartStatus().added.length, 1);
 });
 
+
+// ---- previewCart: the read-only list card ----
+
+const PREVIEW_URL_ALLOWED = [
+  'https://api.kroger.com/v1/connect/oauth2/token',
+  'https://api.kroger.com/v1/products',
+  'https://www.kroger.com/product/images/',
+];
+function assertPreviewUrls(urls, calls) {
+  for (const u of urls) assert.ok(PREVIEW_URL_ALLOWED.some((p) => u.startsWith(p)), `unexpected URL ${u}`);
+  for (const u of urls) assert.ok(!u.includes('/v1/cart'), `cart URL ${u}`);
+  for (const c of calls) {
+    if (c.path === '/v1/connect/oauth2/token') {
+      assert.equal(new URLSearchParams(String(c.body)).get('grant_type'), 'client_credentials');
+    }
+  }
+}
+const PREVIEW_ITEMS = [
+  { name: 'white bread', quantity: '2 loaves' },
+  { name: 'lettuce', quantity: '1 leaf' },
+  { name: 'zzzz nothing', quantity: '1' },
+];
+const previewSearch = (term) => ({
+  status: 200,
+  body: { data: term === 'white bread' ? [krogerProduct('11', 'Plain White Bread', 2.5)] : term === 'lettuce' ? [krogerProduct('12', 'Green Lettuce', 1.25)] : [] },
+});
+
+test('previewCart searches, shows one exact-size frame, never touches the user token or the cart', async () => {
+  const { controller, frames, timers, urls, calls, store } = makeKrogerController({ search: previewSearch });
+  const r = await controller.previewCart({ items: PREVIEW_ITEMS });
+  assert.deepEqual(r, { ok: true, shown: true, found: 2, notFound: 1, total: 6.25 });
+  assert.equal(frames.published.length, 1);
+  assert.equal(frames.published[0].byteLength, FRAME_BYTES);
+  assert.deepEqual(frames.active, [true]);
+  assert.equal(timers.set.length, 1);
+  assert.equal(timers.set[0].ms, 20000);
+  assert.equal(store.loads, 0);
+  assert.ok(urls.some((u) => u.startsWith('https://www.kroger.com/product/images/')));
+  assertPreviewUrls(urls, calls);
+  timers.set[0].fn();
+  assert.equal(frames.active.at(-1), false);
+});
+
+test('previewCart with an empty list publishes nothing and hides a showing preview card', async () => {
+  const { controller, frames } = makeKrogerController({ search: previewSearch });
+  assert.deepEqual(await controller.previewCart({ items: [] }), { ok: true, shown: false });
+  assert.equal(frames.published.length, 0);
+  assert.equal(frames.active.length, 0);
+  await controller.previewCart({ items: PREVIEW_ITEMS });
+  assert.deepEqual(await controller.previewCart({ items: [] }), { ok: true, shown: false });
+  assert.equal(frames.active.at(-1), false);
+});
+
+test('previewCart without Kroger config, with bad items, or during a cart run', async () => {
+  let fetched = false;
+  const none = createCartController({
+    getKrogerConfig: () => null,
+    createKroger: () => { fetched = true; throw new Error('no'); },
+    publishFrame: () => true,
+    activateFrame: () => {},
+  });
+  assert.deepEqual(await none.previewCart({ items: PREVIEW_ITEMS }), { ok: false, error: 'not_configured' });
+  assert.equal(fetched, false);
+
+  const { controller, frames } = makeKrogerController({ search: previewSearch });
+  for (const items of [undefined, 'x', [null], [{ name: '', quantity: '1' }], Array.from({ length: 13 }, () => ({ name: 'a', quantity: '1' }))]) {
+    const r = await controller.previewCart({ items });
+    assert.equal(r.ok, false);
+    assert.ok(typeof r.error === 'string');
+  }
+  assert.equal(frames.published.length, 0);
+
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const busy = createCartController({
+    getKrogerConfig: () => KROGER_CONFIG,
+    createKroger: () => ({
+      getUserToken: async () => { await gate; return { ok: true, token: 't' }; },
+      searchProducts: async () => ({ ok: true, products: [] }),
+      addToCart: async () => ({ ok: true }),
+    }),
+    publishFrame: () => true,
+    activateFrame: () => {},
+    setTimer: () => ({ unref() {} }),
+    clearTimer: () => {},
+  });
+  await busy.startCart({ items: [{ name: 'x', quantity: '1' }] });
+  assert.deepEqual(await busy.previewCart({ items: PREVIEW_ITEMS }), { ok: false, error: 'busy' });
+  release();
+  await waitForState(busy, 'done');
+});
+
+test('startCart and stopCart remove the preview card at once', async () => {
+  const a = makeKrogerController({ search: previewSearch });
+  await a.controller.previewCart({ items: PREVIEW_ITEMS });
+  await a.controller.stopCart();
+  assert.equal(a.frames.active.at(-1), false);
+
+  const b = makeKrogerController({ search: previewSearch });
+  await b.controller.previewCart({ items: PREVIEW_ITEMS });
+  await b.controller.startCart({ items: [{ name: 'lettuce', quantity: '1' }] });
+  assert.equal(b.frames.active[1], false);
+  await waitForState(b.controller, 'done');
+});
+
+test('a slower older preview does not publish after a newer one or after stopCart', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const frames = [];
+  const controller = createCartController({
+    getKrogerConfig: () => KROGER_CONFIG,
+    createKroger: () => ({
+      searchProducts: async (term) => {
+        if (term === 'slow') await gate;
+        return { ok: true, products: [krogerProduct('1', 'Plain Slow', 1)] };
+      },
+    }),
+    fetchPicture: async () => null,
+    publishFrame: (f) => { frames.push(f); return true; },
+    activateFrame: () => {},
+    setTimer: () => ({ unref() {} }),
+    clearTimer: () => {},
+  });
+  const older = controller.previewCart({ items: [{ name: 'slow', quantity: '1' }] });
+  const newer = await controller.previewCart({ items: [{ name: 'fast', quantity: '1' }] });
+  assert.equal(newer.shown, true);
+  release();
+  const olderResult = await older;
+  assert.equal(olderResult.shown, false);
+  assert.equal(frames.length, 1);
+
+  const third = controller.previewCart({ items: [{ name: 'slow', quantity: '1' }] });
+  await controller.stopCart();
+  const thirdResult = await third;
+  assert.equal(thirdResult.shown, false);
+  assert.equal(frames.length, 1);
+});
+
+test('a second preview reuses the cached product and picture', async () => {
+  let searches = 0;
+  const { controller, urls } = makeKrogerController({
+    search: (term) => { searches += 1; return previewSearch(term); },
+  });
+  await controller.previewCart({ items: PREVIEW_ITEMS.slice(0, 2) });
+  const imagesBefore = urls.filter((u) => u.includes('/product/images/')).length;
+  assert.equal(searches, 2);
+  await controller.previewCart({ items: PREVIEW_ITEMS.slice(0, 2) });
+  assert.equal(searches, 2);
+  assert.equal(urls.filter((u) => u.includes('/product/images/')).length, imagesBefore);
+});
+
+test('a render failure shows nothing and says render_failed', async () => {
+  const frames = [];
+  const controller = createCartController({
+    getKrogerConfig: () => KROGER_CONFIG,
+    createKroger: () => ({ searchProducts: async () => ({ ok: true, products: [krogerProduct('1', 'Plain Bread', 1)] }) }),
+    fetchPicture: async () => null,
+    renderCard: async () => { throw new Error('boom'); },
+    publishFrame: (f) => { frames.push(f); return true; },
+    activateFrame: () => {},
+    setTimer: () => ({ unref() {} }),
+    clearTimer: () => {},
+  });
+  assert.deepEqual(await controller.previewCart({ items: [{ name: 'bread', quantity: '1' }] }), { ok: false, error: 'render_failed' });
+  assert.equal(frames.length, 0);
+});

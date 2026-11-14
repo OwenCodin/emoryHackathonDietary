@@ -139,3 +139,22 @@ describe('unnamed label rule', () => {
     for (const w of ['unnamed', 'front of the package']) assert.ok(instructions.includes(w), w);
   });
 });
+
+describe('dish and shopping playbook', () => {
+  it('has the numbered playbook and the tools it names', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    for (const w of ['Dish and shopping list:', 'dish_ingredients', 'add_to_shopping_list', 'remove_from_list', 'set_quantity', 'text_list', 'start_cart', 'confirm_list', 'text_cart_link', 'from_kroger_cart', 'several parts', 'one short question', 'keep_after_warning', 'Never say it left the Kroger cart']) assert.ok(instructions.includes(w), w);
+    for (let i = 1; i <= 8; i++) assert.ok(instructions.includes(`\n${i}. `), `step ${i}`);
+  });
+  it('restricts start_setup to explicit setup requests', async () => {
+    const { instructions } = await import('./prompt.mjs');
+    assert.ok(instructions.includes('Call start_setup only when the caller explicitly asks to change their setup, limits, voice or preferences (for example "update my setup"); never because they showed or named a food or dish, asked for ingredients, or asked to shop.'));
+  });
+  it('stays compact', async () => {
+    const { buildInstructions } = await import('./prompt.mjs');
+    const text = buildInstructions({});
+    const start = text.indexOf('Dish and shopping list:');
+    const end = text.indexOf('Never pay for, order');
+    assert.ok(end - start < 1700, `${end - start} characters`);
+  });
+});

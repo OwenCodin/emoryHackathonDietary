@@ -126,7 +126,7 @@ describe('renal contract', () => {
     delete process.env.GOOGLE_API_KEY;
     delete process.env.USDA_API_KEY;
     try {
-      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'logFood', 'getToday']) {
+      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'dishIngredients', 'logFood', 'getToday']) {
         const p = renal[name]();
         assert.ok(p instanceof Promise, `${name} returns a Promise`);
         const r = await p;
@@ -223,7 +223,7 @@ describe('actions contract', () => {
 
   it('every async function returns a Promise with an ok result', async () => {
     await withScrubbedKroger(async () => {
-      for (const name of ['startCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText', 'startKrogerSignIn', 'getKrogerStatus']) {
+      for (const name of ['startCart', 'previewCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText', 'startKrogerSignIn', 'getKrogerStatus']) {
         const p = actions[name]();
         assert.ok(p instanceof Promise, `${name} returns a Promise`);
         assert.equal(typeof (await p).ok, 'boolean', `${name}() returns an ok result`);

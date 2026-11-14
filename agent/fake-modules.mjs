@@ -68,6 +68,24 @@ export function makeFakeRenal({ scenes } = {}) {
       const n = Math.min(5, Math.max(1, Number.isInteger(count) ? count : 1));
       return { ok: true, meals: Array.from({ length: n }, () => ({ ...meal })) };
     },
+    // Deterministic ham sandwich, as the real module would return after re-checking each ingredient.
+    async dishIngredients({ dish, profile } = {}) {
+      const row = (name, quantity, verdict, swap, nutrients) => ({
+        name, quantity, verdict, swap, nutrients, portion: nutrients ? '1 portion' : null, say: null,
+        source: nutrients ? 'usda' : 'none', checked: nutrients !== null,
+      });
+      return {
+        ok: true,
+        dish: String(dish ?? ''),
+        source: 'builtin',
+        ingredients: [
+          row('white bread', '2 slices', 'ok', null, { sodiumMg: 490, potassiumMg: 115, phosphorusMg: 98 }),
+          row('ham', '3 slices', 'avoid', 'fresh unsalted chicken', { sodiumMg: 1200, potassiumMg: 240, phosphorusMg: 210 }),
+          row('lettuce', '1 leaf', 'ok', null, { sodiumMg: 10, potassiumMg: 141, phosphorusMg: 20 }),
+          row('mayonnaise', '1 tablespoon', 'unknown', null, null),
+        ],
+      };
+    },
     async logFood({ patientId, verdict } = {}) {
       return { ok: true };
     },
@@ -91,6 +109,9 @@ export function makeFakeActions() {
   return {
     async startCart({ items } = {}) {
       return { ok: true };
+    },
+    async previewCart({ items } = {}) {
+      return { ok: true, shown: Array.isArray(items) && items.length > 0, found: Array.isArray(items) ? items.length : 0, notFound: 0, total: 0 };
     },
     async getCartStatus() {
       return {

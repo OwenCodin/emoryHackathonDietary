@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import sharp from 'sharp';
 import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
-import { CARD_MAX_TILES, cardLayout, cartCardSvg, downloadPicture, renderCartCard } from './cart-card.mjs';
+import { CARD_MAX_TILES, PREVIEW_FOOTER, PREVIEW_TITLE, cardLayout, cartCardSvg, downloadPicture, renderCartCard } from './cart-card.mjs';
 
 const GOOD = 'https://www.kroger.com/product/images/large/front/0001';
 const SIZE = WIDTH * HEIGHT * 4;
@@ -185,4 +185,23 @@ test('cart card at scale 1 is the old full-frame layout', async () => {
   const frame = await renderCartCard({ items: [item('A', 1), item('B', 2), item('C', 3)], scale: 1 });
   assertExact(frame);
   assert.ok(!marginIsOnly(frame, BG));
+});
+
+test('cartCardSvg keeps today\'s title, total and footer without the new options', () => {
+  const svg = cartCardSvg({ items: [{ name: 'Butter', price: 3, quantity: 1 }] });
+  assert.ok(svg.includes('Your Kroger cart'));
+  assert.ok(svg.includes('Total $3.00'));
+  assert.ok(svg.includes('Nothing is paid. Review and check out yourself.'));
+});
+
+test('cartCardSvg and renderCartCard take a custom title, footer and total label', async () => {
+  const opts = { items: [{ name: 'Bread', price: 2, quantity: 1 }], title: PREVIEW_TITLE, footer: PREVIEW_FOOTER, totalLabel: 'About' };
+  const svg = cartCardSvg(opts);
+  assert.ok(svg.includes(PREVIEW_TITLE));
+  assert.ok(svg.includes(PREVIEW_FOOTER));
+  assert.ok(svg.includes('About $2.00'));
+  assert.ok(!svg.includes('Your Kroger cart'));
+  assert.ok(!svg.includes('Nothing is paid. Review and check out yourself.'));
+  assert.ok(!svg.includes('Total $'));
+  assert.equal((await renderCartCard(opts)).byteLength, SIZE);
 });

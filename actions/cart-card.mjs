@@ -21,6 +21,9 @@ const PLACEHOLDER_FILL = '#E2E8F0';
 const PLACEHOLDER_TEXT = '#64748B';
 const TOTAL_COLOR = '#4ADE80';
 const FOOTER = 'Nothing is paid. Review and check out yourself.';
+// The list preview card (previewCart) uses its own title, footer and total label.
+export const PREVIEW_TITLE = 'Your list \u00b7 not in your Kroger cart yet';
+export const PREVIEW_FOOTER = 'Not in your Kroger cart yet. Nothing is added or paid until you say so.';
 
 // ---- text safety (same behaviour as agent/card.mjs, copied because tracks do not import each other)
 
@@ -180,12 +183,17 @@ function tileSvg(tile, item) {
 }
 
 // The whole card as SVG text, without photos (renderCartCard composites those over the placeholders).
-export function cartCardSvg({ storeName = 'Kroger', items = [], step = '', total, scale = SAFE_SCALE } = {}) {
+export function cartCardSvg({
+  storeName = 'Kroger', items = [], step = '', total, scale = SAFE_SCALE, title: customTitle, footer: customFooter, totalLabel = 'Total',
+} = {}) {
   const list = normalise(items);
   const sum = list.reduce((acc, i) => acc + (i.price ?? 0), 0);
   const shownTotal = typeof total === 'number' && Number.isFinite(total) ? total : sum;
   const store = cleanText(storeName, 30) || 'Kroger';
-  const title = fitText(`Your ${store} cart`, { max: 48, min: 30, width: 700, bold: true });
+  const titleText = cleanText(customTitle, 80) || `Your ${store} cart`;
+  const footerText = cleanText(customFooter, 120) || FOOTER;
+  const label = cleanText(totalLabel, 12) || 'Total';
+  const title = fitText(titleText, { max: 48, min: 30, width: 700, bold: true });
   const stepText = fitText(cleanText(step, 120), { max: 30, min: 24, width: 1160 });
   const overflow = list.length > CARD_MAX_TILES;
   const shown = overflow ? list.slice(0, CARD_MAX_TILES - 1) : list;
@@ -196,7 +204,7 @@ export function cartCardSvg({ storeName = 'Kroger', items = [], step = '', total
     `<rect width="${WIDTH}" height="${HEIGHT}" fill="${BACKGROUND}"/>`,
     `<g transform="${safeTransform(scale)}">`,
     text(60, 78, title.size, WHITE, escapeXml(title.text), { weight: 700 }),
-    text(1220, 78, 44, shownTotal > 0 || list.length ? TOTAL_COLOR : WHITE, escapeXml(`Total ${money(shownTotal)}`), { weight: 700, anchor: 'end' }),
+    text(1220, 78, 44, shownTotal > 0 || list.length ? TOTAL_COLOR : WHITE, escapeXml(`${label} ${money(shownTotal)}`), { weight: 700, anchor: 'end' }),
   ];
   if (stepText.text) out.push(text(60, 122, stepText.size, SOFT, escapeXml(stepText.text)));
   shown.forEach((item, i) => out.push(tileSvg(layout[i], item)));
@@ -208,7 +216,7 @@ export function cartCardSvg({ storeName = 'Kroger', items = [], step = '', total
       + '</g>',
     );
   }
-  out.push(text(WIDTH / 2, 692, 32, SOFT, escapeXml(FOOTER), { anchor: 'middle' }), '</g></svg>');
+  out.push(text(WIDTH / 2, 692, 32, SOFT, escapeXml(footerText), { anchor: 'middle' }), '</g></svg>');
   return out.join('');
 }
 
@@ -226,10 +234,10 @@ async function preparePhoto(picture, box) {
 }
 
 // Renders the card to a fresh exact-size RGBA Uint8Array. Throws on failure (the cart catches it).
-export async function renderCartCard({ storeName, items, step, total, scale = SAFE_SCALE } = {}) {
+export async function renderCartCard({ storeName, items, step, total, scale = SAFE_SCALE, title, footer, totalLabel } = {}) {
   const a = safeArea(scale);
   const list = normalise(items);
-  const svg = cartCardSvg({ storeName, items: list, step, total, scale });
+  const svg = cartCardSvg({ storeName, items: list, step, total, scale, title, footer, totalLabel });
   const overflow = list.length > CARD_MAX_TILES;
   const shown = overflow ? list.slice(0, CARD_MAX_TILES - 1) : list;
   const layout = cardLayout(overflow ? CARD_MAX_TILES : list.length);

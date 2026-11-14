@@ -243,3 +243,35 @@ describe('preferences', () => {
     assert.equal(await readFile(m.file, 'utf8'), before);
   });
 });
+
+describe('removing from the list', () => {
+  it('remove matches like the pantry, from needed and approved, and reports what was not found', async () => {
+    const m = createMemory({ dir: fresh() });
+    await m.add(['white bread', 'mayonnaise', 'lettuce']);
+    await m.mark('lettuce', 'approved');
+    const r = await m.remove(['mayo', 'lettuce', 'caviar']);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.removed.sort(), ['lettuce', 'mayonnaise']);
+    assert.deepEqual(r.notFound, ['caviar']);
+    assert.deepEqual(r.state.needed, ['white bread']);
+    assert.deepEqual(r.state.approved, []);
+  });
+  it('clearList empties needed and approved but keeps pantry and rejected', async () => {
+    const m = createMemory({ dir: fresh() });
+    await m.add(['white bread', 'ham']);
+    await m.mark('ham', 'rejected');
+    await m.mark('white bread', 'approved');
+    await m.addPantry(['rice']);
+    const r = await m.clearList();
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.state.needed, []);
+    assert.deepEqual(r.state.approved, []);
+    assert.deepEqual(r.state.rejected, ['ham']);
+    assert.deepEqual(r.state.pantry, ['rice']);
+  });
+  it('remove and clearList never throw when the folder is refused', async () => {
+    const m = createMemory({ dir: join(AGENT_DIR, 'inside-repo') });
+    assert.equal((await m.remove(['x'])).ok, false);
+    assert.equal((await m.clearList()).ok, false);
+  });
+});
