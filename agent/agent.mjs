@@ -12,7 +12,8 @@ import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
 import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata } from './outbound.mjs';
-import { checkinGreeting, greeting, instructions } from './prompt.mjs';
+import { checkinGreeting, greeting, instructions, replyNudge } from './prompt.mjs';
+import { bargeInConfig, createReplyWatchdog } from './turns.mjs';
 
 
 const agent = defineAgent({
@@ -81,12 +82,24 @@ const agent = defineAgent({
     };
 
     const model = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live';
+    // Barge-in is off by default: caller noise must not cancel a reply (AGENT_ALLOW_BARGE_IN=1 turns it back on).
+    const realtimeInputConfig = bargeInConfig(process.env);
+    console.log(realtimeInputConfig ? '[agent] barge-in off' : '[agent] barge-in on');
     const session = new voice.AgentSession({
-      llm: new google.realtime.RealtimeModel({ model, voice: 'Puck' }),
+      llm: new google.realtime.RealtimeModel({ model, voice: 'Puck', ...(realtimeInputConfig ? { realtimeInputConfig } : {}) }),
     });
-    session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => { speaking = event.newState === 'speaking'; });
+    // Reply watchdog: nudges the model once when a caller turn ends with no reply and no tool run.
+    const watchdog = createReplyWatchdog();
+    let nudgeTimer = null, closing = false;
+    session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => {
+      try { speaking = event.newState === 'speaking'; watchdog.agentState(event.newState); } catch { /* never breaks the call */ }
+    });
+    session.on(voice.AgentSessionEventTypes.UserStateChanged, event => {
+      try { watchdog.userState(event.newState); } catch { /* never breaks the call */ }
+    });
     // Tool name and ok only: arguments and outputs contain what the caller said.
     session.on(voice.AgentSessionEventTypes.FunctionToolsExecuted, event => {
+      try { watchdog.toolsExecuted(); } catch { /* never breaks the call */ }
       try {
         event.functionCalls.forEach((call, i) => {
           const out = event.functionCallOutputs[i];
@@ -119,9 +132,23 @@ const agent = defineAgent({
       session.output.audio = audioOut;
     }
 
+    const checkNudge = async () => {
+      try {
+        if (closing || !watchdog.due()) return;
+        watchdog.nudged();
+        console.log('[agent] reply nudge');
+        await session.generateReply({ instructions: replyNudge });
+      } catch (error) {
+        try { console.error(`[agent] reply nudge failed ${error?.name ?? 'Error'}`); } catch { /* ignore */ }
+      }
+    };
+
     // Registered before anything is opened, so a throw while publishing or starting still cleans up.
     ctx.addShutdownCallback(async () => {
       console.log('[agent] call ended');
+      closing = true;
+      watchdog.disarm();
+      if (nudgeTimer) clearInterval(nudgeTimer);
       answerDeadline?.clear();
       if (onBridgeJoined) ctx.room.off('participantConnected', onBridgeJoined);
       if (timer) clearInterval(timer);
@@ -156,6 +183,9 @@ const agent = defineAgent({
       const requestedAt = Date.now();
       try {
         await sessionReady;
+        if (closing) return;
+        watchdog.arm();
+        nudgeTimer = setInterval(() => { void checkNudge(); }, 500);
         const kind = call ? 'checkin' : 'inbound';
         console.log(`[agent] greeting requested kind=${kind} waited_ms=${Date.now() - requestedAt}`);
         await session.generateReply({ instructions: call ? checkinGreeting : greeting });
@@ -179,7 +209,7 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo' }) }),
+        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo', onToolActivity: delta => watchdog.toolActivity(delta) }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,
