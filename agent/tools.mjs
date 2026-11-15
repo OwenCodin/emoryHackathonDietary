@@ -9,7 +9,7 @@ import * as renalModule from '../renal/index.mjs';
 import { CONDITIONS, LIMIT_BOUNDS, MAX_AVOID } from '../renal/index.mjs';
 import * as actionsModule from '../actions/index.mjs';
 import { mergePantry, matchPantry, PANTRY_MAX } from './memory.mjs';
-import { VOICE_MENU, cleanCallName } from './prefs.mjs';
+import { VOICE_MENU, VOICE_WORDS, cleanCallName } from './prefs.mjs';
 
 const WORDS = { ok: 'Yes', avoid: 'No', limit: 'Small portion' };
 const RANK = { avoid: 0, limit: 1, unknown: 2, ok: 3 };
@@ -131,7 +131,7 @@ const FAILS = {
   limits_changed: "Those aren't the numbers I read back. Let me read the new ones back to you first.",
   limits_not_confirmed: 'Please tell me if the numbers I read back are right.',
   bad_foods: 'Tell me up to ten foods to avoid, a few words each.',
-  bad_preference: 'I can use an upbeat, firm, warm or mature voice, give brief or detailed answers, and speak English or Spanish. Which would you like?',
+  bad_preference: "I can use a man's or a woman's voice, give brief or detailed answers, and speak English or Spanish. Which would you like?",
   profile_unsaved: "I couldn't save that just now. You can finish it later by saying 'update my setup'.",
   prefs_unsaved: "I couldn't save that preference just now. We can try again on your next call.",
   bad_condition: 'Tell me which fits best: kidney disease without dialysis, hemodialysis, peritoneal dialysis, a kidney transplant, or not sure.',
@@ -1323,7 +1323,7 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     set_preferences: llm.tool({
-      description: 'Save how the caller wants the agent to sound: voice (upbeat, firm, warm or mature), reply_style (brief or detailed) and language (english or spanish). Pass null for what they did not choose.',
+      description: 'Save how the caller wants the agent to sound: voice (male or female; upbeat, firm, warm and mature also work), reply_style (brief or detailed) and language (english or spanish). Pass null for what they did not choose.',
       parameters: z.object({ voice: z.string().max(20).nullish(), reply_style: z.string().max(20).nullish(), language: z.string().max(20).nullish() }),
       execute: guard(async (call, args = {}) => {
         const given = v => v !== null && v !== undefined;
@@ -1331,7 +1331,8 @@ export function buildTools({
         const next = {};
         if (given(args?.voice)) {
           const v = word(args.voice);
-          const name = Object.hasOwn(VOICE_MENU, v) ? VOICE_MENU[v] : Object.values(VOICE_MENU).find(x => x.toLowerCase() === v);
+          const w = v.replace(/^an? /, '').replace(/ voice$/, '');
+          const name = Object.hasOwn(VOICE_WORDS, w) ? VOICE_WORDS[w] : Object.hasOwn(VOICE_MENU, w) ? VOICE_MENU[w] : Object.values(VOICE_MENU).find(x => x.toLowerCase() === w);
           if (!name) return fail('bad_preference');
           next.voice = name;
         }

@@ -3,6 +3,11 @@
 
 // The spoken word the caller picks, mapped to a voice name in the Gemini plugin's Voice union.
 export const VOICE_MENU = Object.freeze({ upbeat: 'Puck', firm: 'Kore', warm: 'Sulafat', mature: 'Gacrux' });
+// Setup offers a man's or a woman's voice. These words pick one voice each; the four words above still work.
+export const VOICE_WORDS = Object.freeze({
+  male: 'Puck', man: 'Puck', mans: 'Puck', "man's": 'Puck', masculine: 'Puck',
+  female: 'Sulafat', woman: 'Sulafat', womans: 'Sulafat', "woman's": 'Sulafat', feminine: 'Sulafat',
+});
 export const DEFAULT_PREFS = Object.freeze({ voice: 'Puck', replyStyle: 'brief', language: 'en', name: null });
 
 // A preferred name ends up inside the model instructions, so it stays strict: letters, spaces, apostrophes and

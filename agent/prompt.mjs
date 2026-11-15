@@ -11,7 +11,7 @@ export const SETUP_STEPS = Object.freeze([
   { step: 'condition', says: 'Which fits you best: kidney disease without dialysis, hemodialysis, peritoneal dialysis, a kidney transplant, or not sure?' },
   { step: 'limits', says: 'Do you have the daily limits your care team gave you? Please read me your sodium, potassium and phosphorus in milligrams, and your fluid in milliliters.' },
   { step: 'avoid', says: 'Has your care team told you to avoid any foods, or do you have any food allergies?' },
-  { step: 'voice', says: 'I can speak in an upbeat, firm, warm or mature voice. Which would you like?' },
+  { step: 'voice', says: "I can speak in a man's or a woman's voice. Which would you like?" },
   { step: 'style', says: 'Would you like brief answers or more detail? And English or Spanish?' },
   { step: 'kroger', says: "Next, your Kroger account, so I can fill your grocery cart. I'm texting you a sign-in link now. Tap it and sign in while we keep going, or if now isn't a good time, just ask me for a new Kroger link on any call." },
   { step: 'capabilities', says: "Here's what I can do. Show me a food, a label or your plate and I'll tell you if it fits your limits. I can suggest a meal from your fridge or from scratch, and I can fill a Kroger cart and text you the link. I never pay for anything." },

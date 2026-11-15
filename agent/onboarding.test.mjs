@@ -177,6 +177,13 @@ describe('set_preferences', () => {
     assert.deepEqual((await memory.loadPreferences()).prefs, { voice: 'Sulafat', replyStyle: 'detailed', language: 'es', name: null });
     assert.equal((await t.set_preferences.execute({ voice: 'warm' })).say, 'Saved.');
   });
+  it("maps a man's or a woman's voice, however it is worded", async () => {
+    const { t, memory } = setup({ build: { setupDue: false } });
+    for (const [said, voice] of [['female', 'Sulafat'], ['male', 'Puck'], ["a woman's voice", 'Sulafat'], ['Man', 'Puck'], ['woman', 'Sulafat']]) {
+      assert.equal((await t.set_preferences.execute({ voice: said })).ok, true, said);
+      assert.equal((await memory.loadPreferences()).prefs.voice, voice, said);
+    }
+  });
   it('refuses unknown or empty choices and a missing memory', async () => {
     const { t } = setup();
     assert.equal((await t.set_preferences.execute({ voice: 'robot' })).error, 'bad_preference');
