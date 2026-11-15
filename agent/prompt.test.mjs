@@ -107,7 +107,7 @@ describe('first-call setup', () => {
   });
   it('setup steps are in order and fit the budget', async () => {
     const { SETUP_STEPS } = await import('./prompt.mjs');
-    assert.deepEqual(SETUP_STEPS.map(s => s.step), ['welcome', 'name', 'condition', 'limits', 'macros', 'avoid', 'voice', 'style', 'kroger', 'capabilities', 'kroger_later', 'done']);
+    assert.deepEqual(SETUP_STEPS.map(s => s.step), ['welcome', 'name', 'condition', 'limits', 'macros', 'avoid', 'voice', 'style', 'text_first', 'kroger', 'capabilities', 'kroger_later', 'done']);
     assert.ok(SETUP_STEPS.findIndex(s => s.step === 'kroger') < SETUP_STEPS.findIndex(s => s.step === 'capabilities'));
     const words = SETUP_STEPS.map(s => s.says).join(' ').split(/\s+/).length;
     assert.ok(words <= 300, `${words} words`);
@@ -123,6 +123,19 @@ describe('first-call setup', () => {
     assert.ok(instructions.includes('do not text a link') && instructions.includes('skip Kroger or do it later'));
     assert.ok(!instructions.includes('call kroger_status once more'));
     assert.ok(/signed in to Kroger, call kroger_status/.test(instructions));
+  });
+  it('the text-first step is only in the textFirst variant, before Kroger', async () => {
+    const { buildInstructions, instructions, SETUP_STEPS } = await import('./prompt.mjs');
+    const line = SETUP_STEPS.find(s => s.step === 'text_first').says;
+    for (const text of [instructions, buildInstructions({}), buildInstructions({}, {}), buildInstructions({}, { textFirst: false })]) {
+      assert.ok(!text.includes('check_text_received'));
+      assert.ok(!text.includes(line));
+      assert.ok(text.includes('7. Kroger: call kroger_status'));
+    }
+    assert.equal(buildInstructions({}, {}), instructions);
+    const tf = buildInstructions({}, { textFirst: true });
+    assert.ok(tf.includes(line) && tf.includes('check_text_received'));
+    assert.ok(tf.indexOf('check_text_received') < tf.indexOf('8. Kroger: call kroger_status'));
   });
   it('the instructions name the Kroger tools', async () => {
     const { instructions } = await import('./prompt.mjs');
