@@ -3,7 +3,15 @@ import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createKrogerSignIn, getKrogerStatus, readRelayConfig, relayRedirectUri, startKrogerSignIn } from './kroger-signin.mjs';
+import {
+  createKrogerSignIn,
+  getKrogerStatus,
+  readRelayConfig,
+  relayRedirectUri,
+  resumeKrogerSignIn,
+  startKrogerSignIn,
+  waitForKrogerSignIn,
+} from './kroger-signin.mjs';
 
 const RELAY = 'https://relay.example.app';
 const RELAY_SECRET = 'R'.repeat(40);
@@ -466,4 +474,159 @@ test('resume never leaks the state, code, tokens or secrets', async () => {
     assert.ok(!haystack.includes(secret), 'leaked a sensitive value');
   }
   assert.ok(cap.lines.some((l) => l.includes('connected (resumed)')));
+});
+
+// ---- per patient ----
+const PA = `p${'a'.repeat(24)}`;
+const PB = `p${'b'.repeat(24)}`;
+const PC = `p${'c'.repeat(24)}`;
+
+// The relay hands out a code per state once; the token endpoint returns a refresh token derived from the code.
+function stateFetch(codes) {
+  const claimed = new Set();
+  return async (url, init) => {
+    if (url === `${RELAY}/api/kroger/claim`) {
+      const { state } = JSON.parse(init.body);
+      const code = codes.get(state);
+      if (!code || claimed.has(state)) return new Response('{}', { status: 404 });
+      claimed.add(state);
+      return new Response(JSON.stringify({ code }), { status: 200 });
+    }
+    if (url === 'https://api.kroger.com/v1/connect/oauth2/token') {
+      const code = new URLSearchParams(String(init.body)).get('code');
+      return new Response(JSON.stringify({ access_token: ACCESS, refresh_token: `refresh-for-${code}`, expires_in: 1800 }), { status: 200 });
+    }
+    assert.fail(`unexpected fetch ${url}`);
+  };
+}
+const linkState = (link) => link.split('/k/')[1];
+const refreshIn = async (file) => JSON.parse(await readFile(file, 'utf8')).refreshToken;
+
+test('per patient: two callers sign in into separate folders and never see each other', async () => {
+  const base = await tempDir();
+  const env = baseEnv(base);
+  const codes = new Map();
+  const fetchImpl = stateFetch(codes);
+  const a = make(env, fetchImpl, { patientId: PA });
+  const b = make(env, fetchImpl, { patientId: PB });
+  const sa = await a.startKrogerSignIn();
+  const sb = await b.startKrogerSignIn();
+  assert.ok(sa.ok && sb.ok);
+  codes.set(linkState(sa.link), 'code-a');
+  codes.set(linkState(sb.link), 'code-b');
+  // starting B did not cancel A's pending sign-in
+  const waits = [a.waitForKrogerSignIn(), b.waitForKrogerSignIn()];
+  assert.deepEqual(await Promise.all(waits), [{ ok: true }, { ok: true }]);
+  assert.equal(await refreshIn(join(base, 'callers', PA, 'kroger-tokens.json')), 'refresh-for-code-a');
+  assert.equal(await refreshIn(join(base, 'callers', PB, 'kroger-tokens.json')), 'refresh-for-code-b');
+  assert.equal(await exists(join(base, 'kroger-tokens.json')), false);
+  assert.equal((await a.getKrogerStatus()).connected, true);
+  assert.equal((await b.getKrogerStatus()).connected, true);
+  const c = make(env, fetchImpl, { patientId: PC });
+  const sc = await c.getKrogerStatus();
+  assert.equal(sc.connected, false);
+  assert.equal(sc.pending, false);
+  assert.equal(await exists(join(base, 'callers', PC)), false);
+  // pending records are gone once settled
+  assert.equal(await exists(join(base, 'callers', PA, 'kroger-signin-pending.json')), false);
+});
+
+test('per patient: folders are 0700 and the token file 0600', async () => {
+  const base = await tempDir();
+  const codes = new Map();
+  const a = make(baseEnv(base), stateFetch(codes), { patientId: PA });
+  const sa = await a.startKrogerSignIn();
+  codes.set(linkState(sa.link), 'code-a');
+  assert.deepEqual(await a.waitForKrogerSignIn(), { ok: true });
+  assert.equal((await stat(join(base, 'callers'))).mode & 0o777, 0o700);
+  assert.equal((await stat(join(base, 'callers', PA))).mode & 0o777, 0o700);
+  assert.equal((await stat(join(base, 'callers', PA, 'kroger-tokens.json'))).mode & 0o777, 0o600);
+});
+
+test('per patient: a sign-in finished after the call ended saves into the starter folder only', async () => {
+  const base = await tempDir();
+  const env = baseEnv(base);
+  const codes = new Map();
+  const fetchImpl = stateFetch(codes);
+  const a = make(env, fetchImpl, { patientId: PA, pollMs: 60_000, maxWaitMs: 120_000, unrefTimers: true });
+  const sa = await a.startKrogerSignIn();
+  a.cancel(); // the call ended; the pending record stays on disk
+  assert.equal(await exists(join(base, 'callers', PA, 'kroger-signin-pending.json')), true);
+  const b = make(env, fetchImpl, { patientId: PB });
+  const sb = await b.startKrogerSignIn();
+  assert.ok(sb.ok);
+  b.cancel();
+  codes.set(linkState(sa.link), 'late-a');
+  // a later process resumes A's sign-in with the base config (as the cart does)
+  const later = make(env, fetchImpl, { patientId: PA });
+  assert.deepEqual(await later.resumePendingSignIn({ config: readKrogerConfigFor(env) }), { resumed: 'connected' });
+  assert.equal(await refreshIn(join(base, 'callers', PA, 'kroger-tokens.json')), 'refresh-for-late-a');
+  assert.equal(await exists(join(base, 'callers', PB, 'kroger-tokens.json')), false);
+  assert.equal(await exists(join(base, 'kroger-tokens.json')), false);
+});
+
+const readKrogerConfigFor = (env) => ({
+  clientId: env.KROGER_CLIENT_ID,
+  clientSecret: env.KROGER_CLIENT_SECRET,
+  locationId: '01100695',
+  redirectUri: 'http://localhost:8765/callback',
+  tokenDir: env.KROGER_TOKEN_DIR,
+});
+
+test('per patient: the demo patient keeps the base folder and file names', async () => {
+  const base = await tempDir();
+  const env = baseEnv(base);
+  const codes = new Map();
+  const d = make(env, stateFetch(codes));
+  const sd = await d.startKrogerSignIn();
+  assert.ok(sd.ok);
+  assert.equal(await exists(join(base, 'kroger-signin-pending.json')), true);
+  codes.set(linkState(sd.link), 'code-d');
+  assert.deepEqual(await d.waitForKrogerSignIn(), { ok: true });
+  assert.equal(await refreshIn(join(base, 'kroger-tokens.json')), 'refresh-for-code-d');
+  assert.equal(await exists(join(base, 'callers')), false);
+  // 'demo' and null are the same patient as undefined
+  for (const id of ['demo', null]) {
+    const same = make(env, stateFetch(codes), { patientId: id });
+    assert.equal((await same.getKrogerStatus()).connected, true);
+  }
+});
+
+test('per patient: an invalid patient id builds no path and reports not connected', async () => {
+  const base = await tempDir();
+  const env = baseEnv(base);
+  const bad = ['../x', 'p/../../etc', '', 'DEMO', `p${'a'.repeat(23)}`, `p${'a'.repeat(25)}`, `p${'A'.repeat(24)}`, `x${'a'.repeat(24)}`, 7, {}];
+  for (const id of bad) {
+    const inst = make(env, stateFetch(new Map()), { patientId: id });
+    assert.deepEqual(await inst.startKrogerSignIn(), { ok: false, error: 'not_configured' });
+    const st = await inst.getKrogerStatus();
+    assert.equal(st.connected, false);
+    assert.equal(st.pending, false);
+    assert.deepEqual(await inst.resumePendingSignIn({ config: readKrogerConfigFor(env) }), { resumed: 'none' });
+  }
+  assert.deepEqual(await readdir(base), []);
+});
+
+test('per patient: module wrappers refuse an invalid id and touch nothing', async () => {
+  const base = await tempDir();
+  const saved = { ...process.env };
+  Object.assign(process.env, baseEnv(base));
+  try {
+    for (const id of ['../x', 'p/../../etc', 'nope']) {
+      assert.deepEqual(await startKrogerSignIn({ patientId: id }), { ok: false, error: 'not_configured' });
+      const st = await getKrogerStatus({ patientId: id });
+      assert.equal(st.connected, false);
+      assert.equal(st.pending, false);
+      assert.deepEqual(await waitForKrogerSignIn({ patientId: id }), { ok: false, error: 'no_pending' });
+      assert.deepEqual(await resumeKrogerSignIn({ patientId: id }), { resumed: 'none' });
+    }
+    // a valid id with nothing stored is simply not connected, and creates nothing
+    const st = await getKrogerStatus({ patientId: PC });
+    assert.equal(st.connected, false);
+    assert.equal(await exists(join(base, 'callers')), false);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+  assert.deepEqual(await readdir(base), []);
 });

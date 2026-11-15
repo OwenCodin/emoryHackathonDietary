@@ -308,3 +308,15 @@ test('pickImageUrl prefers featured front large and never returns an off-host UR
     assert.equal(pickImageUrl(bad), null);
   }
 });
+
+test('tokenDirFor: demo patient keeps the base folder, valid ids nest under callers, anything else is null', async () => {
+  const { tokenDirFor } = await import('./kroger.mjs');
+  const base = '/b';
+  for (const id of [undefined, null, 'demo']) assert.equal(tokenDirFor(base, id), base);
+  const p = `p${'0123456789abcdef'.repeat(2).slice(0, 24)}`;
+  const g = `g${'f'.repeat(24)}`;
+  assert.equal(tokenDirFor(base, p), join(base, 'callers', p));
+  assert.equal(tokenDirFor(base, g), join(base, 'callers', g));
+  const bad = ['', 'DEMO', `p${'a'.repeat(23)}`, `p${'a'.repeat(25)}`, `p${'A'.repeat(24)}`, '../x', 'p/../../etc', `x${'a'.repeat(24)}`, `p${'a'.repeat(24)}\n`, 7, {}, [], true];
+  for (const id of bad) assert.equal(tokenDirFor(base, id), null, String(id));
+});

@@ -10,6 +10,9 @@
 // rejected exchange or a malformed file is deleted; a relay 401/403 keeps it (a secret problem, not the patient's).
 // The relay hands a code out once, so a second claim from anywhere is a harmless 404 and the token is never saved twice.
 //
+// Tokens live per patient: the demo patient keeps the base token folder, every other caller gets callers/<id>/ under
+// it (see tokenDirFor). There is one controller per patient, so a link texted to a caller finishes into that caller's folder.
+//
 // Nothing here throws. Results carry only short codes; the only sensitive-looking value ever returned is the link
 // from startKrogerSignIn (the texted link is the one place a state appears). Logging is one value-free line per outcome.
 //
@@ -17,7 +20,7 @@
 // token, add up to 10 s of network on a live call and could race a running cart's own refresh. The cost: a revoked or
 // expired sign-in reads as connected until the cart reports it (the agent maps that cart failure to "not connected").
 import { randomBytes } from 'node:crypto';
-import { createKrogerClient, createPendingSignInStore, createTokenStore, readKrogerConfig } from './kroger.mjs';
+import { createKrogerClient, createPendingSignInStore, createTokenStore, readKrogerConfig, tokenDirFor } from './kroger.mjs';
 
 const MIN_SECRET = 32;
 const MAX_CODE = 2048;
@@ -63,7 +66,9 @@ export function createKrogerSignIn({
   codeTtlMs = 600_000, // mirror of the relay's CODE_TTL_MS
   resumeWaitMs = 2500,
   resumeRequestTimeoutMs = 2000,
+  patientId = undefined,
 } = {}) {
+  const dirOf = (config) => tokenDirFor(config.tokenDir, patientId);
   let generation = 0;
   let pending = null; // { gen, state, promise, resolve, timers: Set }
   let resumeFlight = null;
@@ -130,7 +135,7 @@ export function createKrogerSignIn({
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         locationId: config.locationId,
-        tokenStore: createStore({ dir: config.tokenDir }),
+        tokenStore: createStore({ dir: dirOf(config) }),
         fetchImpl,
       });
       const result = await client.exchangeCode({ code, redirectUri: relayRedirectUri(relay.relayUrl) });
@@ -142,7 +147,7 @@ export function createKrogerSignIn({
 
   async function removeRecord(config, state) {
     try {
-      await createPendingStore({ dir: config.tokenDir }).remove({ ifState: state });
+      await createPendingStore({ dir: dirOf(config) }).remove({ ifState: state });
     } catch {
       // the record expires by age
     }
@@ -186,7 +191,9 @@ export function createKrogerSignIn({
   async function resumeInner(given) {
     const config = given ?? readKrogerConfig(env);
     if (!config) return { resumed: 'none' };
-    const store = createPendingStore({ dir: config.tokenDir });
+    const dir = dirOf(config);
+    if (dir === null) return { resumed: 'none' };
+    const store = createPendingStore({ dir });
     const record = await store.load();
     if (!record) return { resumed: 'none' };
     const { state } = record;
@@ -244,13 +251,14 @@ export function createKrogerSignIn({
     try {
       const config = readKrogerConfig(env);
       if (!config) return { ok: false, error: 'not_configured' };
+      if (dirOf(config) === null) return { ok: false, error: 'not_configured' };
       const relay = readRelayConfig(env);
       if (!relay) return { ok: false, error: 'no_relay' };
       cancel();
       const gen = generation;
       const state = randomState();
       try {
-        const saved = await createPendingStore({ dir: config.tokenDir }).save({ state, startedAt: now() });
+        const saved = await createPendingStore({ dir: dirOf(config) }).save({ state, startedAt: now() });
         if (!saved?.ok) console.log('[actions] kroger sign-in not remembered');
       } catch {
         console.log('[actions] kroger sign-in not remembered');
@@ -279,15 +287,16 @@ export function createKrogerSignIn({
       const config = readKrogerConfig(env);
       const relay = readRelayConfig(env) !== null;
       if (!config) return { ok: true, configured: false, relay, connected: false, pending: false };
+      if (dirOf(config) === null) return { ok: true, configured: true, relay, connected: false, pending: false };
       try {
         await resumePendingSignIn({ config });
       } catch {
         // a resume problem never changes the answer
       }
-      const stored = await createStore({ dir: config.tokenDir }).load();
+      const stored = await createStore({ dir: dirOf(config) }).load();
       const connected = stored !== null;
       let isPending = pending !== null;
-      if (!isPending && !connected) isPending = (await createPendingStore({ dir: config.tokenDir }).load()) !== null;
+      if (!isPending && !connected) isPending = (await createPendingStore({ dir: dirOf(config) }).load()) !== null;
       return { ok: true, configured: true, relay, connected, pending: connected ? false : isPending };
     } catch {
       return { ok: true, configured: true, relay: false, connected: false, pending: pending !== null };
@@ -301,8 +310,51 @@ export function createKrogerSignIn({
   return { startKrogerSignIn, getKrogerStatus, waitForKrogerSignIn, resumePendingSignIn, cancel };
 }
 
-const controller = createKrogerSignIn();
-export const startKrogerSignIn = () => controller.startKrogerSignIn();
-export const getKrogerStatus = () => controller.getKrogerStatus();
-export const waitForKrogerSignIn = () => controller.waitForKrogerSignIn();
-export const resumeKrogerSignIn = (opts) => controller.resumePendingSignIn(opts);
+// One controller per patient, created lazily. 'demo' (undefined, null or 'demo') is today's single controller with
+// no patientId; a valid id gets its own; an invalid id never gets one and every wrapper answers without touching disk.
+const MAX_CONTROLLERS = 64;
+const controllers = new Map();
+
+function controllerFor(patientId) {
+  const demo = patientId === undefined || patientId === null || patientId === 'demo';
+  if (!demo && tokenDirFor('x', patientId) === null) return null;
+  const key = demo ? 'demo' : patientId;
+  let c = controllers.get(key);
+  if (c) return c;
+  if (controllers.size >= MAX_CONTROLLERS) {
+    for (const k of controllers.keys()) {
+      if (k === 'demo') continue;
+      controllers.get(k).cancel(); // keeps the pending record, so that sign-in can still be resumed from the file
+      controllers.delete(k);
+      break;
+    }
+  }
+  c = createKrogerSignIn(demo ? {} : { patientId });
+  controllers.set(key, c);
+  return c;
+}
+
+export const startKrogerSignIn = ({ patientId } = {}) => {
+  const c = controllerFor(patientId);
+  return c ? c.startKrogerSignIn() : Promise.resolve({ ok: false, error: 'not_configured' });
+};
+export const getKrogerStatus = ({ patientId } = {}) => {
+  const c = controllerFor(patientId);
+  if (c) return c.getKrogerStatus();
+  const config = readKrogerConfig();
+  return Promise.resolve({
+    ok: true,
+    configured: config !== null,
+    relay: readRelayConfig() !== null,
+    connected: false,
+    pending: false,
+  });
+};
+export const waitForKrogerSignIn = ({ patientId } = {}) => {
+  const c = controllerFor(patientId);
+  return c ? c.waitForKrogerSignIn() : Promise.resolve({ ok: false, error: 'no_pending' });
+};
+export const resumeKrogerSignIn = ({ patientId, ...opts } = {}) => {
+  const c = controllerFor(patientId);
+  return c ? c.resumePendingSignIn(opts) : Promise.resolve({ resumed: 'none' });
+};
