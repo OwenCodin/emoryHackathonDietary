@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
-import { WAVE, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintMouth, paintWave, renderSvg, VERDICTS, waveBand } from './card.mjs';
+import { VOICE_INDICATOR, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintMouth, paintVoiceIndicator, renderSvg, VERDICTS, voiceIndicatorBand } from './card.mjs';
 
 globalThis.fetch = async () => { throw new Error('network used'); };
 
@@ -105,7 +105,7 @@ describe('text safety', () => {
   });
 });
 
-describe('render and wave', () => {
+describe('render and voice indicator', () => {
   it('renders exact size, offset 0, not flat', async () => {
     for (const svg of [brandSvg(), one({ verdict: 'avoid' })]) {
       const px = await renderSvg(svg);
@@ -118,19 +118,25 @@ describe('render and wave', () => {
   it('rejects on timeout', async () => {
     await assert.rejects(renderSvg(brandSvg(), { timeoutMs: 0 }));
   });
-  it('paints only inside the band and moves', () => {
-    const band = waveBand(SAFE_SCALE_DEFAULT);
+  it('paints a warm halo that breathes at rest and pulses while speaking', () => {
+    const band = voiceIndicatorBand(SAFE_SCALE_DEFAULT);
     const base = new Uint8Array(WIDTH * HEIGHT * 4).fill(7);
     const a = base.slice(), b = base.slice(), c = base.slice(), d = base.slice();
     const s = SAFE_SCALE_DEFAULT;
-    paintWave(a, 5, true, s); paintWave(b, 5, false, s); paintWave(c, 0, false, s); paintWave(d, 7, false, s);
+    paintVoiceIndicator(a, 5, true, s); paintVoiceIndicator(b, 5, false, s);
+    paintVoiceIndicator(c, 0, false, s); paintVoiceIndicator(d, 7, false, s);
     assert.notDeepEqual(a, b);
     assert.notDeepEqual(c, d);
+    const area = safeArea(s);
+    const centerX = Math.round(area.x + VOICE_INDICATOR.x * s);
+    const centerY = Math.round(area.y + VOICE_INDICATOR.center * s);
+    const center = (centerY * WIDTH + centerX) * 4;
+    assert.ok(b[center] > 220 && b[center + 1] > 200 && b[center] > b[center + 2], 'idle core should read as warm cream');
     for (const p of [a, b, c, d]) {
-      for (let y = 0; y < HEIGHT; y++) {
-        if (y >= band.top && y < band.bottom) continue;
-        const row = y * WIDTH * 4;
-        assert.ok(p.subarray(row, row + WIDTH * 4).every(v => v === 7), `row ${y}`);
+      for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
+        const index = (y * WIDTH + x) * 4;
+        if (p[index] === 7 && p[index + 1] === 7 && p[index + 2] === 7 && p[index + 3] === 7) continue;
+        assert.ok(x >= band.left && x < band.right && y >= band.top && y < band.bottom, `outside indicator ${x},${y}`);
       }
     }
   });
@@ -147,19 +153,20 @@ describe('render and wave', () => {
     assert.ok(outside(0, 0));
     assert.ok(outside(WIDTH - 1, HEIGHT - 1));
   });
-  it('waveBand at scale 1 is the old band', () => {
-    assert.deepEqual(waveBand(1), { top: 505, bottom: 585, left: 135, right: 1145 });
-    assert.equal(WAVE.top, 505);
+  it('voice indicator band stays centered and within its reserved area', () => {
+    assert.deepEqual(voiceIndicatorBand(1), { top: 505, bottom: 585, left: 602, right: 678 });
+    assert.equal(VOICE_INDICATOR.top, 505);
   });
-  it('wave stays inside the safe rect at 0.8 for every tick', () => {
-    const s = SAFE_SCALE_DEFAULT, a = safeArea(s), band = waveBand(s);
+  it('voice indicator stays inside the safe rect at 0.8 for every tick', () => {
+    const s = SAFE_SCALE_DEFAULT, a = safeArea(s), band = voiceIndicatorBand(s);
     for (let t = 0; t <= 60; t++) for (const speaking of [true, false]) {
       const p = new Uint8Array(WIDTH * HEIGHT * 4).fill(7);
-      paintWave(p, t, speaking, s);
+      paintVoiceIndicator(p, t, speaking, s);
       for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
-        if (p[(y * WIDTH + x) * 4] === 7) continue;
+        const index = (y * WIDTH + x) * 4;
+        if (p[index] === 7 && p[index + 1] === 7 && p[index + 2] === 7 && p[index + 3] === 7) continue;
         assert.ok(x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height, `outside safe ${x},${y}`);
-        assert.ok(y >= band.top && y < band.bottom, `outside band ${y}`);
+        assert.ok(x >= band.left && x < band.right && y >= band.top && y < band.bottom, `outside band ${x},${y}`);
       }
     }
   });

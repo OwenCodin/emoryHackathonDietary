@@ -21,10 +21,8 @@ export const VERDICTS = {
 };
 const verdictOf = key => (Object.hasOwn(VERDICTS, key) ? VERDICTS[key] : VERDICTS.unknown);
 
-// The voice wave is painted per frame along the lower edge of the safe area.
-export const WAVE = { top: 505, bottom: 585, center: 545, bars: 32, barWidth: 18, gap: 14, color: [94, 234, 212], flat: 6 };
-const WAVE_SPAN = WAVE.bars * WAVE.barWidth + (WAVE.bars - 1) * WAVE.gap;
-const WAVE_LEFT = Math.round((WIDTH - WAVE_SPAN) / 2);
+// A warm voice halo is painted per frame along the lower edge of the safe area.
+export const VOICE_INDICATOR = { top: 505, bottom: 585, center: 545, x: WIDTH / 2, radius: 38, coreRadius: 13 };
 
 // ---- text safety ------------------------------------------------------------------------------
 
@@ -278,16 +276,16 @@ export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   return parts.join('');
 }
 
-// ---- voice wave -------------------------------------------------------------------------------
+// ---- voice indicator --------------------------------------------------------------------------
 
-// The wave band in frame pixels, after the safe-area mapping.
-export function waveBand(scale = SAFE_SCALE) {
+// The indicator band in frame pixels, after the safe-area mapping.
+export function voiceIndicatorBand(scale = SAFE_SCALE) {
   const a = safeArea(scale);
   return {
-    top: Math.floor(a.y + WAVE.top * scale),
-    bottom: Math.ceil(a.y + WAVE.bottom * scale),
-    left: Math.floor(a.x + WAVE_LEFT * scale),
-    right: Math.ceil(a.x + (WAVE_LEFT + WAVE_SPAN) * scale),
+    top: Math.floor(a.y + VOICE_INDICATOR.top * scale),
+    bottom: Math.ceil(a.y + VOICE_INDICATOR.bottom * scale),
+    left: Math.floor(a.x + (VOICE_INDICATOR.x - VOICE_INDICATOR.radius) * scale),
+    right: Math.ceil(a.x + (VOICE_INDICATOR.x + VOICE_INDICATOR.radius) * scale),
   };
 }
 
@@ -311,7 +309,7 @@ function paintEllipse(pixels, cx, cy, rx, ry, color, scale) {
   }
 }
 
-// The mouth follows the same speaking state as the audio and voice wave.
+// The mouth follows the same speaking state as the audio and voice indicator.
 export function paintMouth(pixels, tick, speaking, scale = SAFE_SCALE) {
   const openAmount = speaking ? 2 + 8 * Math.abs(Math.sin((Number.isFinite(tick) ? tick : 0) * 0.8)) : 1.2;
   paintEllipse(pixels, 382, 386, 27, openAmount + 3, [157, 83, 87], scale);
@@ -321,36 +319,50 @@ export function paintMouth(pixels, tick, speaking, scale = SAFE_SCALE) {
   }
 }
 
-// x0..y1 are in design space; they are mapped to frame space before rounding.
-function fillRect(pixels, x0, y0, x1, y1, [r, g, b], scale) {
-  const a = safeArea(scale);
-  const band = waveBand(scale);
-  const xa = Math.max(0, Math.min(WIDTH, Math.round(a.x + x0 * scale)));
-  const xb = Math.max(0, Math.min(WIDTH, Math.round(a.x + x1 * scale)));
-  const ya = Math.max(band.top, Math.min(band.bottom, Math.round(a.y + y0 * scale)));
-  const yb = Math.max(band.top, Math.min(band.bottom, Math.round(a.y + y1 * scale)));
-  for (let y = ya; y < yb; y++) {
-    for (let x = xa; x < xb; x++) {
-      const i = (y * WIDTH + x) * 4;
-      pixels[i] = r; pixels[i + 1] = g; pixels[i + 2] = b; pixels[i + 3] = 255;
-    }
-  }
+function blendPixel(pixels, index, color, alpha) {
+  const keep = 1 - alpha;
+  pixels[index] = Math.round(pixels[index] * keep + color[0] * alpha);
+  pixels[index + 1] = Math.round(pixels[index + 1] * keep + color[1] * alpha);
+  pixels[index + 2] = Math.round(pixels[index + 2] * keep + color[2] * alpha);
+  pixels[index + 3] = 255;
 }
 
-// Mutates the RGBA buffer in place, only inside the wave band.
-export function paintWave(pixels, tick, speaking, scale = SAFE_SCALE) {
+// Mutates the RGBA buffer in place, only inside the voice indicator band.
+export function paintVoiceIndicator(pixels, tick, speaking, scale = SAFE_SCALE) {
   const t = Number.isFinite(tick) ? tick : 0;
-  if (speaking) {
-    for (let i = 0; i < WAVE.bars; i++) {
-      const level = Math.abs(Math.sin(t * 0.55 + i * 0.7)) * (0.35 + 0.65 * Math.abs(Math.sin(t * 0.23 + i * 1.3)));
-      const h = 10 + level * 66;
-      const x = WAVE_LEFT + i * (WAVE.barWidth + WAVE.gap);
-      fillRect(pixels, x, WAVE.center - h / 2, x + WAVE.barWidth, WAVE.center + h / 2, WAVE.color, scale);
+  const area = safeArea(scale);
+  const band = voiceIndicatorBand(scale);
+  const pulse = 0.5 + 0.5 * Math.sin(t * (speaking ? 0.34 : 0.12));
+  const ringRadius = speaking ? 21 + 13 * pulse : 24 + 3 * pulse;
+  const coreRadius = VOICE_INDICATOR.coreRadius + (speaking ? 1.5 : 0.5) * pulse;
+  const centerX = area.x + VOICE_INDICATOR.x * scale;
+  const centerY = area.y + VOICE_INDICATOR.center * scale;
+  const outerRadius = VOICE_INDICATOR.radius * scale;
+  const x0 = Math.max(band.left, Math.floor(centerX - outerRadius));
+  const x1 = Math.min(band.right, Math.ceil(centerX + outerRadius));
+  const y0 = Math.max(band.top, Math.floor(centerY - outerRadius));
+  const y1 = Math.min(band.bottom, Math.ceil(centerY + outerRadius));
+
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const dx = (x - centerX) / scale;
+      const dy = (y - centerY) / scale;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > VOICE_INDICATOR.radius) continue;
+
+      const glow = 1 - distance / VOICE_INDICATOR.radius;
+      const index = (y * WIDTH + x) * 4;
+      blendPixel(pixels, index, [197, 157, 111], 0.18 * glow * glow);
+
+      const ringDistance = (distance - ringRadius) / 3.5;
+      const ringAlpha = (speaking ? 0.5 : 0.28) * Math.exp(-ringDistance * ringDistance);
+      blendPixel(pixels, index, [241, 199, 145], ringAlpha);
+
+      if (distance <= coreRadius) {
+        blendPixel(pixels, index, [255, 237, 211], 0.92 - 0.12 * distance / coreRadius);
+        if (distance < coreRadius * 0.32) blendPixel(pixels, index, [255, 251, 239], 0.36);
+      }
     }
-  } else {
-    fillRect(pixels, WAVE_LEFT, WAVE.center - WAVE.flat / 2, WAVE_LEFT + WAVE_SPAN, WAVE.center + WAVE.flat / 2, WAVE.color, scale);
-    const dotX = WAVE_LEFT + ((Math.abs(Math.floor(t)) * 9) % (WAVE_SPAN - 14));
-    fillRect(pixels, dotX, WAVE.center - 7, dotX + 14, WAVE.center + 7, [255, 255, 255], scale);
   }
 }
 

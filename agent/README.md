@@ -360,13 +360,13 @@ Any tool can also return `timeout` or `tool_failed` from the guard. Whether Gemi
 
 ### Video out
 
-Sizes still come from `shared/video.mjs` (`WIDTH`, `HEIGHT`, `FPS`). Track C's cart frame still wins when it is exactly the right length (`agent/video.mjs`). Otherwise `agent/screen.mjs` shows a FaceTime-style RenaLine companion portrait with a voice wave and a concise floating information panel.
+Sizes still come from `shared/video.mjs` (`WIDTH`, `HEIGHT`, `FPS`). Track C's cart frame still wins when it is exactly the right length (`agent/video.mjs`). Otherwise `agent/screen.mjs` shows a FaceTime-style RenaLine companion portrait with a warm, softly pulsing voice halo and a concise floating information panel.
 
-After a successful `check_food` or `look_at_camera` the panel shows YES, MAYBE, NO or CHECK, the food, and the nutrient numbers and portion from the tool result only. A look shows up to three rows, and "Found online" appears when the numbers came from a web search. The portrait mouth follows the speaking state; the voice wave remains synchronized with it. The card stays for 15 seconds (`AGENT_CARD_SECONDS`) or until the next verdict, then the brand screen returns. A failed or timed-out tool never shows a card.
+After a successful `check_food` or `look_at_camera` the panel shows YES, MAYBE, NO or CHECK, the food, and the nutrient numbers and portion from the tool result only. A look shows up to three rows, and "Found online" appears when the numbers came from a web search. The portrait mouth and voice halo follow the speaking state. The halo breathes gently while idle and expands while speaking. The card stays for 15 seconds (`AGENT_CARD_SECONDS`) or until the next verdict, then the brand screen returns. A failed or timed-out tool never shows a card.
 
-Everything the agent draws (brand screen, verdict cards, voice wave, drawn face) is laid out at full size and then placed in the centred safe area from `shared/video.mjs` (80% of the width and height by default, set by `VIDEO_SAFE_SCALE`), because a caller reported on 14 Nov 2026 that the picture was cut off on all four edges. The background still fills the frame. The scale is applied when a screen is rendered, not per frame. It has not yet been seen on a live call.
+Everything the agent draws (brand screen, verdict cards, voice halo, drawn face) is laid out at full size and then placed in the centred safe area from `shared/video.mjs` (80% of the width and height by default, set by `VIDEO_SAFE_SCALE`), because a caller reported on 14 Nov 2026 that the picture was cut off on all four edges. The background still fills the frame. The scale is applied when a screen is rendered, not per frame. It has not yet been seen on a live call.
 
-The card data goes through the `onDisplay` callback of `buildTools` and is never sent to the model. Screens are SVG pages rendered by sharp in the background; the wave is painted on each frame tick. If a render fails the last screen stays. If the brand screen cannot be rendered, the drawn face in `agent/face.mjs` is shown.
+The card data goes through the `onDisplay` callback of `buildTools` and is never sent to the model. Screens are SVG pages rendered by sharp in the background; the voice halo is painted on each frame tick. If a render fails the last screen stays. If the brand screen cannot be rendered, the drawn face in `agent/face.mjs` is shown.
 
 Preview the screens with `node agent/sim/preview-card.mjs <folder outside the repo>`. Whether the text is readable on a phone is not checked on a live call.
 

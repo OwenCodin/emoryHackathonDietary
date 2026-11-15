@@ -2,7 +2,7 @@
 // for a few seconds after a verdict. Rendering happens in the background; frame() is synchronous,
 // never throws and always returns a fresh exact-size RGBA array.
 import { HEIGHT, WIDTH } from '../shared/video.mjs';
-import { brandSvg, cardSvg, paintMouth, paintWave, renderSvg } from './card.mjs';
+import { brandSvg, cardSvg, paintMouth, paintVoiceIndicator, renderSvg } from './card.mjs';
 import { createFaceFrames } from './face.mjs';
 
 const LENGTH = WIDTH * HEIGHT * 4;
@@ -75,7 +75,7 @@ export function createScreen({
       if (!base) return fallback.frame(tick, speaking);
       const pixels = base.slice();
       paintMouth(pixels, tick, speaking);
-      paintWave(pixels, tick, speaking);
+      paintVoiceIndicator(pixels, tick, speaking);
       return pixels;
     } catch {
       try { return fallback.frame(tick, speaking); } catch { return new Uint8Array(LENGTH); }
