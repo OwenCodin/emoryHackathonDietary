@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-sks: optional protein and carbs limits
+Last activity: 2026-11-14 - Completed quick task 261114-sr6: per-caller identity and text-first setup
 
 Progress: [██████████] 100%
 
@@ -114,6 +114,7 @@ None yet.
 | fast | Agent waits for the caller to stop talking: end-of-speech sensitivity low and one second of silence (AGENT_END_SILENCE_MS, 300 to 3000) before a turn ends; the model accepted the setting in a test session (641/641 pass). Not yet heard on a call | 2026-11-14 | 11ff696 | - |
 | 261114-oyc | Dish to ingredients to list to Kroger cart: renal dishIngredients (model gives names and quantities only, every ingredient re-checked by checkFood), actions previewCart (read-only list card, not in the Kroger cart yet), agent tools dish_ingredients, remove_from_list, set_quantity, text_list, start_cart refuses until the list was read back (confirm_list), honest sentence that Kroger items cannot be removed, prompt playbook and start_setup restriction, shared contract updated in all three READMEs (679/679 pass). Live read-only check for a ham sandwich passed; not yet run on a call | 2026-11-14 | d7d4018 | [261114-oyc-dish-to-ingredients-to-shopping-list-to-](./quick/261114-oyc-dish-to-ingredients-to-shopping-list-to-/) |
 | 261114-sks | Optional protein and carbs daily limits in grams: skippable setup step, judged only when the profile has the limit, verdict card grows to a second row of tiles (694 tests: 686 pass, 8 fail, the same 8 as before the change) | 2026-11-14 | e8a7c2d | [261114-sks-add-optional-protein-and-carbs-limits-on](./quick/261114-sks-add-optional-protein-and-carbs-limits-on/) |
+| 261114-sr6 | Per-caller identity from the Chert call record behind AGENT_OPEN_ACCESS=1: own profile and memory per phone, texts to the caller's own number, text-first setup step with check_text_received; lookup and text check verified read-only against the live Chert API, not yet on a live call (727 tests: 719 pass, 8 fail, the same 8 as before) | 2026-11-14 | 413a227 | [261114-sr6-per-caller-identity-from-chert-so-any-jo](./quick/261114-sr6-per-caller-identity-from-chert-so-any-jo/) |
 
 ## Session Continuity
 
