@@ -2,7 +2,7 @@
 // Track C's getCartFrame must return WIDTH * HEIGHT * 4 RGBA bytes.
 export const WIDTH = 1280;
 export const HEIGHT = 720;
-export const FPS = 15;
+export const FPS = 30;
 
 // FaceTime shows the video zoomed on the caller's phone, so content is drawn inside a centred safe area
 // while backgrounds still fill the whole frame. VIDEO_SAFE_SCALE tunes it (0.5 to 1), read once at import.

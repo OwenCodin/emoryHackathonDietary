@@ -1,4 +1,4 @@
-// Which picture goes out on each frame tick: Track C's browser frame when one is offered, otherwise the agent's own picture.
+// Which picture goes out on each frame tick: Track C's browser frame when one is offered, otherwise the agent UI.
 // No LiveKit imports, so everything here is unit tested offline.
 
 // Never throws. A cart frame is accepted only as a Uint8Array of exactly expectedLength bytes.
@@ -11,12 +11,12 @@ export function pickFrame(cartFrame, drawOwnPicture, expectedLength) {
       return { source: 'cart', pixels: exact ? cartFrame : new Uint8Array(cartFrame), rejected: false };
     }
   } catch { /* fall through to the agent's own picture */ }
-  return { source: 'face', pixels: drawOwnPicture(), rejected: cartFrame !== null && cartFrame !== undefined };
+  return { source: 'ui', pixels: drawOwnPicture(), rejected: cartFrame !== null && cartFrame !== undefined };
 }
 
 // One picker per call: it remembers what it already logged, so nothing is logged on every tick.
 export function createVideoPicker({ getCartFrame, drawOwnPicture, expectedLength, log = message => console.log(message) }) {
-  let current = 'face', loggedFailed = false, loggedIgnored = false;
+  let current = 'ui', loggedFailed = false, loggedIgnored = false;
   const say = message => { try { log(message); } catch { /* logging must never break the video */ } };
   return {
     next() {

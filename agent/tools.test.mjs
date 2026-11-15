@@ -1291,7 +1291,7 @@ describe('display hook', () => {
   it('check_food emits structured data and leaves the model output alone', async () => {
     const c = collect();
     const r = await build({ ...c, renal: { ...renal, checkFood: async a => web(a.food.name) } }).check_food.execute({ name: 'banana', grams: null });
-    assert.deepEqual(c.calls, [{ items: [{ food: 'banana', verdict: 'ok', nutrients: nutr, portion: '118 g', online: true }], more: 0, unjudged: false, seen: 1, online: true }]);
+    assert.deepEqual(c.calls, [{ items: [{ food: 'banana', verdict: 'ok', reason: 'Spoken words 999 mg.', swap: '', nutrients: nutr, portion: '118 g', online: true }], more: 0, unjudged: false, seen: 1, online: true }]);
     assert.deepEqual(Object.keys(r), ['ok', 'food', 'verdict', 'spoken', 'swap']);
     assert.ok(!JSON.stringify(r).includes('422'));
   });

@@ -14,14 +14,13 @@ globalThis.fetch = async () => {
   throw new Error('network used by a stub');
 };
 
-let video, renal, actions, tools, face;
+let video, renal, actions, tools;
 
 before(async () => {
   video = await import('../shared/video.mjs');
   renal = await import('../renal/index.mjs');
   actions = await import('../actions/index.mjs');
   tools = await import('./tools.mjs');
-  face = await import('./face.mjs');
 });
 after(async () => {
   globalThis.fetch = originalFetch;
@@ -48,7 +47,7 @@ describe('shared/video.mjs', () => {
   it('defines the video size and rate', () => {
     assert.equal(video.WIDTH, 1280);
     assert.equal(video.HEIGHT, 720);
-    assert.equal(video.FPS, 15);
+    assert.equal(video.FPS, 30);
   });
 });
 
@@ -208,15 +207,5 @@ describe('agent/tools.mjs', () => {
     assert.equal(r.food, 'banana');
     assert.ok(['ok', 'limit', 'avoid', 'unknown'].includes(r.verdict));
     assert.ok(isStr(r.spoken));
-  });
-});
-
-describe('agent/face.mjs', () => {
-  it('draws WIDTH x HEIGHT RGBA frames', () => {
-    for (const [tick, speaking] of [[0, false], [1, true]]) {
-      const px = face.drawFace(tick, speaking);
-      assert.ok(px instanceof Uint8Array);
-      assert.equal(px.length, video.WIDTH * video.HEIGHT * 4);
-    }
   });
 });

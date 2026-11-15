@@ -3,6 +3,7 @@ import { defineAgent, voice } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
 import { LocalVideoTrack, TrackPublishOptions, TrackSource, VideoBufferType, VideoFrame, VideoSource } from '@livekit/rtc-node';
 import { createScreen } from './screen.mjs';
+import { attachAudioLevelMeter } from './audio-level.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
 import { buildTools, endCall, setupStatus, withTimeout } from './tools.mjs';
@@ -68,15 +69,14 @@ const agent = defineAgent({
     // from the participant that speaks, so the picture and the voice stay together.
     const source = new VideoSource(WIDTH, HEIGHT);
     const track = LocalVideoTrack.createVideoTrack('agent-video', source);
-    let tick = 0, speaking = false, timer = null;
-    // Track C's browser frame while a cart runs (exact size or nothing), the cached face otherwise.
-    // The brand screen renders in the background; the drawn face shows until it is ready. Nothing is awaited on the call path.
+    let tick = 0, timer = null;
+    // Track C's browser frame while a cart runs (exact size or nothing); otherwise use the call UI renderer.
     const screen = createScreen();
     const fakeCart = process.env.AGENT_FAKE_CART === '1' ? createFakeCart() : null;
     if (fakeCart) console.log('[agent] video: fake cart provider on (simulated proof only)');
     const picker = createVideoPicker({
       getCartFrame: fakeCart ? fakeCart.getCartFrame : getCartFrame,
-      drawOwnPicture: () => screen.frame(tick++, speaking),
+      drawOwnPicture: () => screen.frame(tick++),
       expectedLength: WIDTH * HEIGHT * 4,
     });
     // A failed frame must never take the call down: the timer callback has no caller to catch for it.
@@ -106,8 +106,16 @@ const agent = defineAgent({
     const watchdog = createReplyWatchdog();
     let nudgeTimer = null, closing = false;
     let heardAt = 0, heardAny = false; // when the caller last spoke (time only), for confirm_limits
+    let sessionUIState = 'idle';
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => {
-      try { speaking = event.newState === 'speaking'; watchdog.agentState(event.newState); } catch { /* never breaks the call */ }
+      try {
+        const next = ['idle', 'listening', 'thinking', 'speaking'].includes(event?.newState)
+          ? event.newState
+          : 'idle';
+        sessionUIState = next;
+        screen.setState(next);
+        watchdog.agentState(event.newState);
+      } catch { /* never breaks the call */ }
     });
     // The caller's words, as a length only: the transcript text is never kept or logged.
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, event => {
@@ -208,6 +216,7 @@ const agent = defineAgent({
       // stopCart goes first so a cart from this call cannot block or leak into the next one.
       const steps = [
         ['cart', () => endCall()],
+        ['screen', () => screen.close()],
         ['session', () => session.close()],
         ['audioAbort', () => audioAbort?.abort()],
         ['audioOut', () => audioOut?.close()],
@@ -270,7 +279,16 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions: buildInstructions(prefs), tools: buildTools({ camera, patientId: 'demo', memory, setupDue, callerHeardAfter: t => (heardAny ? heardAt > t : null), onToolActivity: delta => watchdog.toolActivity(delta), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
+        agent: new voice.Agent({ instructions: buildInstructions(prefs), tools: buildTools({
+          camera,
+          patientId: 'demo',
+          memory,
+          setupDue,
+          callerHeardAfter: t => (heardAny ? heardAt > t : null),
+          onToolActivity: delta => watchdog.toolActivity(delta),
+          onLookingActivity: delta => screen.setState(delta > 0 ? 'looking' : sessionUIState),
+          onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } },
+        }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,
@@ -282,6 +300,9 @@ const agent = defineAgent({
         },
         outputOptions: { audioEnabled: true, transcriptionEnabled: false },
       });
+      if (!attachAudioLevelMeter(session.output?.audio, level => screen.setOutputLevel(level))) {
+        console.log('[agent] video audio meter unavailable; using the speaking-state fallback');
+      }
     } catch (error) {
       markFailed(error);
       throw error; // the shutdown callbacks above close the timer, track, source and session

@@ -203,7 +203,10 @@ function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout
       const fitted = fit(result, limit);
       // A card is shown only for a finished, successful verdict (never a timeout, a failure or the TOO_LONG summary).
       if (!call.timedOut && call.display && fitted?.ok === true && (typeof fitted.verdict === 'string' || Array.isArray(fitted.results))) {
-        try { display(call.display); } catch { /* a hook never changes a result */ }
+        try {
+          const reason = call.display.reason || (typeof fitted.say === 'string' ? fitted.say : '');
+          display(reason ? { ...call.display, reason } : call.display);
+        } catch { /* a hook never changes a result */ }
       }
       return fitted;
     } catch {
@@ -217,16 +220,21 @@ function guardTool(fn, { timeoutMs, limit = 600, onTimeout = () => fail('timeout
 
 const normalVerdict = v => (Object.hasOwn(RANK, v) ? v : 'unknown');
 
-// What the video screen may draw for one checked food: only fields the renal check returned, never its spoken text.
-const displayItem = (v, fallbackName, verdict) => ({
-  food: clean(v.food ?? fallbackName, 80),
-  verdict,
-  nutrients: v.nutrients && typeof v.nutrients === 'object'
-    ? { sodiumMg: v.nutrients.sodiumMg ?? null, potassiumMg: v.nutrients.potassiumMg ?? null, phosphorusMg: v.nutrients.phosphorusMg ?? null }
-    : null,
-  portion: typeof v.portion === 'string' ? clean(v.portion, 60) : null,
-  online: v.source === 'web',
-});
+// The panel receives only the checked food, its verdict and the explanation returned by the renal check.
+const displayItem = (v, fallbackName, verdict) => {
+  const reason = typeof v.say === 'string' ? clean(v.say, 240) : '';
+  return {
+    food: clean(v.food ?? fallbackName, 80),
+    verdict,
+    ...(reason ? { reason } : {}),
+    swap: typeof v.swap === 'string' ? clean(v.swap, 60) : '',
+    nutrients: v.nutrients && typeof v.nutrients === 'object'
+      ? { sodiumMg: v.nutrients.sodiumMg ?? null, potassiumMg: v.nutrients.potassiumMg ?? null, phosphorusMg: v.nutrients.phosphorusMg ?? null }
+      : null,
+    portion: typeof v.portion === 'string' ? clean(v.portion, 60) : null,
+    online: v.source === 'web',
+  };
+};
 
 // Picks the best checked food: ok, then limit, then unknown; never avoid, never a failed check.
 // Ties go to the lowest largest share of a daily limit, then to the order seen. Pure.
@@ -314,6 +322,7 @@ export function buildTools({
   timeoutMs = 12000,
   phone = process.env.PATIENT_PHONE,
   onToolActivity = () => {},
+  onLookingActivity = () => {},
   memory = null,
   onDisplay = () => {},
   cartWaitMs = 8000,
@@ -322,7 +331,14 @@ export function buildTools({
   now = () => Date.now(),
 } = {}) {
   // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
-  const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity, display: onDisplay });
+  const guard = (fn, opts) => guardTool(fn, {
+    ...opts,
+    activity: delta => {
+      onToolActivity(delta);
+      opts?.activity?.(delta);
+    },
+    display: opts?.display ?? onDisplay,
+  });
   let lastFoods = []; // food names from the last look only; suggest_meal cooks from these
   const candidates = new Map(); // judged foods log_meal may log: key -> { names, verdict }
   let lastMissing = []; // CartItems the last meal suggestion said are missing
@@ -445,6 +461,7 @@ export function buildTools({
           unjudged,
           seen: rows.length,
           online: good.some(g => g.v?.source === 'web'),
+          reason: rows.map(r => r.v?.say).filter(value => typeof value === 'string').join(' ').slice(0, 300),
         };
         if (!call.timedOut && !nameless) {
           lastFoods = foods.map(f => clean(f.name, 80));
@@ -505,7 +522,7 @@ export function buildTools({
           if (size(r) <= LOOK_LIMIT) return r;
         }
         return build(1, 60, 0, 24);
-      }, { timeoutMs, limit: LOOK_LIMIT }),
+      }, { timeoutMs, limit: LOOK_LIMIT, activity: onLookingActivity }),
     }),
     check_food: llm.tool({
       description: 'Judge a food the caller names without showing it. Pass null for grams when they gave no amount.',
