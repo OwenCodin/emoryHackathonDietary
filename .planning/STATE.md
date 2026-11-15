@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Completed quick task 261114-pqe: full recipe by iMessage for a shown or named dish
+Last activity: 2026-11-14 - Fast task: dish flow without the read-out, unrecognized dishes refused
 
 Progress: [██████████] 100%
 
@@ -114,6 +114,7 @@ None yet.
 | fast | Agent waits for the caller to stop talking: end-of-speech sensitivity low and one second of silence (AGENT_END_SILENCE_MS, 300 to 3000) before a turn ends; the model accepted the setting in a test session (641/641 pass). Not yet heard on a call | 2026-11-14 | 11ff696 | - |
 | 261114-oyc | Dish to ingredients to list to Kroger cart: renal dishIngredients (model gives names and quantities only, every ingredient re-checked by checkFood), actions previewCart (read-only list card, not in the Kroger cart yet), agent tools dish_ingredients, remove_from_list, set_quantity, text_list, start_cart refuses until the list was read back (confirm_list), honest sentence that Kroger items cannot be removed, prompt playbook and start_setup restriction, shared contract updated in all three READMEs (679/679 pass). Live read-only check for a ham sandwich passed; not yet run on a call | 2026-11-14 | d7d4018 | [261114-oyc-dish-to-ingredients-to-shopping-list-to-](./quick/261114-oyc-dish-to-ingredients-to-shopping-list-to-/) |
 | 261114-pqe | Full recipe by iMessage for a shown or named dish: renal dishRecipe (ingredients re-checked by checkFood, avoid items swapped or left out and named, model writes only steps and minutes, salt steps rejected, built-in steps for four dishes), text_recipe sends the dish from the last dish_ingredients via dishRecipeText, per-serving numbers line in meal recipes, recipe_unavailable, prompt and shared contract in all three READMEs (704 tests: 701 pass without .env.local; the 3 failures are in agent/card.test.mjs and predate this task). Live: ham sandwich and spaghetti bolognese recipes built in under 2 s; not yet run on a call | 2026-11-14 | b5d3aa6 | [261114-pqe-recipe-flow-meal-preferences-another-ide](./quick/261114-pqe-recipe-flow-meal-preferences-another-ide/) |
+| fast | Dish flow after a simulated voice call: dish_ingredients no longer reads the ingredients out (count and flagged items only; the texted recipe carries them), a dish the model does not recognize gives dish_unknown instead of a guessed recipe, the generic swap phrase is not returned as a swap; on branch recipe-fixes with origin/ui-work merged in (708 tests: 705 pass without .env.local; the 3 failures are in agent/card.test.mjs and predate this). Live: nonsense dishes refused, ham sandwich and banana smoothie recipes built; spoken dish name to texted recipe confirmed once on a simulated call before these fixes | 2026-11-14 | e5a693b | - |
 
 ## Session Continuity
 
