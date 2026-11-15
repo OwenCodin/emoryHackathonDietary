@@ -2,8 +2,8 @@
 // for a few seconds after a verdict. Rendering happens in the background; frame() is synchronous,
 // never throws and always returns a fresh exact-size RGBA array.
 import { HEIGHT, WIDTH } from '../shared/video.mjs';
-import { brandSvg, cardSvg, paintMouth, paintVoiceIndicator, renderSvg } from './card.mjs';
-import { createFaceFrames } from './face.mjs';
+import { brandSvg, cardSvg, paintVoiceIndicator, renderSvg } from './card.mjs';
+import { createCompanionFrames } from './companion.mjs';
 
 const LENGTH = WIDTH * HEIGHT * 4;
 
@@ -14,7 +14,7 @@ export function cardMsFrom(env = process.env) {
 
 export function createScreen({
   render = renderSvg,
-  fallback = createFaceFrames(),
+  fallback = createCompanionFrames(),
   now = Date.now,
   cardMs = cardMsFrom(process.env),
   renderTimeoutMs = 3000,
@@ -44,7 +44,7 @@ export function createScreen({
   try {
     const p = draw(brandSvg()).then(
       pixels => { idle = pixels; },
-      () => { idleFailed = true; safeLog('[agent] video: brand screen failed, using face'); },
+      () => { idleFailed = true; safeLog('[agent] video: brand screen failed, using companion fallback'); },
     );
     track(p);
   } catch {
@@ -74,7 +74,6 @@ export function createScreen({
       const base = card?.pixels ?? idle;
       if (!base) return fallback.frame(tick, speaking);
       const pixels = base.slice();
-      paintMouth(pixels, tick, speaking);
       paintVoiceIndicator(pixels, tick, speaking);
       return pixels;
     } catch {

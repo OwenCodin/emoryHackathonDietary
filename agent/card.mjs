@@ -6,12 +6,12 @@ import sharp from 'sharp';
 import { HEIGHT, SAFE_SCALE, WIDTH, safeArea, safeTransform } from '../shared/video.mjs';
 
 const FONT = 'Helvetica Neue, Helvetica, Arial, sans-serif';
-const BACKGROUND = '#0F2430';
+const BACKGROUND = '#142827';
 const WHITE = '#FFFFFF';
-const SOFT = '#CBD5E1';
-const LIGHT = '#E2E8F0';
-const MINT = '#62E5C1';
-const PANEL = '#152F3A';
+const SOFT = '#D3DCD0';
+const LIGHT = '#F4EBDD';
+const MINT = '#BFD2BB';
+const PANEL = '#1D3734';
 
 export const VERDICTS = {
   ok: { word: 'YES', detail: 'Fits your limits', color: '#63E6A7', icon: 'ok' },
@@ -21,8 +21,8 @@ export const VERDICTS = {
 };
 const verdictOf = key => (Object.hasOwn(VERDICTS, key) ? VERDICTS[key] : VERDICTS.unknown);
 
-// A warm voice halo is painted per frame along the lower edge of the safe area.
-export const VOICE_INDICATOR = { top: 505, bottom: 585, center: 545, x: WIDTH / 2, radius: 38, coreRadius: 13 };
+// A warm voice halo is painted per frame over the abstract companion mark.
+export const VOICE_INDICATOR = { top: 212, bottom: 448, center: 330, x: 382, radius: 118, coreRadius: 20 };
 
 // ---- text safety ------------------------------------------------------------------------------
 
@@ -117,47 +117,21 @@ const close = '</g></svg>';
 
 function sceneDefs() {
   return `<defs>
-    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#102B38"/><stop offset="1" stop-color="#081820"/></linearGradient>
-    <radialGradient id="halo"><stop stop-color="#275B61" stop-opacity=".85"/><stop offset="1" stop-color="#0F2430" stop-opacity="0"/></radialGradient>
-    <linearGradient id="skin" x1=".2" y1="0" x2=".8" y2="1"><stop stop-color="#F2C9AD"/><stop offset=".55" stop-color="#DFA98B"/><stop offset="1" stop-color="#BD806E"/></linearGradient>
-    <linearGradient id="hair" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#342B31"/><stop offset=".55" stop-color="#211F29"/><stop offset="1" stop-color="#131922"/></linearGradient>
-    <linearGradient id="jacket" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#E6F0E9"/><stop offset="1" stop-color="#AFC9C0"/></linearGradient>
-    <linearGradient id="shirt" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#48A99A"/><stop offset="1" stop-color="#286B6B"/></linearGradient>
-    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFFFFF" stop-opacity=".16"/><stop offset="1" stop-color="#FFFFFF" stop-opacity=".025"/></linearGradient>
+    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#233C37"/><stop offset="1" stop-color="#101F20"/></linearGradient>
+    <radialGradient id="halo"><stop stop-color="#8C704B" stop-opacity=".56"/><stop offset="1" stop-color="#142827" stop-opacity="0"/></radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFFFFF" stop-opacity=".13"/><stop offset="1" stop-color="#FFFFFF" stop-opacity=".025"/></linearGradient>
     <filter id="soft-shadow" x="-.3" y="-.3" width="1.6" height="1.8"><feGaussianBlur stdDeviation="18"/></filter>
   </defs>`;
 }
 
-function avatar() {
-  return `<g aria-label="RenaLine AI nutrition companion">
-    <ellipse cx="382" cy="620" rx="235" ry="25" fill="#02090D" opacity=".38" filter="url(#soft-shadow)"/>
-    <circle cx="382" cy="330" r="290" fill="url(#halo)"/>
-    <circle cx="382" cy="330" r="230" fill="none" stroke="#B2F1DF" stroke-opacity=".14" stroke-width="2"/>
-    <path d="M142 672 C151 554 218 482 303 464 L382 483 L461 464 C548 482 614 554 623 672Z" fill="url(#jacket)"/>
-    <path d="M287 468 L382 546 L477 468 L447 672 L317 672Z" fill="url(#shirt)"/>
-    <path d="M337 415 L337 488 Q382 527 427 488 L427 415Z" fill="url(#skin)"/>
-    <path d="M265 207 C249 116 315 70 390 74 C479 77 522 140 499 250 L490 365 L271 354Z" fill="url(#hair)"/>
-    <ellipse cx="264" cy="296" rx="22" ry="38" fill="#CE9479"/>
-    <ellipse cx="500" cy="296" rx="22" ry="38" fill="#C88A73"/>
-    <path d="M276 199 C279 130 322 101 383 99 C448 98 483 133 488 207 L472 339 C463 406 426 448 382 450 C338 448 300 406 291 339Z" fill="url(#skin)"/>
-    <path d="M273 232 C267 149 310 87 382 84 C453 81 496 127 494 220 C470 197 457 168 449 143 C411 176 360 189 304 184 L294 258Z" fill="url(#hair)"/>
-    <path d="M277 192 C252 245 270 334 292 366 C286 305 298 269 303 235Z" fill="url(#hair)"/>
-    <path d="M486 181 C513 242 500 331 473 367 C481 303 468 267 461 229Z" fill="url(#hair)"/>
-    <path d="M308 270 Q337 251 361 267" fill="none" stroke="#68473D" stroke-width="8" stroke-linecap="round"/>
-    <path d="M404 267 Q432 251 457 270" fill="none" stroke="#68473D" stroke-width="8" stroke-linecap="round"/>
-    <path d="M310 296 Q337 278 362 296 Q338 315 310 296Z" fill="#FFF9F2"/>
-    <path d="M403 296 Q429 278 455 296 Q430 315 403 296Z" fill="#FFF9F2"/>
-    <ellipse cx="338" cy="296" rx="7" ry="10" fill="#557C75"/><ellipse cx="430" cy="296" rx="7" ry="10" fill="#557C75"/>
-    <circle cx="340" cy="293" r="3" fill="#17242A"/><circle cx="432" cy="293" r="3" fill="#17242A"/>
-    <circle cx="342" cy="291" r="2" fill="#FFFFFF"/><circle cx="434" cy="291" r="2" fill="#FFFFFF"/>
-    <path d="M300 294 Q336 266 369 292" fill="none" stroke="#42353A" stroke-width="4" opacity=".7"/>
-    <path d="M397 292 Q431 265 465 294" fill="none" stroke="#42353A" stroke-width="4" opacity=".7"/>
-    <path d="M384 301 C379 326 371 347 376 355 Q384 362 393 354" fill="none" stroke="#A66E60" stroke-width="5" stroke-linecap="round"/>
-    <path d="M350 383 Q382 397 414 382" fill="none" stroke="#9D5960" stroke-width="4" stroke-linecap="round"/>
-    <path d="M345 390 Q382 407 419 390" fill="none" stroke="#F0B7A1" stroke-width="3" opacity=".7"/>
-    <path d="M301 313 Q312 363 334 381 M463 313 Q452 363 430 381" fill="none" stroke="#F7D8C1" stroke-opacity=".22" stroke-width="5"/>
-    <path d="M322 476 L382 526 L442 476" fill="none" stroke="#F6FAF4" stroke-width="8" opacity=".8"/>
-    <circle cx="382" cy="545" r="7" fill="#D1A76E"/>
+function companionHalo() {
+  return `<g aria-label="RenaLine voice companion">
+    <circle cx="382" cy="330" r="258" fill="url(#halo)"/>
+    <circle cx="382" cy="330" r="198" fill="none" stroke="#BFD2BB" stroke-opacity=".1" stroke-width="2"/>
+    <circle cx="382" cy="330" r="150" fill="none" stroke="#D8BC91" stroke-opacity=".2" stroke-width="2"/>
+    <circle cx="382" cy="330" r="104" fill="#172F30" fill-opacity=".72"/>
+    <circle cx="382" cy="330" r="104" fill="none" stroke="#C9D7C2" stroke-opacity=".32" stroke-width="2"/>
+    <circle cx="382" cy="330" r="4" fill="#E8D4B5" fill-opacity=".75"/>
   </g>`;
 }
 
@@ -216,15 +190,15 @@ function nutrientCards(item, x, y, width, compact = false) {
 export function brandSvg({ scale = SAFE_SCALE } = {}) {
   return [
     sceneOpen(scale),
-    avatar(),
+    companionHalo(),
     text(710, 186, 24, MINT, 'YOUR RENAL DIETITIAN', { weight: 800 }),
     panel(692, 210, 510, 264),
     text(730, 278, 58, WHITE, 'RenaLine', { weight: 800 }),
     text(730, 326, 30, LIGHT, 'A calm companion for food choices'),
     `<circle cx="747" cy="395" r="9" fill="${MINT}"/>`,
     text(768, 404, 25, SOFT, 'Here with you, live'),
-    text(730, 447, 22, SOFT, "Follows your care team's limits"),
-    text(382, 624, 24, LIGHT, 'RenaLine', { weight: 700, anchor: 'middle' }),
+    text(730, 447, 22, SOFT, escapeXml("Follows your care team's limits")),
+    text(382, 584, 22, SOFT, 'Steady support, guided by your care team', { anchor: 'middle' }),
     close,
   ].join('');
 }
@@ -234,7 +208,7 @@ export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   const unjudged = display?.unjudged === true;
   if (items.length === 0 && !unjudged) return brandSvg({ scale });
   const more = Number.isInteger(display?.more) && display.more > 0 ? display.more : 0;
-  const parts = [sceneOpen(scale), avatar(), text(710, 142, 23, MINT, 'FOOD CHECK', { weight: 800 }), panel(692, 165, 510, 330)];
+  const parts = [sceneOpen(scale), companionHalo(), text(710, 142, 23, MINT, 'FOOD CHECK', { weight: 800 }), panel(692, 165, 510, 330)];
   if (display?.online === true) parts.push(onlineBadge(1000, 181, true));
 
   if (unjudged) {
@@ -289,35 +263,7 @@ export function voiceIndicatorBand(scale = SAFE_SCALE) {
   };
 }
 
-function paintEllipse(pixels, cx, cy, rx, ry, color, scale) {
-  const a = safeArea(scale);
-  const x0 = Math.max(0, Math.floor(a.x + (cx - rx) * scale));
-  const x1 = Math.min(WIDTH, Math.ceil(a.x + (cx + rx) * scale));
-  const y0 = Math.max(0, Math.floor(a.y + (cy - ry) * scale));
-  const y1 = Math.min(HEIGHT, Math.ceil(a.y + (cy + ry) * scale));
-  for (let y = y0; y < y1; y++) {
-    const designY = (y - a.y) / scale;
-    for (let x = x0; x < x1; x++) {
-      const designX = (x - a.x) / scale;
-      if (((designX - cx) / rx) ** 2 + ((designY - cy) / ry) ** 2 > 1) continue;
-      const i = (y * WIDTH + x) * 4;
-      pixels[i] = color[0];
-      pixels[i + 1] = color[1];
-      pixels[i + 2] = color[2];
-      pixels[i + 3] = 255;
-    }
-  }
-}
 
-// The mouth follows the same speaking state as the audio and voice indicator.
-export function paintMouth(pixels, tick, speaking, scale = SAFE_SCALE) {
-  const openAmount = speaking ? 2 + 8 * Math.abs(Math.sin((Number.isFinite(tick) ? tick : 0) * 0.8)) : 1.2;
-  paintEllipse(pixels, 382, 386, 27, openAmount + 3, [157, 83, 87], scale);
-  paintEllipse(pixels, 382, 385, 22, openAmount, [69, 37, 45], scale);
-  if (speaking && openAmount > 6) {
-    paintEllipse(pixels, 382, 389 + openAmount * 0.25, 9, 2, [205, 116, 117], scale);
-  }
-}
 
 function blendPixel(pixels, index, color, alpha) {
   const keep = 1 - alpha;
@@ -333,8 +279,8 @@ export function paintVoiceIndicator(pixels, tick, speaking, scale = SAFE_SCALE) 
   const area = safeArea(scale);
   const band = voiceIndicatorBand(scale);
   const pulse = 0.5 + 0.5 * Math.sin(t * (speaking ? 0.34 : 0.12));
-  const ringRadius = speaking ? 21 + 13 * pulse : 24 + 3 * pulse;
-  const coreRadius = VOICE_INDICATOR.coreRadius + (speaking ? 1.5 : 0.5) * pulse;
+  const ringRadius = speaking ? 58 + 40 * pulse : 72 + 5 * pulse;
+  const coreRadius = VOICE_INDICATOR.coreRadius + (speaking ? 2 : 1) * pulse;
   const centerX = area.x + VOICE_INDICATOR.x * scale;
   const centerY = area.y + VOICE_INDICATOR.center * scale;
   const outerRadius = VOICE_INDICATOR.radius * scale;
@@ -354,7 +300,7 @@ export function paintVoiceIndicator(pixels, tick, speaking, scale = SAFE_SCALE) 
       const index = (y * WIDTH + x) * 4;
       blendPixel(pixels, index, [197, 157, 111], 0.18 * glow * glow);
 
-      const ringDistance = (distance - ringRadius) / 3.5;
+      const ringDistance = (distance - ringRadius) / 7;
       const ringAlpha = (speaking ? 0.5 : 0.28) * Math.exp(-ringDistance * ringDistance);
       blendPixel(pixels, index, [241, 199, 145], ringAlpha);
 
