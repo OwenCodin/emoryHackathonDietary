@@ -126,6 +126,8 @@ const FAILS = {
   bad_potassium: "That potassium number doesn't sound right; can you read it again from your care team's sheet?",
   bad_phosphorus: "That phosphorus number doesn't sound right; can you read it again from your care team's sheet?",
   bad_fluid: "That fluid number doesn't sound right; can you read it again from your care team's sheet?",
+  bad_protein: "That protein number doesn't sound right; can you read it again from your care team's sheet?",
+  bad_carbs: "That carbohydrate number doesn't sound right; can you read it again from your care team's sheet?",
   no_proposal: "Read me your four limits first, and I'll repeat them back so you can check them.",
   limits_changed: "Those aren't the numbers I read back. Let me read the new ones back to you first.",
   limits_not_confirmed: 'Please tell me if the numbers I read back are right.',
@@ -361,6 +363,7 @@ async function saveDebugFrame(dir, picture) {
 export const CONFIRM_MIN_MS = 2500;
 export const KROGER_FINISH_LATER = "Kroger isn't connected yet; you can finish from the link I texted, or ask me for a new one on any call.";
 const LIMIT_FIELDS = [['sodium', 'sodiumMg', 'sodium_mg'], ['potassium', 'potassiumMg', 'potassium_mg'], ['phosphorus', 'phosphorusMg', 'phosphorus_mg'], ['fluid', 'fluidMl', 'fluid_ml']];
+const OPTIONAL_LIMIT_FIELDS = [['protein', 'proteinG', 'protein_g'], ['carbs', 'carbsG', 'carbs_g']];
 
 // True when this caller still has to do first-call setup. Never throws; any trouble or delay gives false so the
 // greeting is never held up and nobody is forced into setup by an error.
@@ -1174,8 +1177,8 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     propose_limits: llm.tool({
-      description: "Setup only. Step 1 of 2 for the caller's daily limits as read from their care team: sodium, potassium and phosphorus in milligrams, fluid in milliliters. Returns a sentence to read back. Nothing is saved until confirm_limits.",
-      parameters: z.object({ sodium_mg: z.number().nullish(), potassium_mg: z.number().nullish(), phosphorus_mg: z.number().nullish(), fluid_ml: z.number().nullish() }),
+      description: "Setup only. Step 1 of 2 for the caller's daily limits as read from their care team: sodium, potassium and phosphorus in milligrams, fluid in milliliters. Protein and carbohydrate in grams (protein_g, carbs_g) are optional: pass them only if the caller gave them. Returns a sentence to read back. Nothing is saved until confirm_limits.",
+      parameters: z.object({ sodium_mg: z.number().nullish(), potassium_mg: z.number().nullish(), phosphorus_mg: z.number().nullish(), fluid_ml: z.number().nullish(), protein_g: z.number().nullish(), carbs_g: z.number().nullish() }),
       execute: guard(async (call, args = {}) => {
         const gate = needSetup();
         if (gate) return gate;
@@ -1188,19 +1191,31 @@ export function buildTools({
           if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) return fail(`bad_${nutrient}`);
           limits[key] = v;
         }
+        for (const [nutrient, key, arg] of OPTIONAL_LIMIT_FIELDS) {
+          const v = args[arg];
+          if (v === null || v === undefined) continue;
+          const [min, max] = LIMIT_BOUNDS[key];
+          if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) return fail(`bad_${nutrient}`);
+          limits[key] = v;
+        }
         if (call.timedOut) return fail('timeout');
         pending = { limits, at: now() };
-        return { ok: true, pending: true, say: `I heard sodium ${limits.sodiumMg} milligrams, potassium ${limits.potassiumMg} milligrams, phosphorus ${limits.phosphorusMg} milligrams and fluid ${limits.fluidMl} milliliters a day. Is that right?` };
+        const extras = [];
+        if (limits.proteinG !== undefined) extras.push(`protein ${limits.proteinG} grams`);
+        if (limits.carbsG !== undefined) extras.push(`carbohydrates ${limits.carbsG} grams`);
+        const tail = extras.length ? `, with ${extras.join(' and ')}` : '';
+        return { ok: true, pending: true, say: `I heard sodium ${limits.sodiumMg} milligrams, potassium ${limits.potassiumMg} milligrams, phosphorus ${limits.phosphorusMg} milligrams and fluid ${limits.fluidMl} milliliters a day${tail}. Is that right?` };
       }, { timeoutMs }),
     }),
     confirm_limits: llm.tool({
-      description: 'Setup only. Step 2 of 2: call this only after the caller has said yes to the numbers you read back, with exactly those same four numbers. This is the only thing that saves limits.',
-      parameters: z.object({ sodium_mg: z.number().nullish(), potassium_mg: z.number().nullish(), phosphorus_mg: z.number().nullish(), fluid_ml: z.number().nullish() }),
+      description: 'Setup only. Step 2 of 2: call this only after the caller has said yes to the numbers you read back, with exactly those same numbers (including protein_g and carbs_g if you read them back). This is the only thing that saves limits.',
+      parameters: z.object({ sodium_mg: z.number().nullish(), potassium_mg: z.number().nullish(), phosphorus_mg: z.number().nullish(), fluid_ml: z.number().nullish(), protein_g: z.number().nullish(), carbs_g: z.number().nullish() }),
       execute: guard(async (call, args = {}) => {
         const gate = needSetup();
         if (gate) return gate;
         if (!pending) return fail('no_proposal');
-        if (LIMIT_FIELDS.some(([, key, arg]) => args?.[arg] !== pending.limits[key])) { pending = null; return fail('limits_changed'); }
+        if (LIMIT_FIELDS.some(([, key, arg]) => args?.[arg] !== pending.limits[key])
+          || OPTIONAL_LIMIT_FIELDS.some(([, key, arg]) => (args?.[arg] ?? null) !== (pending.limits[key] ?? null))) { pending = null; return fail('limits_changed'); }
         const asked = pending;
         if (now() - asked.at < CONFIRM_MIN_MS) return fail('limits_not_confirmed');
         let heard = null;

@@ -12,12 +12,16 @@ export const LIMIT_BOUNDS = Object.freeze({
   potassiumMg: Object.freeze([1000, 4700]),
   phosphorusMg: Object.freeze([500, 1500]),
   fluidMl: Object.freeze([500, 4000]),
+  proteinG: Object.freeze([20, 200]),
+  carbsG: Object.freeze([50, 500]),
 });
 export const CONDITIONS = Object.freeze(['ckd', 'hemodialysis', 'peritoneal_dialysis', 'transplant', 'unsure']);
 export const MAX_AVOID = 10;
 export const PATIENT_SET_BY = 'patient, as told by their care team';
 
 const LIMIT_KEYS = ['sodiumMg', 'potassiumMg', 'phosphorusMg', 'fluidMl'];
+// Optional grams-per-day limits. Absent for most patients; never added to a profile that did not give them.
+const OPTIONAL_LIMIT_KEYS = ['proteinG', 'carbsG'];
 const FILE_NAME = 'profiles.json';
 const MAX_FILE_BYTES = 65536;
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -130,13 +134,20 @@ function validate(profile) {
   if (profile.limits !== null && profile.limits !== undefined) {
     const l = profile.limits;
     if (typeof l !== 'object' || Array.isArray(l)) return { ok: false, error: 'bad limits', field: 'limits' };
-    if (Object.keys(l).some((k) => !LIMIT_KEYS.includes(k))) return { ok: false, error: 'bad limits', field: 'limits' };
+    if (Object.keys(l).some((k) => !LIMIT_KEYS.includes(k) && !OPTIONAL_LIMIT_KEYS.includes(k))) return { ok: false, error: 'bad limits', field: 'limits' };
     for (const key of LIMIT_KEYS) {
       const v = l[key];
       const [min, max] = LIMIT_BOUNDS[key];
       if (!Number.isInteger(v) || v < min || v > max) return { ok: false, error: 'limit out of range', field: key };
     }
     limits = Object.fromEntries(LIMIT_KEYS.map((k) => [k, l[k]]));
+    for (const key of OPTIONAL_LIMIT_KEYS) {
+      const v = l[key];
+      if (v === null || v === undefined) continue;
+      const [min, max] = LIMIT_BOUNDS[key];
+      if (!Number.isInteger(v) || v < min || v > max) return { ok: false, error: 'limit out of range', field: key };
+      limits[key] = v;
+    }
   }
 
   const avoid = [];

@@ -24,7 +24,7 @@ const before = await hash();
 after(async () => assert.equal(await hash(), before));
 
 const good = { sodiumMg: 2000, potassiumMg: 2500, phosphorusMg: 900, fluidMl: 1200 };
-const KEYS = Object.keys(LIMIT_BOUNDS);
+const KEYS = ['sodiumMg', 'potassiumMg', 'phosphorusMg', 'fluidMl']; // the required four; proteinG/carbsG are optional
 const save = (profile, patientId = 'p1') => saveProfile({ patientId, profile });
 const full = (over = {}) => ({ name: 'Ana', condition: 'hemodialysis', limits: good, avoid: [], setupDone: true, ...over });
 
@@ -168,4 +168,24 @@ test('no console output', async () => {
     console.error = err;
   }
   assert.equal(calls.length, 0);
+});
+
+const FOUR = { sodiumMg: 2000, potassiumMg: 2500, phosphorusMg: 900, fluidMl: 1200 };
+test('optional proteinG and carbsG validate, save and come back', async () => {
+  const plain = await save({ limits: FOUR }, 'macro-a');
+  assert.equal(plain.ok, true);
+  assert.deepEqual(Object.keys(plain.saved.limits), ['sodiumMg', 'potassiumMg', 'phosphorusMg', 'fluidMl']);
+  const nulls = await save({ limits: { ...FOUR, proteinG: null, carbsG: undefined } }, 'macro-b');
+  assert.deepEqual(Object.keys(nulls.saved.limits), ['sodiumMg', 'potassiumMg', 'phosphorusMg', 'fluidMl']);
+  const both = await save({ limits: { ...FOUR, proteinG: 60, carbsG: 200 } }, 'macro-c');
+  assert.deepEqual(both.saved.limits, { ...FOUR, proteinG: 60, carbsG: 200 });
+  assert.deepEqual((await getProfile({ patientId: 'macro-c' })).profile.limits, { ...FOUR, proteinG: 60, carbsG: 200 });
+  assert.deepEqual((await getProfile({ patientId: 'macro-a' })).profile.limits, FOUR);
+});
+test('optional limits reject out-of-range values and unknown keys', async () => {
+  for (const [k, v] of [['proteinG', 5], ['proteinG', 250], ['proteinG', 60.5], ['carbsG', 30], ['carbsG', 600], ['carbsG', '200']]) {
+    const r = await save({ limits: { ...FOUR, [k]: v } }, 'macro-d');
+    assert.deepEqual([r.ok, r.error, r.field], [false, 'limit out of range', k]);
+  }
+  assert.equal((await save({ limits: { ...FOUR, fatG: 50 } }, 'macro-d')).error, 'bad limits');
 });

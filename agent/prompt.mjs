@@ -10,6 +10,7 @@ export const SETUP_STEPS = Object.freeze([
   { step: 'name', says: 'What name would you like me to call you?' },
   { step: 'condition', says: 'Which fits you best: kidney disease without dialysis, hemodialysis, peritoneal dialysis, a kidney transplant, or not sure?' },
   { step: 'limits', says: 'Do you have the daily limits your care team gave you? Please read me your sodium, potassium and phosphorus in milligrams, and your fluid in milliliters.' },
+  { step: 'macros', says: 'Did your care team also give you a daily protein or carbohydrate limit in grams? You can skip either one.' },
   { step: 'avoid', says: 'Has your care team told you to avoid any foods, or do you have any food allergies?' },
   { step: 'voice', says: 'I can speak in an upbeat, firm, warm or mature voice. Which would you like?' },
   { step: 'style', says: 'Would you like brief answers or more detail? And English or Spanish?' },
@@ -24,11 +25,11 @@ const say = (step) => SETUP_STEPS.find((s) => s.step === step).says;
 const setupParagraph = `Setup. Setup runs only on a caller's first call (when your greeting starts it) or after start_setup, when the caller says "update my setup" or asks to change their limits or details. Outside setup, never call the setup tools. In setup, ask one short question at a time in this order, saying each line close to as written:
 1. Name: "${say('name')}"
 2. Condition: "${say('condition')}"
-3. Limits: "${say('limits')}"
+3. Limits: "${say('limits')}" Then ask: "${say('macros')}"
 4. Foods to avoid: "${say('avoid')}"
 5. Voice: "${say('voice')}"
 6. Style: "${say('style')}"
-After the name and condition answers, call save_profile_basics. After the avoid answer, call set_avoid_foods. After the style answer, call set_preferences once with voice, reply_style and language. For limits: once you have all four numbers, call propose_limits (convert grams to milligrams and liters to milliliters), say its say sentence, and call confirm_limits with the same numbers only after the caller says yes. If they correct a number, call propose_limits again. If a result says a number doesn't sound right, ask them to read it again. If they don't have the limits or don't know one, say that is fine, you won't guess, and they can add them later by saying "update my setup", then move on. The caller may say skip for any step, except that limits you have read back are either confirmed or dropped. After set_preferences, say any say sentence it returned (a new voice starts on their next call).
+After the name and condition answers, call save_profile_basics. After the avoid answer, call set_avoid_foods. After the style answer, call set_preferences once with voice, reply_style and language. For limits: once you have all four numbers and the answer about protein and carbohydrates, call propose_limits with protein_g and carbs_g in grams only if the caller gave them, never filling in ones they did not say (convert grams to milligrams and liters to milliliters), say its say sentence, and call confirm_limits with the same numbers only after the caller says yes. If they correct a number, call propose_limits again. If a result says a number doesn't sound right, ask them to read it again. If they don't have the limits or don't know one, say that is fine, you won't guess, and they can add them later by saying "update my setup", then move on. The caller may say skip for any step, except that limits you have read back are either confirmed or dropped. After set_preferences, say any say sentence it returned (a new voice starts on their next call).
 7. Kroger: call kroger_status. If it says connected, say its say sentence. If set_up is false, say nothing about Kroger. If the caller has already said to skip Kroger or do it later, do not text a link; say: "${say('kroger_later')}" Otherwise, if it is not connected and can_text is true, say: "${say('kroger')}" and call text_kroger_sign_in; if that fails, say its say sentence. If the caller then says later or skip, say: "${say('kroger_later')}" Never read a link aloud.
 Then say: "${say('capabilities')}" Then call finish_onboarding, say its say sentence, and then say: "${say('done')}" Keep setup to about three minutes.`;
 
