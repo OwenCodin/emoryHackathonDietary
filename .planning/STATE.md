@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Merged recipe-fixes into ui-try (dish recipe, voice choice, call screen layout, cart fix with per-caller access and protein/carbs limits)
+Last activity: 2026-11-14 - Completed quick task 261114-tk4: per-caller Kroger sign-in and cart
 
 Progress: [██████████] 100%
 
@@ -119,6 +119,7 @@ None yet.
 | fast | Call screen layout after merging origin/ui-work (cd7b09f, companion halo): card widened to most of the frame, At a glance no longer overlapped, long names wrap to two lines, tagline and values fitted to the card, even badge spacing, single food centred, no visible inner box, name under the mark (718/718 pass, including the three card tests that failed before). Rendered pictures checked; not yet seen on a phone | 2026-11-14 | 19837b6 | - |
 | 261114-sks | Optional protein and carbs daily limits in grams: skippable setup step, judged only when the profile has the limit, verdict card grows to a second row of tiles (694 tests: 686 pass, 8 fail, the same 8 as before the change) | 2026-11-14 | e8a7c2d | [261114-sks-add-optional-protein-and-carbs-limits-on](./quick/261114-sks-add-optional-protein-and-carbs-limits-on/) |
 | 261114-sr6 | Per-caller identity from the Chert call record behind AGENT_OPEN_ACCESS=1: own profile and memory per phone, texts to the caller's own number, text-first setup step with check_text_received; lookup and text check verified read-only against the live Chert API, not yet on a live call (727 tests: 719 pass, 8 fail, the same 8 as before) | 2026-11-14 | 413a227 | [261114-sr6-per-caller-identity-from-chert-so-any-jo](./quick/261114-sr6-per-caller-identity-from-chert-so-any-jo/) |
+| 261114-tk4 | Per-caller Kroger sign-in and cart: each caller's sign-in is stored in its own folder, the cart uses the calling patient's sign-in and is hidden from other callers, the demo patient keeps the existing folder (782 tests, all pass without .env.local); not yet proven on a live call | 2026-11-14 | 4773c09 | [261114-tk4-per-caller-kroger-sign-in-and-cart-each-](./quick/261114-tk4-per-caller-kroger-sign-in-and-cart-each-/) |
 
 ## Session Continuity
 
