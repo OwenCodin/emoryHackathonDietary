@@ -1,6 +1,6 @@
 # Track A: the call
 
-You own `agent/`. Your job is the FaceTime call itself: the agent answers, greets in time, talks, grabs frames from the caller's camera, shows either a face or the shopping browser, and calls Track B and Track C through tools. You also own the root scaffold, the Chert line and `chert dev`.
+You own `agent/`. Your job is the FaceTime call itself: the agent answers, greets in time, talks, grabs frames from the caller's camera, shows the abstract call UI or shopping browser, and calls Track B and Track C through tools. You also own the root scaffold, the Chert line and `chert dev`.
 
 ## Shared contract (identical in all three track READMEs)
 
@@ -21,7 +21,7 @@ RenaLine is a renal dietitian you can FaceTime. (The repo is still called `emory
 package.json         one package for the whole repo
 .env.example         names of every variable below, no values
 .env.local           real values, never committed
-shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15, and the safe area SAFE
+shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 30, and the safe area SAFE
 agent/               Track A  the call: voice, camera in, video out, tools
 renal/               Track B  the renal brain: profile, image reading, verdicts, meals
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video
@@ -246,9 +246,9 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 | File | Purpose |
 |---|---|
-| `agent/agent.mjs` | Entry point: joins the room, greets, runs the Gemini Live session, switches video between the face and the cart, logs each tool result. |
+| `agent/agent.mjs` | Entry point: joins the room, greets, runs the Gemini Live session, switches video between the agent UI and the cart, logs each tool result. |
 | `agent/chert-rooms.mjs`, `agent/greet.mjs` | Chert's starter code: run the agent the way `chert dev` needs it, and greet once when `bridge_ready` arrives. |
-| `agent/face.mjs` | The picture shown when no cart is running. |
+| `agent/screen.mjs`, `agent/card.mjs`, `agent/orb.mjs` | Render the state-driven agent orb and single information panel when no cart is running. |
 | `agent/camera.mjs` | Keeps the caller's latest video frame and turns it into a JPEG on request. |
 | `agent/tools.mjs` | The tools the voice model can call. The only place `renal/` and `actions/` are imported. |
 | `agent/prompt.mjs` | The dietitian's instructions and greetings. |
@@ -342,15 +342,15 @@ Any tool can also return `timeout` or `tool_failed` from the guard. Whether Gemi
 
 ### Video out
 
-Sizes still come from `shared/video.mjs` (`WIDTH`, `HEIGHT`, `FPS`). Track C's cart frame still wins when it is exactly the right length (`agent/video.mjs`). Otherwise `agent/screen.mjs` shows a FaceTime-style RenaLine companion portrait with a voice wave and a concise floating information panel.
+Sizes still come from `shared/video.mjs` (`WIDTH`, `HEIGHT`, `FPS`). Track C's cart frame still wins when it is exactly the right length (`agent/video.mjs`). Otherwise `agent/screen.mjs` draws a dark 16:9 call scene with a teal-to-blue orb, state strip and one information card, leaving the lower-right self-view area clear.
 
-After a successful `check_food` or `look_at_camera` the panel shows YES, MAYBE, NO or CHECK, the food, and the nutrient numbers and portion from the tool result only. A look shows up to three rows, and "Found online" appears when the numbers came from a web search. The portrait mouth follows the speaking state; the voice wave remains synchronized with it. The card stays for 15 seconds (`AGENT_CARD_SECONDS`) or until the next verdict, then the brand screen returns. A failed or timed-out tool never shows a card.
+After a successful `check_food` or `look_at_camera`, the panel shows a verdict, food name and explanation returned by the renal tool. The verdict is dismissed after 12 seconds by default (`AGENT_CARD_SECONDS` overrides it). A failed or timed-out tool never shows a verdict.
 
-Everything the agent draws (brand screen, verdict cards, voice wave, drawn face) is laid out at full size and then placed in the centred safe area from `shared/video.mjs` (80% of the width and height by default, set by `VIDEO_SAFE_SCALE`), because a caller reported on 14 Nov 2026 that the picture was cut off on all four edges. The background still fills the frame. The scale is applied when a screen is rendered, not per frame. It has not yet been seen on a live call.
+The background fills the frame; all call-scene content sits in the centred safe area from `shared/video.mjs` (80% of the width and height by default, set by `VIDEO_SAFE_SCALE`). The orb animates in the frame buffer and uses measured output audio amplitude when the LiveKit audio sink exposes frames; otherwise it stays gently animated without a fake audio loop.
 
-The card data goes through the `onDisplay` callback of `buildTools` and is never sent to the model. Screens are SVG pages rendered by sharp in the background; the wave is painted on each frame tick. If a render fails the last screen stays. If the brand screen cannot be rendered, the drawn face in `agent/face.mjs` is shown.
+The panel event goes through the `onDisplay` callback of `buildTools` and is never sent to the model. Scene and panel SVGs are rendered by sharp outside the video tick; the orb and panel transitions are composited per frame. If a render fails, the last successfully rendered layer stays.
 
-Preview the screens with `node agent/sim/preview-card.mjs <folder outside the repo>`. Whether the text is readable on a phone is not checked on a live call.
+Run `npm run ui:demo` to cycle every agent state and panel type in a local browser preview. The event contract, design tokens and reduced-motion override are in the root `UI.md`. The new visual has not yet been checked on a live FaceTime call.
 
 ### Outbound calls (twist 3)
 
@@ -379,5 +379,5 @@ This path has not been seen on a live call, and whether the trial line may place
 - A FaceTime Video call is answered and greeted every time, twice in a row.
 - "Can I eat this?" with a label in view returns B's verdict in under about eight seconds.
 - With the camera off, the agent says it cannot see and does not guess.
-- When a cart is running the caller sees the browser; when it stops they see the face again.
+- When a cart is running the caller sees the browser; when it stops they see the call UI again.
 - The agent says once per call that it follows limits set by the care team.

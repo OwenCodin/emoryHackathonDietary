@@ -21,7 +21,7 @@ RenaLine is a renal dietitian you can FaceTime. (The repo is still called `emory
 package.json         one package for the whole repo
 .env.example         names of every variable below, no values
 .env.local           real values, never committed
-shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15, and the safe area SAFE
+shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 30, and the safe area SAFE
 agent/               Track A  the call: voice, camera in, video out, tools
 renal/               Track B  the renal brain: profile, image reading, verdicts, meals
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video

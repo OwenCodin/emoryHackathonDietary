@@ -4,7 +4,8 @@
   "engines": { "node": "^22.23.2 || ^24.0.0" },
   "scripts": {
     "start": "node --env-file=.env.local agent/agent.mjs start",
-    "test": "node --env-file-if-exists=.env.local --test"
+    "test": "node --env-file-if-exists=.env.local --test",
+    "ui:demo": "node agent/sim/ui-demo.mjs"
   },
   "dependencies": {
     "@livekit/agents": "1.8.0",

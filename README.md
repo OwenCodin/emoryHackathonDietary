@@ -79,6 +79,8 @@ Rules:
 
 `npm test` runs everything on fakes with no keys and no network.
 
+To preview the rebuilt call visual without a live call, run `npm run ui:demo` and open the local URL it prints. See [UI.md](./UI.md) for the video layout, event contract and reduced-motion setting.
+
 First-call setup, with no keys and no call: `node agent/sim/onboarding-run.mjs` drives the setup tools in throwaway folders and prints the stored profile, the stored voice and an estimate of the spoken length. `node --env-file-if-exists=.env.local agent/sim/reset-setup.mjs` forgets the saved profile and preferences so setup runs again in a demo (set `AGENT_SKIP_ONBOARDING=1` to skip setup while testing other features).
 
 To call `renal/` directly with real keys, run these from the repo root. They use a throwaway state folder so nothing in `renal/data` changes, and they spend USDA and Gemini quota.
