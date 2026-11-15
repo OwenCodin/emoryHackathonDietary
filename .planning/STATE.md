@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-13)
 Phase: 05 (in-the-aisle) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-11-14 - Fast task: voice one or voice two with samples in setup
+Last activity: 2026-11-14 - Fast task: call screen layout fixes
 
 Progress: [██████████] 100%
 
@@ -116,6 +116,7 @@ None yet.
 | 261114-pqe | Full recipe by iMessage for a shown or named dish: renal dishRecipe (ingredients re-checked by checkFood, avoid items swapped or left out and named, model writes only steps and minutes, salt steps rejected, built-in steps for four dishes), text_recipe sends the dish from the last dish_ingredients via dishRecipeText, per-serving numbers line in meal recipes, recipe_unavailable, prompt and shared contract in all three READMEs (704 tests: 701 pass without .env.local; the 3 failures are in agent/card.test.mjs and predate this task). Live: ham sandwich and spaghetti bolognese recipes built in under 2 s; not yet run on a call | 2026-11-14 | b5d3aa6 | [261114-pqe-recipe-flow-meal-preferences-another-ide](./quick/261114-pqe-recipe-flow-meal-preferences-another-ide/) |
 | fast | Dish flow after a simulated voice call: dish_ingredients no longer reads the ingredients out (count and flagged items only; the texted recipe carries them), a dish the model does not recognize gives dish_unknown instead of a guessed recipe, the generic swap phrase is not returned as a swap; on branch recipe-fixes with origin/ui-work merged in (708 tests: 705 pass without .env.local; the 3 failures are in agent/card.test.mjs and predate this). Live: nonsense dishes refused, ham sandwich and banana smoothie recipes built; spoken dish name to texted recipe confirmed once on a simulated call before these fixes | 2026-11-14 | e5a693b | - |
 | fast | Voice choice in setup: the agent plays a recorded sample of voice one (Puck) and voice two (Sulafat) with play_voice_samples, then asks which; one/two/first/second accepted, the four older words still work (714 tests: 711 pass without .env.local; the 3 failures are in agent/card.test.mjs). Simulated call: both samples then the question played in order; not yet heard on a FaceTime call | 2026-11-14 | 2e3c6d6 | - |
+| fast | Call screen layout after merging origin/ui-work (cd7b09f, companion halo): card widened to most of the frame, At a glance no longer overlapped, long names wrap to two lines, tagline and values fitted to the card, even badge spacing, single food centred, no visible inner box, name under the mark (718/718 pass, including the three card tests that failed before). Rendered pictures checked; not yet seen on a phone | 2026-11-14 | 19837b6 | - |
 
 ## Session Continuity
 
