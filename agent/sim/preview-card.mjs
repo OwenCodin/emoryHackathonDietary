@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { HEIGHT, WIDTH } from '../../shared/video.mjs';
-import { brandSvg, cardSvg, paintWave, renderSvg } from '../card.mjs';
+import { brandSvg, cardSvg, paintVoiceIndicator, renderSvg } from '../card.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const isInside = (root, target) => {
@@ -42,13 +42,13 @@ const save = async (name, pixels) => {
 };
 
 const brand = await renderSvg(brandSvg());
-const idle = brand.slice(); paintWave(idle, 5, false);
+const idle = brand.slice(); paintVoiceIndicator(idle, 5, false);
 await save('01-idle', idle);
-const talking = brand.slice(); paintWave(talking, 5, true);
+const talking = brand.slice(); paintVoiceIndicator(talking, 5, true);
 await save('02-idle-speaking', talking);
 for (const [name, display] of samples) {
   const px = await renderSvg(cardSvg(display));
-  paintWave(px, 5, true);
+  paintVoiceIndicator(px, 5, true);
   await save(name, px);
 }
 for (const f of written) console.log(f);

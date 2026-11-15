@@ -1,6 +1,6 @@
 # Track A: the call
 
-You own `agent/`. Your job is the FaceTime call itself: the agent answers, greets in time, talks, grabs frames from the caller's camera, shows either a face or the shopping browser, and calls Track B and Track C through tools. You also own the root scaffold, the Chert line and `chert dev`.
+You own `agent/`. Your job is the FaceTime call itself: the agent answers, greets in time, talks, grabs frames from the caller's camera, shows either the abstract companion screen or shopping browser, and calls Track B and Track C through tools. You also own the root scaffold, the Chert line and `chert dev`.
 
 ## Shared contract (identical in all three track READMEs)
 
@@ -257,16 +257,16 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 | File | Purpose |
 |---|---|
-| `agent/agent.mjs` | Entry point: joins the room, greets, runs the Gemini Live session, switches video between the face and the cart, logs each tool result. |
+| `agent/agent.mjs` | Entry point: joins the room, greets, runs the Gemini Live session, switches video between the companion screen and the cart, logs each tool result. |
 | `agent/chert-rooms.mjs`, `agent/greet.mjs` | Chert's starter code: run the agent the way `chert dev` needs it, and greet once when `bridge_ready` arrives. |
-| `agent/face.mjs` | The picture shown when no cart is running. |
+| `agent/companion.mjs` | Pixel-based fallback for the abstract voice-companion screen. |
 | `agent/camera.mjs` | Keeps the caller's latest video frame and turns it into a JPEG on request. |
 | `agent/tools.mjs` | The tools the voice model can call. The only place `renal/` and `actions/` are imported. |
 | `agent/prompt.mjs` | The dietitian's instructions and greetings. |
 | `agent/memory.mjs` | Per-patient shopping list and pantry kept between calls (food names only, 2-hour expiry). |
 | `agent/toollog.mjs` | Formats the per-tool log line. |
 | `agent/turns.mjs` | Turn handling for noisy calls: barge-in switch, reply watchdog, time-warning delay. |
-| `agent/video.mjs` | Picks which picture goes out on each frame tick (the cart frame when one is offered). |
+| `agent/video.mjs` | Picks which picture goes out on each frame tick (the cart frame when one is offered, otherwise the companion screen). |
 | `agent/outbound.mjs` | Validates the job metadata for outbound calls. |
 | `agent/fake-modules.mjs` | Test fixtures: fakes of `renal/` and `actions/`. |
 | `agent/sim/` | A simulated Chert call (see "Testing without spending FaceTime minutes"). |
@@ -281,7 +281,7 @@ This is the original plan. Everything in it is built; see the Status section of 
 4. **Switch the voice to Gemini.** Built (see "Voice model").
 5. **Camera in** (`camera.mjs`). Built; debug frames show what the caller shows.
 6. **Tools** against `renal/` and `actions/`. Built.
-7. **Video out switch** (face or cart). Built.
+7. **Video out switch** (companion screen or cart). Built.
 8. **Outbound entry path.** Built; not seen on a live call.
 9. **In-aisle behaviour.** Built as prompt and tool behaviour; not tried in a store.
 
@@ -361,13 +361,13 @@ Any tool can also return `timeout` or `tool_failed` from the guard. Whether Gemi
 
 ### Video out
 
-Sizes still come from `shared/video.mjs` (`WIDTH`, `HEIGHT`, `FPS`). Track C's cart frame still wins when it is exactly the right length (`agent/video.mjs`). Otherwise `agent/screen.mjs` shows a FaceTime-style RenaLine companion portrait with a voice wave and a concise floating information panel.
+Sizes still come from `shared/video.mjs` (`WIDTH`, `HEIGHT`, `FPS`). Track C's cart frame still wins when it is exactly the right length (`agent/video.mjs`). Otherwise `agent/screen.mjs` shows an abstract RenaLine voice companion: a warm, softly pulsing halo beside a concise food-information panel, with no human avatar.
 
-After a successful `check_food` or `look_at_camera` the panel shows YES, MAYBE, NO or CHECK, the food, and the nutrient numbers and portion from the tool result only. A look shows up to three rows, and "Found online" appears when the numbers came from a web search. The portrait mouth follows the speaking state; the voice wave remains synchronized with it. The card stays for 15 seconds (`AGENT_CARD_SECONDS`) or until the next verdict, then the brand screen returns. A failed or timed-out tool never shows a card.
+After a successful `check_food` or `look_at_camera` the panel shows YES, MAYBE, NO or CHECK, the food, and the nutrient numbers and portion from the tool result only. A look shows up to three rows, and "Found online" appears when the numbers came from a web search. The halo breathes gently while idle and expands while speaking. The card stays for 15 seconds (`AGENT_CARD_SECONDS`) or until the next verdict, then the brand screen returns. A failed or timed-out tool never shows a card.
 
-Everything the agent draws (brand screen, verdict cards, voice wave, drawn face) is laid out at full size and then placed in the centred safe area from `shared/video.mjs` (80% of the width and height by default, set by `VIDEO_SAFE_SCALE`), because a caller reported on 14 Nov 2026 that the picture was cut off on all four edges. The background still fills the frame. The scale is applied when a screen is rendered, not per frame. It has not yet been seen on a live call.
+Everything the agent draws (brand screen, verdict cards, voice halo, fallback companion) is laid out at full size and then placed in the centred safe area from `shared/video.mjs` (80% of the width and height by default, set by `VIDEO_SAFE_SCALE`), because a caller reported on 14 Nov 2026 that the picture was cut off on all four edges. The background still fills the frame. The scale is applied when a screen is rendered, not per frame. It has not yet been seen on a live call.
 
-The card data goes through the `onDisplay` callback of `buildTools` and is never sent to the model. Screens are SVG pages rendered by sharp in the background; the wave is painted on each frame tick. If a render fails the last screen stays. If the brand screen cannot be rendered, the drawn face in `agent/face.mjs` is shown.
+The card data goes through the `onDisplay` callback of `buildTools` and is never sent to the model. Screens are SVG pages rendered by sharp in the background; the voice halo is painted on each frame tick. If a render fails the last screen stays. If the brand screen cannot be rendered, the pixel-based abstract companion in `agent/companion.mjs` is shown.
 
 Preview the screens with `node agent/sim/preview-card.mjs <folder outside the repo>`. Whether the text is readable on a phone is not checked on a live call.
 
@@ -398,5 +398,5 @@ This path has not been seen on a live call, and whether the trial line may place
 - A FaceTime Video call is answered and greeted every time, twice in a row.
 - "Can I eat this?" with a label in view returns B's verdict in under about eight seconds.
 - With the camera off, the agent says it cannot see and does not guess.
-- When a cart is running the caller sees the browser; when it stops they see the face again.
+- When a cart is running the caller sees the browser; when it stops they see the abstract companion screen again.
 - The agent says once per call that it follows limits set by the care team.

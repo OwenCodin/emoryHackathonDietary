@@ -62,7 +62,7 @@ describe('screen', () => {
     assert.equal(probe(screen.frame(0, false)), 11);
     assert.equal(logs.filter(l => l.includes('card render failed')).length, 1);
   });
-  it('a failed brand render uses the face, cards still work', async () => {
+  it('a failed brand render uses the companion fallback, cards still work', async () => {
     const render = svg => (svg.includes('YOUR RENAL') ? Promise.reject(new Error('x')) : okRender(svg));
     const { screen, logs } = make({ render });
     await screen.flush();
@@ -103,11 +103,11 @@ describe('screen', () => {
     assert.equal(cardMsFrom({ AGENT_CARD_SECONDS: '8' }), 8000);
     assert.equal(cardMsFrom({ AGENT_CARD_SECONDS: '9999' }), 120000);
   });
-  it('real render smoke: idle frame is exact size and not the face', async () => {
+  it('real render smoke: idle frame is exact size and differs from the fallback', async () => {
     const real = createScreen({ log: () => {} });
-    const face = createScreen({ render: async () => { throw new Error('x'); }, log: () => {} });
-    await real.flush(); await face.flush();
-    const a = real.frame(0, false), b = face.frame(0, false);
+    const failedRender = createScreen({ render: async () => { throw new Error('x'); }, log: () => {} });
+    await real.flush(); await failedRender.flush();
+    const a = real.frame(0, false), b = failedRender.frame(0, false);
     assert.equal(a.length, N);
     assert.notDeepEqual(a, b);
   });

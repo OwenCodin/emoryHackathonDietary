@@ -6,12 +6,12 @@ import sharp from 'sharp';
 import { HEIGHT, SAFE_SCALE, WIDTH, safeArea, safeTransform } from '../shared/video.mjs';
 
 const FONT = 'Helvetica Neue, Helvetica, Arial, sans-serif';
-const BACKGROUND = '#0F2430';
+const BACKGROUND = '#142827';
 const WHITE = '#FFFFFF';
-const SOFT = '#CBD5E1';
-const LIGHT = '#E2E8F0';
-const MINT = '#62E5C1';
-const PANEL = '#152F3A';
+const SOFT = '#D3DCD0';
+const LIGHT = '#F4EBDD';
+const MINT = '#BFD2BB';
+const PANEL = '#1D3734';
 
 export const VERDICTS = {
   ok: { word: 'YES', detail: 'Fits your limits', color: '#63E6A7', icon: 'ok' },
@@ -21,10 +21,8 @@ export const VERDICTS = {
 };
 const verdictOf = key => (Object.hasOwn(VERDICTS, key) ? VERDICTS[key] : VERDICTS.unknown);
 
-// The voice wave is painted per frame along the lower edge of the safe area.
-export const WAVE = { top: 505, bottom: 585, center: 545, bars: 32, barWidth: 18, gap: 14, color: [94, 234, 212], flat: 6 };
-const WAVE_SPAN = WAVE.bars * WAVE.barWidth + (WAVE.bars - 1) * WAVE.gap;
-const WAVE_LEFT = Math.round((WIDTH - WAVE_SPAN) / 2);
+// A warm voice halo is painted per frame over the abstract companion mark.
+export const VOICE_INDICATOR = { top: 212, bottom: 448, center: 330, x: 382, radius: 118, coreRadius: 20 };
 
 // ---- text safety ------------------------------------------------------------------------------
 
@@ -120,47 +118,21 @@ const close = '</g></svg>';
 
 function sceneDefs() {
   return `<defs>
-    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#102B38"/><stop offset="1" stop-color="#081820"/></linearGradient>
-    <radialGradient id="halo"><stop stop-color="#275B61" stop-opacity=".85"/><stop offset="1" stop-color="#0F2430" stop-opacity="0"/></radialGradient>
-    <linearGradient id="skin" x1=".2" y1="0" x2=".8" y2="1"><stop stop-color="#F2C9AD"/><stop offset=".55" stop-color="#DFA98B"/><stop offset="1" stop-color="#BD806E"/></linearGradient>
-    <linearGradient id="hair" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#342B31"/><stop offset=".55" stop-color="#211F29"/><stop offset="1" stop-color="#131922"/></linearGradient>
-    <linearGradient id="jacket" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#E6F0E9"/><stop offset="1" stop-color="#AFC9C0"/></linearGradient>
-    <linearGradient id="shirt" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#48A99A"/><stop offset="1" stop-color="#286B6B"/></linearGradient>
-    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFFFFF" stop-opacity=".16"/><stop offset="1" stop-color="#FFFFFF" stop-opacity=".025"/></linearGradient>
+    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#233C37"/><stop offset="1" stop-color="#101F20"/></linearGradient>
+    <radialGradient id="halo"><stop stop-color="#8C704B" stop-opacity=".56"/><stop offset="1" stop-color="#142827" stop-opacity="0"/></radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFFFFF" stop-opacity=".13"/><stop offset="1" stop-color="#FFFFFF" stop-opacity=".025"/></linearGradient>
     <filter id="soft-shadow" x="-.3" y="-.3" width="1.6" height="1.8"><feGaussianBlur stdDeviation="18"/></filter>
   </defs>`;
 }
 
-function avatar() {
-  return `<g aria-label="RenaLine AI nutrition companion">
-    <ellipse cx="382" cy="620" rx="235" ry="25" fill="#02090D" opacity=".38" filter="url(#soft-shadow)"/>
-    <circle cx="382" cy="330" r="290" fill="url(#halo)"/>
-    <circle cx="382" cy="330" r="230" fill="none" stroke="#B2F1DF" stroke-opacity=".14" stroke-width="2"/>
-    <path d="M142 672 C151 554 218 482 303 464 L382 483 L461 464 C548 482 614 554 623 672Z" fill="url(#jacket)"/>
-    <path d="M287 468 L382 546 L477 468 L447 672 L317 672Z" fill="url(#shirt)"/>
-    <path d="M337 415 L337 488 Q382 527 427 488 L427 415Z" fill="url(#skin)"/>
-    <path d="M265 207 C249 116 315 70 390 74 C479 77 522 140 499 250 L490 365 L271 354Z" fill="url(#hair)"/>
-    <ellipse cx="264" cy="296" rx="22" ry="38" fill="#CE9479"/>
-    <ellipse cx="500" cy="296" rx="22" ry="38" fill="#C88A73"/>
-    <path d="M276 199 C279 130 322 101 383 99 C448 98 483 133 488 207 L472 339 C463 406 426 448 382 450 C338 448 300 406 291 339Z" fill="url(#skin)"/>
-    <path d="M273 232 C267 149 310 87 382 84 C453 81 496 127 494 220 C470 197 457 168 449 143 C411 176 360 189 304 184 L294 258Z" fill="url(#hair)"/>
-    <path d="M277 192 C252 245 270 334 292 366 C286 305 298 269 303 235Z" fill="url(#hair)"/>
-    <path d="M486 181 C513 242 500 331 473 367 C481 303 468 267 461 229Z" fill="url(#hair)"/>
-    <path d="M308 270 Q337 251 361 267" fill="none" stroke="#68473D" stroke-width="8" stroke-linecap="round"/>
-    <path d="M404 267 Q432 251 457 270" fill="none" stroke="#68473D" stroke-width="8" stroke-linecap="round"/>
-    <path d="M310 296 Q337 278 362 296 Q338 315 310 296Z" fill="#FFF9F2"/>
-    <path d="M403 296 Q429 278 455 296 Q430 315 403 296Z" fill="#FFF9F2"/>
-    <ellipse cx="338" cy="296" rx="7" ry="10" fill="#557C75"/><ellipse cx="430" cy="296" rx="7" ry="10" fill="#557C75"/>
-    <circle cx="340" cy="293" r="3" fill="#17242A"/><circle cx="432" cy="293" r="3" fill="#17242A"/>
-    <circle cx="342" cy="291" r="2" fill="#FFFFFF"/><circle cx="434" cy="291" r="2" fill="#FFFFFF"/>
-    <path d="M300 294 Q336 266 369 292" fill="none" stroke="#42353A" stroke-width="4" opacity=".7"/>
-    <path d="M397 292 Q431 265 465 294" fill="none" stroke="#42353A" stroke-width="4" opacity=".7"/>
-    <path d="M384 301 C379 326 371 347 376 355 Q384 362 393 354" fill="none" stroke="#A66E60" stroke-width="5" stroke-linecap="round"/>
-    <path d="M350 383 Q382 397 414 382" fill="none" stroke="#9D5960" stroke-width="4" stroke-linecap="round"/>
-    <path d="M345 390 Q382 407 419 390" fill="none" stroke="#F0B7A1" stroke-width="3" opacity=".7"/>
-    <path d="M301 313 Q312 363 334 381 M463 313 Q452 363 430 381" fill="none" stroke="#F7D8C1" stroke-opacity=".22" stroke-width="5"/>
-    <path d="M322 476 L382 526 L442 476" fill="none" stroke="#F6FAF4" stroke-width="8" opacity=".8"/>
-    <circle cx="382" cy="545" r="7" fill="#D1A76E"/>
+function companionHalo() {
+  return `<g aria-label="RenaLine voice companion">
+    <circle cx="382" cy="330" r="258" fill="url(#halo)"/>
+    <circle cx="382" cy="330" r="198" fill="none" stroke="#BFD2BB" stroke-opacity=".1" stroke-width="2"/>
+    <circle cx="382" cy="330" r="150" fill="none" stroke="#D8BC91" stroke-opacity=".2" stroke-width="2"/>
+    <circle cx="382" cy="330" r="104" fill="#172F30" fill-opacity=".72"/>
+    <circle cx="382" cy="330" r="104" fill="none" stroke="#C9D7C2" stroke-opacity=".32" stroke-width="2"/>
+    <circle cx="382" cy="330" r="4" fill="#E8D4B5" fill-opacity=".75"/>
   </g>`;
 }
 
@@ -225,15 +197,15 @@ function nutrientCards(item, x, y, width, compact = false) {
 export function brandSvg({ scale = SAFE_SCALE } = {}) {
   return [
     sceneOpen(scale),
-    avatar(),
+    companionHalo(),
     text(710, 186, 24, MINT, 'YOUR RENAL DIETITIAN', { weight: 800 }),
     panel(692, 210, 510, 264),
     text(730, 278, 58, WHITE, 'RenaLine', { weight: 800 }),
     text(730, 326, 30, LIGHT, 'A calm companion for food choices'),
     `<circle cx="747" cy="395" r="9" fill="${MINT}"/>`,
     text(768, 404, 25, SOFT, 'Here with you, live'),
-    text(730, 447, 22, SOFT, "Follows your care team's limits"),
-    text(382, 624, 24, LIGHT, 'RenaLine', { weight: 700, anchor: 'middle' }),
+    text(730, 447, 22, SOFT, escapeXml("Follows your care team's limits")),
+    text(382, 584, 22, SOFT, 'Steady support, guided by your care team', { anchor: 'middle' }),
     close,
   ].join('');
 }
@@ -246,7 +218,7 @@ export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   // A single judged item with four or five nutrient tiles needs a second tile row: the panel grows upward by 80
   // so its bottom stays at 495, clear of the voice wave. Every other card is laid out exactly as before.
   const lift = !unjudged && items.length === 1 && detailParts(items[0]).nutrients.length > 3 ? 80 : 0;
-  const parts = [sceneOpen(scale), avatar(), text(710, 142 - lift, 23, MINT, 'FOOD CHECK', { weight: 800 }), panel(692, 165 - lift, 510, 330 + lift)];
+  const parts = [sceneOpen(scale), companionHalo(), text(710, 142 - lift, 23, MINT, 'FOOD CHECK', { weight: 800 }), panel(692, 165 - lift, 510, 330 + lift)];
   if (display?.online === true) parts.push(onlineBadge(1000, 181 - lift, true));
 
   if (unjudged) {
@@ -288,79 +260,65 @@ export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   return parts.join('');
 }
 
-// ---- voice wave -------------------------------------------------------------------------------
+// ---- voice indicator --------------------------------------------------------------------------
 
-// The wave band in frame pixels, after the safe-area mapping.
-export function waveBand(scale = SAFE_SCALE) {
+// The indicator band in frame pixels, after the safe-area mapping.
+export function voiceIndicatorBand(scale = SAFE_SCALE) {
   const a = safeArea(scale);
   return {
-    top: Math.floor(a.y + WAVE.top * scale),
-    bottom: Math.ceil(a.y + WAVE.bottom * scale),
-    left: Math.floor(a.x + WAVE_LEFT * scale),
-    right: Math.ceil(a.x + (WAVE_LEFT + WAVE_SPAN) * scale),
+    top: Math.floor(a.y + VOICE_INDICATOR.top * scale),
+    bottom: Math.ceil(a.y + VOICE_INDICATOR.bottom * scale),
+    left: Math.floor(a.x + (VOICE_INDICATOR.x - VOICE_INDICATOR.radius) * scale),
+    right: Math.ceil(a.x + (VOICE_INDICATOR.x + VOICE_INDICATOR.radius) * scale),
   };
 }
 
-function paintEllipse(pixels, cx, cy, rx, ry, color, scale) {
-  const a = safeArea(scale);
-  const x0 = Math.max(0, Math.floor(a.x + (cx - rx) * scale));
-  const x1 = Math.min(WIDTH, Math.ceil(a.x + (cx + rx) * scale));
-  const y0 = Math.max(0, Math.floor(a.y + (cy - ry) * scale));
-  const y1 = Math.min(HEIGHT, Math.ceil(a.y + (cy + ry) * scale));
-  for (let y = y0; y < y1; y++) {
-    const designY = (y - a.y) / scale;
-    for (let x = x0; x < x1; x++) {
-      const designX = (x - a.x) / scale;
-      if (((designX - cx) / rx) ** 2 + ((designY - cy) / ry) ** 2 > 1) continue;
-      const i = (y * WIDTH + x) * 4;
-      pixels[i] = color[0];
-      pixels[i + 1] = color[1];
-      pixels[i + 2] = color[2];
-      pixels[i + 3] = 255;
-    }
-  }
+
+
+function blendPixel(pixels, index, color, alpha) {
+  const keep = 1 - alpha;
+  pixels[index] = Math.round(pixels[index] * keep + color[0] * alpha);
+  pixels[index + 1] = Math.round(pixels[index + 1] * keep + color[1] * alpha);
+  pixels[index + 2] = Math.round(pixels[index + 2] * keep + color[2] * alpha);
+  pixels[index + 3] = 255;
 }
 
-// The mouth follows the same speaking state as the audio and voice wave.
-export function paintMouth(pixels, tick, speaking, scale = SAFE_SCALE) {
-  const openAmount = speaking ? 2 + 8 * Math.abs(Math.sin((Number.isFinite(tick) ? tick : 0) * 0.8)) : 1.2;
-  paintEllipse(pixels, 382, 386, 27, openAmount + 3, [157, 83, 87], scale);
-  paintEllipse(pixels, 382, 385, 22, openAmount, [69, 37, 45], scale);
-  if (speaking && openAmount > 6) {
-    paintEllipse(pixels, 382, 389 + openAmount * 0.25, 9, 2, [205, 116, 117], scale);
-  }
-}
-
-// x0..y1 are in design space; they are mapped to frame space before rounding.
-function fillRect(pixels, x0, y0, x1, y1, [r, g, b], scale) {
-  const a = safeArea(scale);
-  const band = waveBand(scale);
-  const xa = Math.max(0, Math.min(WIDTH, Math.round(a.x + x0 * scale)));
-  const xb = Math.max(0, Math.min(WIDTH, Math.round(a.x + x1 * scale)));
-  const ya = Math.max(band.top, Math.min(band.bottom, Math.round(a.y + y0 * scale)));
-  const yb = Math.max(band.top, Math.min(band.bottom, Math.round(a.y + y1 * scale)));
-  for (let y = ya; y < yb; y++) {
-    for (let x = xa; x < xb; x++) {
-      const i = (y * WIDTH + x) * 4;
-      pixels[i] = r; pixels[i + 1] = g; pixels[i + 2] = b; pixels[i + 3] = 255;
-    }
-  }
-}
-
-// Mutates the RGBA buffer in place, only inside the wave band.
-export function paintWave(pixels, tick, speaking, scale = SAFE_SCALE) {
+// Mutates the RGBA buffer in place, only inside the voice indicator band.
+export function paintVoiceIndicator(pixels, tick, speaking, scale = SAFE_SCALE) {
   const t = Number.isFinite(tick) ? tick : 0;
-  if (speaking) {
-    for (let i = 0; i < WAVE.bars; i++) {
-      const level = Math.abs(Math.sin(t * 0.55 + i * 0.7)) * (0.35 + 0.65 * Math.abs(Math.sin(t * 0.23 + i * 1.3)));
-      const h = 10 + level * 66;
-      const x = WAVE_LEFT + i * (WAVE.barWidth + WAVE.gap);
-      fillRect(pixels, x, WAVE.center - h / 2, x + WAVE.barWidth, WAVE.center + h / 2, WAVE.color, scale);
+  const area = safeArea(scale);
+  const band = voiceIndicatorBand(scale);
+  const pulse = 0.5 + 0.5 * Math.sin(t * (speaking ? 0.34 : 0.12));
+  const ringRadius = speaking ? 58 + 40 * pulse : 72 + 5 * pulse;
+  const coreRadius = VOICE_INDICATOR.coreRadius + (speaking ? 2 : 1) * pulse;
+  const centerX = area.x + VOICE_INDICATOR.x * scale;
+  const centerY = area.y + VOICE_INDICATOR.center * scale;
+  const outerRadius = VOICE_INDICATOR.radius * scale;
+  const x0 = Math.max(band.left, Math.floor(centerX - outerRadius));
+  const x1 = Math.min(band.right, Math.ceil(centerX + outerRadius));
+  const y0 = Math.max(band.top, Math.floor(centerY - outerRadius));
+  const y1 = Math.min(band.bottom, Math.ceil(centerY + outerRadius));
+
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const dx = (x - centerX) / scale;
+      const dy = (y - centerY) / scale;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > VOICE_INDICATOR.radius) continue;
+
+      const glow = 1 - distance / VOICE_INDICATOR.radius;
+      const index = (y * WIDTH + x) * 4;
+      blendPixel(pixels, index, [197, 157, 111], 0.18 * glow * glow);
+
+      const ringDistance = (distance - ringRadius) / 7;
+      const ringAlpha = (speaking ? 0.5 : 0.28) * Math.exp(-ringDistance * ringDistance);
+      blendPixel(pixels, index, [241, 199, 145], ringAlpha);
+
+      if (distance <= coreRadius) {
+        blendPixel(pixels, index, [255, 237, 211], 0.92 - 0.12 * distance / coreRadius);
+        if (distance < coreRadius * 0.32) blendPixel(pixels, index, [255, 251, 239], 0.36);
+      }
     }
-  } else {
-    fillRect(pixels, WAVE_LEFT, WAVE.center - WAVE.flat / 2, WAVE_LEFT + WAVE_SPAN, WAVE.center + WAVE.flat / 2, WAVE.color, scale);
-    const dotX = WAVE_LEFT + ((Math.abs(Math.floor(t)) * 9) % (WAVE_SPAN - 14));
-    fillRect(pixels, dotX, WAVE.center - 7, dotX + 14, WAVE.center + 7, [255, 255, 255], scale);
   }
 }
 
