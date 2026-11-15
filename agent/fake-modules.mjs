@@ -133,8 +133,14 @@ export function makeFakeActions() {
     async callPatient({ phone, reason } = {}) {
       return { ok: true, callId: 'stub-call-1' };
     },
-    async sendText({ phone, text } = {}) {
+    async sendText({ phone, text, allow } = {}) {
       return { ok: true };
+    },
+    async hasRecentInboundText({ phone } = {}) {
+      return { ok: true, texted: true };
+    },
+    async getCallerPhone({ callId } = {}) {
+      return { ok: false, error: 'not_configured' };
     },
     async getKrogerStatus() {
       return { ok: true, configured: false, relay: false, connected: false, pending: false };
