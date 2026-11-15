@@ -217,6 +217,7 @@ Not verified yet:
 - The USDA `DEMO_KEY` allows only 10 requests an hour. Use a personal key.
 - The online lookup needs billing enabled on the Gemini key.
 - The agent gives guidance inside limits a care team set. It says so on the call, never changes the limits, and never pays for anything.
+- Optional protein and carbohydrate limits: `profile.limits` may also hold `proteinG` (20 to 200) and `carbsG` (50 to 500), whole grams per day, added in setup only when the caller gives them. `checkFood` judges them only for a profile that has them: avoid above a third of the daily limit, limit from a fifth (the minerals keep 25% and 10%), reasons and `say` in grams. `result.nutrients` includes `proteinG`/`carbsG` only for such a profile; every other profile gets exactly the three minerals as before. Seed foods carry protein and carbs per 100 g. Known gaps: meal and dish totals, `pickBest` and the diary stay on the three minerals, and online (web) lookups carry no protein or carbs, so those are not judged.
 
 ### Checkpoints
 

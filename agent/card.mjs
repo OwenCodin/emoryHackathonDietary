@@ -81,12 +81,13 @@ const foodName = (value, max = 80) => capitalise(cleanText(value, max)) || 'This
 
 export function detailParts(item) {
   const n = item?.nutrients;
-  const wanted = [['Sodium', 'sodiumMg'], ['Potassium', 'potassiumMg'], ['Phosphorus', 'phosphorusMg']];
+  // Protein and carbs (grams) come last and only exist when the patient has those limits.
+  const wanted = [['Sodium', 'sodiumMg', 'mg'], ['Potassium', 'potassiumMg', 'mg'], ['Phosphorus', 'phosphorusMg', 'mg'], ['Protein', 'proteinG', 'g'], ['Carbs', 'carbsG', 'g']];
   let nutrients = [];
   if (n && typeof n === 'object') {
-    for (const [label, key] of wanted) {
+    for (const [label, key, unit] of wanted) {
       const x = n[key];
-      if (typeof x === 'number' && Number.isFinite(x) && x >= 0) nutrients.push(`${label} ${Math.round(x)} mg`);
+      if (typeof x === 'number' && Number.isFinite(x) && x >= 0) nutrients.push(`${label} ${Math.round(x)} ${unit}`);
     }
   }
   let portion = null;
@@ -195,23 +196,29 @@ function onlineBadge(x, y, compact = false) {
 
 function nutrientCards(item, x, y, width, compact = false) {
   const details = detailParts(item);
-  const nutrients = details.nutrients.slice(0, 3);
+  const nutrients = details.nutrients.slice(0, 5);
   if (!nutrients.length) return details.portion
     ? text(x, y + 28, compact ? 23 : 25, LIGHT, escapeXml(details.portion))
     : '';
   const gap = 9;
-  const each = (width - gap * (nutrients.length - 1)) / nutrients.length;
+  // Up to three tiles per row; a fourth and fifth tile start a second row. Width comes from the first row only,
+  // so one to three tiles are laid out exactly as before.
+  const cols = Math.min(nutrients.length, 3);
+  const each = (width - gap * (cols - 1)) / cols;
+  const tileHeight = compact ? 58 : 66;
+  const lastRow = Math.floor((nutrients.length - 1) / 3);
   return nutrients.map((value, i) => {
-    const split = value.match(/^(Sodium|Potassium|Phosphorus)\s+(.+)$/);
+    const split = value.match(/^(Sodium|Potassium|Phosphorus|Protein|Carbs)\s+(.+)$/);
     if (!split) return '';
-    const xx = x + i * (each + gap);
+    const xx = x + (i % 3) * (each + gap);
+    const yy = y + Math.floor(i / 3) * (tileHeight + gap);
     const label = split[1].toUpperCase();
     const amount = split[2];
-    return `<rect x="${xx}" y="${y}" width="${each}" height="${compact ? 58 : 66}" rx="14" fill="#0C2029" stroke="#C1E5DD" stroke-opacity=".13"/>`
-      + text(xx + 12, y + (compact ? 22 : 24), compact ? 14 : 16, SOFT, label, { weight: 700 })
-      + text(xx + 12, y + (compact ? 46 : 52), compact ? 22 : 24, WHITE, escapeXml(amount), { weight: 700 });
+    return `<rect x="${xx}" y="${yy}" width="${each}" height="${tileHeight}" rx="14" fill="#0C2029" stroke="#C1E5DD" stroke-opacity=".13"/>`
+      + text(xx + 12, yy + (compact ? 22 : 24), compact ? 14 : 16, SOFT, label, { weight: 700 })
+      + text(xx + 12, yy + (compact ? 46 : 52), compact ? 22 : 24, WHITE, escapeXml(amount), { weight: 700 });
   }).join('') + (details.portion
-    ? text(x, y + (compact ? 88 : 99), compact ? 20 : 22, LIGHT, escapeXml(details.portion))
+    ? text(x, y + lastRow * (tileHeight + gap) + (compact ? 88 : 99), compact ? 20 : 22, LIGHT, escapeXml(details.portion))
     : '');
 }
 
@@ -236,8 +243,11 @@ export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   const unjudged = display?.unjudged === true;
   if (items.length === 0 && !unjudged) return brandSvg({ scale });
   const more = Number.isInteger(display?.more) && display.more > 0 ? display.more : 0;
-  const parts = [sceneOpen(scale), avatar(), text(710, 142, 23, MINT, 'FOOD CHECK', { weight: 800 }), panel(692, 165, 510, 330)];
-  if (display?.online === true) parts.push(onlineBadge(1000, 181, true));
+  // A single judged item with four or five nutrient tiles needs a second tile row: the panel grows upward by 80
+  // so its bottom stays at 495, clear of the voice wave. Every other card is laid out exactly as before.
+  const lift = !unjudged && items.length === 1 && detailParts(items[0]).nutrients.length > 3 ? 80 : 0;
+  const parts = [sceneOpen(scale), avatar(), text(710, 142 - lift, 23, MINT, 'FOOD CHECK', { weight: 800 }), panel(692, 165 - lift, 510, 330 + lift)];
+  if (display?.online === true) parts.push(onlineBadge(1000, 181 - lift, true));
 
   if (unjudged) {
     const seen = Number.isInteger(display?.seen) && display.seen > 0 ? display.seen : Math.max(1, items.length);
@@ -252,11 +262,11 @@ export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   } else if (items.length === 1) {
     const item = items[0];
     const v = verdictOf(item.verdict);
-    const status = statusPill(item.verdict, 730, 198);
+    const status = statusPill(item.verdict, 730, 198 - lift);
     parts.push(status.svg);
-    parts.push(text(730, 316, 44, WHITE, escapeXml(fitText(foodName(item.food), { max: 44, min: 30, width: 430, bold: true }).text), { weight: 700 }));
-    parts.push(text(730, 354, 24, SOFT, v.detail));
-    parts.push(nutrientCards(item, 730, 385, 430));
+    parts.push(text(730, 316 - lift, 44, WHITE, escapeXml(fitText(foodName(item.food), { max: 44, min: 30, width: 430, bold: true }).text), { weight: 700 }));
+    parts.push(text(730, 354 - lift, 24, SOFT, v.detail));
+    parts.push(nutrientCards(item, 730, 385 - lift, 430));
   } else {
     const rows = items.slice(0, 3);
     parts.push(text(730, 220, 30, WHITE, 'At a glance', { weight: 700 }));

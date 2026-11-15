@@ -296,3 +296,40 @@ describe('privacy', () => {
     }
   });
 });
+
+describe('optional protein and carbohydrate limits', () => {
+  const BASE = 'I heard sodium 2000 milligrams, potassium 2500 milligrams, phosphorus 900 milligrams and fluid 1200 milliliters a day';
+  it('reads protein and carbs back only when given', async () => {
+    const { t } = setup();
+    assert.equal((await t.propose_limits.execute({ ...L, protein_g: 60 })).say, `${BASE}, with protein 60 grams. Is that right?`);
+    assert.equal((await t.propose_limits.execute({ ...L, carbs_g: 200 })).say, `${BASE}, with carbohydrates 200 grams. Is that right?`);
+    assert.equal((await t.propose_limits.execute({ ...L, protein_g: 60, carbs_g: 200 })).say, `${BASE}, with protein 60 grams and carbohydrates 200 grams. Is that right?`);
+    assert.equal((await t.propose_limits.execute({ ...L, protein_g: null, carbs_g: null })).say, `${BASE}. Is that right?`);
+  });
+  it('refuses out-of-range protein and carbs', async () => {
+    const { t } = setup();
+    assert.equal((await t.propose_limits.execute({ ...L, protein_g: 5 })).error, 'bad_protein');
+    assert.equal((await t.propose_limits.execute({ ...L, carbs_g: 900 })).error, 'bad_carbs');
+  });
+  it('confirm saves them when they match', async () => {
+    const { t, renal, clock } = setup({ build: { callerHeardAfter: () => true } });
+    await t.propose_limits.execute({ ...L, protein_g: 60, carbs_g: 200 });
+    clock.t += 3000;
+    assert.equal((await t.confirm_limits.execute({ ...L, protein_g: 60, carbs_g: 200 })).ok, true);
+    const s = (await renal.getSavedProfile({ patientId: 'demo' })).saved;
+    assert.deepEqual(s.limits, { sodiumMg: 2000, potassiumMg: 2500, phosphorusMg: 900, fluidMl: 1200, proteinG: 60, carbsG: 200 });
+  });
+  it('a differing or omitted optional value is limits_changed', async () => {
+    for (const given of [{ protein_g: 70 }, {}]) {
+      const { t, clock, renal } = setup({ build: { callerHeardAfter: () => true } });
+      await t.propose_limits.execute({ ...L, protein_g: 60 });
+      clock.t += 3000;
+      assert.equal((await t.confirm_limits.execute({ ...L, ...given })).error, 'limits_changed');
+      assert.equal((await renal.getSavedProfile({ patientId: 'demo' })).saved, null);
+    }
+    const { t, clock } = setup({ build: { callerHeardAfter: () => true } });
+    await t.propose_limits.execute(L);
+    clock.t += 3000;
+    assert.equal((await t.confirm_limits.execute({ ...L, carbs_g: 200 })).error, 'limits_changed');
+  });
+});

@@ -3,7 +3,7 @@ import { acceptWebEntry, lookupWeb } from './websearch.mjs';
 
 export { plausibleMatch };
 
-const NUTRIENT_IDS = { sodiumMg: 1093, potassiumMg: 1092, phosphorusMg: 1091, waterMl: 1051 };
+const NUTRIENT_IDS = { sodiumMg: 1093, potassiumMg: 1092, phosphorusMg: 1091, waterMl: 1051, proteinG: 1003, carbsG: 1005 };
 let cache;
 
 function findSeed(name, foods) {
@@ -186,6 +186,9 @@ async function lookupUsda(name) {
       sodiumMg: nutrients.sodiumMg,
       potassiumMg: nutrients.potassiumMg,
       phosphorusMg: nutrients.phosphorusMg,
+      // Only when USDA gave a number, so entries (and cache files) for foods without them are unchanged.
+      ...(typeof nutrients.proteinG === 'number' ? { proteinG: nutrients.proteinG } : {}),
+      ...(typeof nutrients.carbsG === 'number' ? { carbsG: nutrients.carbsG } : {}),
     },
     waterMl: nutrients.waterMl,
     fdcId: result.fdcId ?? null,

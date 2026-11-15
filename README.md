@@ -136,6 +136,7 @@ On the Chert trial line the agent can only reply to the patient. Follow these ru
 - Diet colas reuse regular cola numbers. "Soda", "pop" and "soft drink" are judged as cola.
 - The online lookup can return different results for the same product on different tries.
 - The demo patient profile ("Sam", fixed limits) is hard-coded data.
+- Optional protein and carbohydrate limits (grams) can be set in first-call setup and are judged by the food check and shown on the verdict card. The protein and carbs values for the 65 seed foods were entered from USDA reference values and need a spot-check. Meal and dish totals and online lookups do not use them yet.
 - The Kroger sign-in relay (`kroger-relay/`) and the texted sign-in link have not been deployed or run live; only unit tests and a local end-to-end test with a fake Kroger token endpoint have run.
 - The grocery cart (Track C) has not been seen working on a live call. The Kroger API cart works from the command line; it needs `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` and a one-time sign-in. Its quantity is a count of packages, so "3 apples" can become three multi-packs.
 - The outbound mealtime call has not been seen working on a live call since the merge.
