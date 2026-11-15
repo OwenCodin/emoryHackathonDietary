@@ -22,7 +22,12 @@ export const VERDICTS = {
 const verdictOf = key => (Object.hasOwn(VERDICTS, key) ? VERDICTS[key] : VERDICTS.unknown);
 
 // A warm voice halo is painted per frame over the abstract companion mark.
-export const VOICE_INDICATOR = { top: 212, bottom: 448, center: 330, x: 382, radius: 118, coreRadius: 20 };
+// The mark sits in the left column; the card takes the rest of the width so its text reads on a phone.
+export const VOICE_INDICATOR = { top: 242, bottom: 478, center: 360, x: 270, radius: 118, coreRadius: 20 };
+const MARK = { x: VOICE_INDICATOR.x, y: VOICE_INDICATOR.center };
+// The card: one box for every screen, so nothing is ever drawn past it.
+const CARD = { x: 500, y: 120, width: 730, height: 480, pad: 40 };
+const INNER = { x: CARD.x + CARD.pad, width: CARD.width - 2 * CARD.pad };
 
 // ---- text safety ------------------------------------------------------------------------------
 
@@ -117,23 +122,28 @@ function icon(kind, color, x, y, size, id) {
 const close = '</g></svg>';
 
 function sceneDefs() {
+  // The scene light fades to nothing at the edges of the safe area, so no box shows inside the frame.
   return `<defs>
-    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#233C37"/><stop offset="1" stop-color="#101F20"/></linearGradient>
+    <radialGradient id="scene" cx=".5" cy=".45" r=".5"><stop stop-color="#2F5049" stop-opacity=".6"/><stop offset="1" stop-color="${BACKGROUND}" stop-opacity="0"/></radialGradient>
     <radialGradient id="halo"><stop stop-color="#8C704B" stop-opacity=".56"/><stop offset="1" stop-color="#142827" stop-opacity="0"/></radialGradient>
     <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFFFFF" stop-opacity=".13"/><stop offset="1" stop-color="#FFFFFF" stop-opacity=".025"/></linearGradient>
     <filter id="soft-shadow" x="-.3" y="-.3" width="1.6" height="1.8"><feGaussianBlur stdDeviation="18"/></filter>
   </defs>`;
 }
 
-function companionHalo() {
+// The mark and, under it, the name of who is talking: the left column always says what this is.
+function companionHalo({ caption = true } = {}) {
+  const { x, y } = MARK;
   return `<g aria-label="RenaLine voice companion">
-    <circle cx="382" cy="330" r="258" fill="url(#halo)"/>
-    <circle cx="382" cy="330" r="198" fill="none" stroke="#BFD2BB" stroke-opacity=".1" stroke-width="2"/>
-    <circle cx="382" cy="330" r="150" fill="none" stroke="#D8BC91" stroke-opacity=".2" stroke-width="2"/>
-    <circle cx="382" cy="330" r="104" fill="#172F30" fill-opacity=".72"/>
-    <circle cx="382" cy="330" r="104" fill="none" stroke="#C9D7C2" stroke-opacity=".32" stroke-width="2"/>
-    <circle cx="382" cy="330" r="4" fill="#E8D4B5" fill-opacity=".75"/>
-  </g>`;
+    <circle cx="${x}" cy="${y}" r="258" fill="url(#halo)"/>
+    <circle cx="${x}" cy="${y}" r="198" fill="none" stroke="#BFD2BB" stroke-opacity=".1" stroke-width="2"/>
+    <circle cx="${x}" cy="${y}" r="150" fill="none" stroke="#D8BC91" stroke-opacity=".2" stroke-width="2"/>
+    <circle cx="${x}" cy="${y}" r="104" fill="#172F30" fill-opacity=".72"/>
+    <circle cx="${x}" cy="${y}" r="104" fill="none" stroke="#C9D7C2" stroke-opacity=".32" stroke-width="2"/>
+    <circle cx="${x}" cy="${y}" r="4" fill="#E8D4B5" fill-opacity=".75"/>
+  </g>` + (caption
+    ? text(x, 598, 34, WHITE, 'RenaLine', { weight: 800, anchor: 'middle' }) + text(x, 636, 22, SOFT, 'Your renal dietitian', { anchor: 'middle' })
+    : '');
 }
 
 function sceneOpen(scale) {
@@ -144,68 +154,95 @@ function panel(x, y, width, height) {
   return `<rect x="${x + 8}" y="${y + 12}" width="${width}" height="${height}" rx="30" fill="#02090D" opacity=".3" filter="url(#soft-shadow)"/><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="28" fill="${PANEL}" stroke="#B6E9DA" stroke-opacity=".18" stroke-width="2"/><rect x="${x + 1}" y="${y + 1}" width="${width - 2}" height="${height - 2}" rx="27" fill="url(#glass)"/>`;
 }
 
+// Icon, a gap, then the word: the pill is as wide as what it holds, so the icon never touches the word.
 function statusPill(verdict, x, y, compact = false) {
   const v = verdictOf(verdict);
   const label = v.word;
-  const width = compact ? Math.max(110, textWidth(label, 24, true) + 38) : Math.max(150, textWidth(label, 32, true) + 48);
-  const h = compact ? 44 : 52;
-  const size = compact ? 22 : 26;
+  const font = compact ? 28 : 40;
+  const h = compact ? 52 : 68;
+  const size = compact ? 28 : 36;
+  const padL = compact ? 14 : 18, gap = compact ? 12 : 14, padR = compact ? 20 : 26;
+  const width = Math.ceil(padL + size + gap + textWidth(label, font, true) + padR);
   return {
     width,
+    height: h,
     svg: `<rect x="${x}" y="${y}" width="${width}" height="${h}" rx="${h / 2}" fill="${v.color}" fill-opacity=".14" stroke="${v.color}" stroke-opacity=".7" stroke-width="2"/>`
-      + icon(v.icon, v.color, x + 8, y + (h - size) / 2, size, `icon-${v.icon}`)
-      + text(x + width / 2 + size / 2, y + (compact ? 29 : 35), compact ? 24 : 32, v.color, escapeXml(label), { weight: 800, anchor: 'middle' }),
+      + icon(v.icon, v.color, x + padL, y + (h - size) / 2, size, `icon-${v.icon}`)
+      + text(x + padL + size + gap, y + h / 2 + font * 0.36, font, v.color, escapeXml(label), { weight: 800 }),
   };
 }
 
-function onlineBadge(x, y, compact = false) {
+function onlineBadge(x, y) {
   const label = 'FOUND ONLINE';
-  const width = compact ? 170 : 190;
-  const height = compact ? 36 : 40;
+  const width = 196, height = 40;
   return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${height / 2}" fill="#243E49" stroke="#83B9C1" stroke-opacity=".55" stroke-width="1"/>`
-    + text(x + width / 2, y + (compact ? 25 : 28), compact ? 20 : 21, LIGHT, label, { weight: 700, anchor: 'middle' });
+    + text(x + width / 2, y + 28, 21, LIGHT, label, { weight: 700, anchor: 'middle' });
 }
 
-function nutrientCards(item, x, y, width, compact = false) {
+// Up to three nutrient boxes across the given width; returns the SVG and the height it used.
+function nutrientCards(item, x, y, width, { maxHeight = Infinity } = {}) {
   const details = detailParts(item);
   const nutrients = details.nutrients.slice(0, 5);
-  if (!nutrients.length) return details.portion
-    ? text(x, y + 28, compact ? 23 : 25, LIGHT, escapeXml(details.portion))
-    : '';
-  const gap = 9;
-  // Up to three tiles per row; a fourth and fifth tile start a second row. Width comes from the first row only,
-  // so one to three tiles are laid out exactly as before.
-  const cols = Math.min(nutrients.length, 3);
-  const each = (width - gap * (cols - 1)) / cols;
-  const tileHeight = compact ? 58 : 66;
-  const lastRow = Math.floor((nutrients.length - 1) / 3);
-  return nutrients.map((value, i) => {
-    const split = value.match(/^(Sodium|Potassium|Phosphorus|Protein|Carbs)\s+(.+)$/);
-    if (!split) return '';
-    const xx = x + (i % 3) * (each + gap);
-    const yy = y + Math.floor(i / 3) * (tileHeight + gap);
-    const label = split[1].toUpperCase();
-    const amount = split[2];
-    return `<rect x="${xx}" y="${yy}" width="${each}" height="${tileHeight}" rx="14" fill="#0C2029" stroke="#C1E5DD" stroke-opacity=".13"/>`
-      + text(xx + 12, yy + (compact ? 22 : 24), compact ? 14 : 16, SOFT, label, { weight: 700 })
-      + text(xx + 12, yy + (compact ? 46 : 52), compact ? 22 : 24, WHITE, escapeXml(amount), { weight: 700 });
-  }).join('') + (details.portion
-    ? text(x, y + lastRow * (tileHeight + gap) + (compact ? 88 : 99), compact ? 20 : 22, LIGHT, escapeXml(details.portion))
-    : '');
+  const portion = details.portion ? fitText(details.portion, { max: 28, min: 20, width }) : null;
+  if (!nutrients.length) {
+    return portion ? { svg: text(x, y + 30, portion.size, LIGHT, escapeXml(portion.text)), height: 40 } : { svg: '', height: 0 };
+  }
+  // Up to three tiles in a row. Protein and carbs, when the caller has those limits, start a second row of
+  // shorter tiles. If two rows still do not fit in maxHeight (a long name plus the online tag), the tiles get
+  // shorter again and, last, the portion line is left out. One row is laid out exactly as before.
+  const rows = nutrients.length > 3 ? 2 : 1;
+  const gap = 14;
+  const each = (width - gap * 2) / 3;
+  const draw = (boxH, withPortion) => {
+    const small = boxH < 100, tiny = boxH < 70;
+    const boxes = nutrients.map((value, i) => {
+      const split = value.match(/^(Sodium|Potassium|Phosphorus|Protein|Carbs)\s+(.+)$/);
+      if (!split) return '';
+      const xx = x + (i % 3) * (each + gap);
+      const yy = y + Math.floor(i / 3) * (boxH + gap);
+      const amount = fitText(split[2], { max: tiny ? 26 : small ? 30 : 36, min: tiny ? 22 : 24, width: each - 32, bold: true });
+      return `<rect x="${xx}" y="${yy}" width="${each}" height="${boxH}" rx="16" fill="#0C2029" stroke="#C1E5DD" stroke-opacity=".13"/>`
+        + text(xx + 16, yy + (tiny ? 23 : small ? 28 : 34), tiny ? 15 : small ? 17 : 19, SOFT, split[1].toUpperCase(), { weight: 700 })
+        + text(xx + 16, yy + (tiny ? 50 : small ? 62 : 78), amount.size, WHITE, escapeXml(amount.text), { weight: 700 });
+    }).join('');
+    const tilesH = rows * boxH + (rows - 1) * gap;
+    const line = withPortion && portion;
+    return {
+      svg: boxes + (line ? text(x, y + tilesH + 42, portion.size, LIGHT, escapeXml(portion.text)) : ''),
+      height: tilesH + (line ? 54 : 0),
+    };
+  };
+  if (rows === 1) return draw(100, true);
+  const options = [draw(78, true), draw(70, true), draw(62, true), draw(62, false)];
+  return options.find(o => o.height <= maxHeight) ?? options[options.length - 1];
 }
 
+// A food name on one line when it fits, otherwise on two, the second cut with an ellipsis. Returns lines and size.
+function nameLines(value, { max, min, width }) {
+  const one = fitText(value, { max, min: Math.max(min, 44), width, bold: true });
+  if (!one.text.endsWith('…') || !value.includes(' ')) return { lines: [fitText(value, { max, min, width, bold: true }).text], size: one.text.endsWith('…') ? min : one.size };
+  const words = value.split(' ');
+  let first = words[0], i = 1;
+  while (i < words.length && textWidth(`${first} ${words[i]}`, min, true) <= width) first += ` ${words[i++]}`;
+  const rest = words.slice(i).join(' ');
+  return { lines: rest ? [first, fitText(rest, { max: min, min, width, bold: true }).text] : [first], size: min };
+}
+
+const label = body => text(CARD.x + 10, CARD.y - 22, 26, MINT, body, { weight: 800 });
+
 export function brandSvg({ scale = SAFE_SCALE } = {}) {
+  const tagline = fitText('A calm companion for food choices', { max: 38, min: 26, width: INNER.width });
+  const y = CARD.y + 50;
   return [
     sceneOpen(scale),
-    companionHalo(),
-    text(710, 186, 24, MINT, 'YOUR RENAL DIETITIAN', { weight: 800 }),
-    panel(692, 210, 510, 264),
-    text(730, 278, 58, WHITE, 'RenaLine', { weight: 800 }),
-    text(730, 326, 30, LIGHT, 'A calm companion for food choices'),
-    `<circle cx="747" cy="395" r="9" fill="${MINT}"/>`,
-    text(768, 404, 25, SOFT, 'Here with you, live'),
-    text(730, 447, 22, SOFT, escapeXml("Follows your care team's limits")),
-    text(382, 584, 22, SOFT, 'Steady support, guided by your care team', { anchor: 'middle' }),
+    companionHalo({ caption: false }), // the card already carries the name
+    label('YOUR RENAL DIETITIAN'),
+    panel(CARD.x, y, CARD.width, 380),
+    text(INNER.x, y + 124, 96, WHITE, 'RenaLine', { weight: 800 }),
+    text(INNER.x, y + 186, tagline.size, LIGHT, tagline.text),
+    `<circle cx="${INNER.x + 12}" cy="${y + 262}" r="11" fill="${MINT}"/>`,
+    text(INNER.x + 38, y + 273, 32, WHITE, 'Here with you, live'),
+    text(INNER.x, y + 328, 27, SOFT, escapeXml("Follows your care team's limits")),
     close,
   ].join('');
 }
@@ -215,46 +252,61 @@ export function cardSvg(display, { scale = SAFE_SCALE } = {}) {
   const unjudged = display?.unjudged === true;
   if (items.length === 0 && !unjudged) return brandSvg({ scale });
   const more = Number.isInteger(display?.more) && display.more > 0 ? display.more : 0;
-  // A single judged item with four or five nutrient tiles needs a second tile row: the panel grows upward by 80
-  // so its bottom stays at 495, clear of the voice wave. Every other card is laid out exactly as before.
-  const lift = !unjudged && items.length === 1 && detailParts(items[0]).nutrients.length > 3 ? 80 : 0;
-  const parts = [sceneOpen(scale), companionHalo(), text(710, 142 - lift, 23, MINT, 'FOOD CHECK', { weight: 800 }), panel(692, 165 - lift, 510, 330 + lift)];
-  if (display?.online === true) parts.push(onlineBadge(1000, 181 - lift, true));
+  const parts = [sceneOpen(scale), companionHalo(), label('FOOD CHECK'), panel(CARD.x, CARD.y, CARD.width, CARD.height)];
+  const online = display?.online === true;
+  if (online) parts.push(onlineBadge(CARD.x + CARD.width - 196 - 28, CARD.y + 28));
+  const top = CARD.y, x = INNER.x, width = INNER.width;
 
   if (unjudged) {
     const seen = Number.isInteger(display?.seen) && display.seen > 0 ? display.seen : Math.max(1, items.length);
     const one = seen === 1;
-    parts.push(text(730, 238, 36, WHITE, `I can see ${one ? 'one food' : `${seen} foods`}`, { weight: 700 }));
-    parts.push(text(730, 286, 27, SOFT, escapeXml(`but I can't judge ${one ? 'it' : 'them'} right now`)));
     const names = items.slice(0, 3).map(i => cleanText(i.food, 50)).filter(Boolean);
+    // The block is centred in the card whatever the number of names.
+    const y = top + (CARD.height - (120 + names.length * 58)) / 2;
+    parts.push(text(x, y + 50, 50, WHITE, `I can see ${one ? 'one food' : `${seen} foods`}`, { weight: 700 }));
+    parts.push(text(x, y + 104, 32, SOFT, escapeXml(`but I can't judge ${one ? 'it' : 'them'} right now`)));
     names.forEach((name, i) => {
-      parts.push(`<circle cx="748" cy="${344 + i * 44}" r="5" fill="#AABCC1"/>`);
-      parts.push(text(766, 353 + i * 44, 23, LIGHT, escapeXml(name)));
+      const f = fitText(capitalise(name), { max: 32, min: 24, width: width - 34 });
+      parts.push(`<circle cx="${x + 10}" cy="${y + 160 + i * 58}" r="7" fill="#AABCC1"/>`);
+      parts.push(text(x + 34, y + 171 + i * 58, f.size, LIGHT, escapeXml(f.text)));
     });
   } else if (items.length === 1) {
     const item = items[0];
     const v = verdictOf(item.verdict);
-    const status = statusPill(item.verdict, 730, 198 - lift);
-    parts.push(status.svg);
-    parts.push(text(730, 316 - lift, 44, WHITE, escapeXml(fitText(foodName(item.food), { max: 44, min: 30, width: 430, bold: true }).text), { weight: 700 }));
-    parts.push(text(730, 354 - lift, 24, SOFT, v.detail));
-    parts.push(nutrientCards(item, 730, 385 - lift, 430));
+    const status = statusPill(item.verdict, x, 0);
+    let facts = nutrientCards(item, x, 0, width);
+    // Without numbers the name is larger and the block is centred, so the card never looks half empty.
+    const big = facts.height === 0;
+    const name = nameLines(foodName(item.food), { max: big ? 96 : 68, min: 38, width });
+    const lineH = Math.round(name.size * 1.16);
+    const nameH = 22 + lineH * name.lines.length, detailH = big ? 58 : 48, detailSize = big ? 38 : 30;
+    // Room left for the tiles under the name, keeping a margin above the card's bottom edge.
+    const room = CARD.height - (online ? 84 : 30) - 16 - (status.height + nameH + detailH + 24);
+    if (facts.height > room) facts = nutrientCards(item, x, 0, width, { maxHeight: room });
+    const block = status.height + nameH + detailH + (facts.height ? 24 + facts.height : 0);
+    const y = top + Math.max(online ? 84 : 30, (CARD.height - block) / 2);
+    parts.push(statusPill(item.verdict, x, y).svg);
+    name.lines.forEach((line, n) => parts.push(text(x, y + status.height + 22 + lineH * (n + 1) - Math.round(name.size * 0.24), name.size, WHITE, escapeXml(line), { weight: 700 })));
+    parts.push(text(x, y + status.height + nameH + detailH - 14, detailSize, SOFT, v.detail));
+    if (facts.height) parts.push(nutrientCards(item, x, y + status.height + nameH + detailH + 24, width, { maxHeight: facts.height }).svg);
   } else {
     const rows = items.slice(0, 3);
-    parts.push(text(730, 220, 30, WHITE, 'At a glance', { weight: 700 }));
-    rows.forEach((r, n) => {
-      const y = 246 + n * 82;
-      const v = verdictOf(r.verdict);
-      parts.push(`<rect x="718" y="${y - 28}" width="458" height="70" rx="16" fill="#0C2029" stroke="#C1E5DD" stroke-opacity=".12"/>`);
-      const status = statusPill(r.verdict, 730, y - 16, true);
-      parts.push(status.svg);
-      const f = fitText(foodName(r.food), { max: 27, min: 20, width: 265, bold: true });
-      parts.push(text(750 + status.width, y + 13, f.size, WHITE, escapeXml(f.text), { weight: 700 }));
-      const nPart = detailParts(r).nutrients[0];
-      if (nPart) parts.push(text(750 + status.width, y + 34, 16, SOFT, escapeXml(nPart)));
-    });
     const left = Math.max(0, items.length - 3) + more;
-    if (left > 0) parts.push(text(730, 482, 20, SOFT, escapeXml(`+${left} more`)));
+    parts.push(text(x, top + 66, 36, WHITE, 'At a glance', { weight: 700 }));
+    const rowH = 96, gap = 14, first = top + 96;
+    rows.forEach((r, n) => {
+      const y = first + n * (rowH + gap);
+      parts.push(`<rect x="${CARD.x + 24}" y="${y}" width="${CARD.width - 48}" height="${rowH}" rx="18" fill="#0C2029" stroke="#C1E5DD" stroke-opacity=".12"/>`);
+      const status = statusPill(r.verdict, CARD.x + 44, y + (rowH - 52) / 2, true);
+      parts.push(status.svg);
+      const nameX = CARD.x + 44 + status.width + 22;
+      const nameW = CARD.x + CARD.width - 44 - nameX;
+      const f = fitText(foodName(r.food), { max: 36, min: 24, width: nameW, bold: true });
+      const nPart = detailParts(r).nutrients[0];
+      parts.push(text(nameX, y + (nPart ? 46 : 60), f.size, WHITE, escapeXml(f.text), { weight: 700 }));
+      if (nPart) parts.push(text(nameX, y + 76, 21, SOFT, escapeXml(nPart)));
+    });
+    if (left > 0) parts.push(text(x, first + rows.length * (rowH + gap) + 26, 26, SOFT, escapeXml(`+${left} more`)));
   }
   parts.push(close);
   return parts.join('');

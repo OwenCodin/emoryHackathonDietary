@@ -3,6 +3,22 @@
 
 // The spoken word the caller picks, mapped to a voice name in the Gemini plugin's Voice union.
 export const VOICE_MENU = Object.freeze({ upbeat: 'Puck', firm: 'Kore', warm: 'Sulafat', mature: 'Gacrux' });
+// Setup plays a sample of each and asks "voice one or voice two". The four words above still work.
+export const VOICE_WORDS = Object.freeze({
+  1: 'Puck', one: 'Puck', first: 'Puck',
+  2: 'Sulafat', two: 'Sulafat', second: 'Sulafat',
+});
+// "Voice one", "the first one", "number 2" and "2" all name a voice.
+export function voiceFor(value) {
+  const words = String(value ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(x => x && !['voice', 'the', 'number', 'a', 'an'].includes(x));
+  // "the first one", "second one"
+  if (words.length === 2 && words[1] === 'one' && (words[0] === 'first' || words[0] === 'second')) words.pop();
+  if (words.length !== 1) return null;
+  const key = words[0];
+  if (Object.hasOwn(VOICE_WORDS, key)) return VOICE_WORDS[key];
+  if (Object.hasOwn(VOICE_MENU, key)) return VOICE_MENU[key];
+  return Object.values(VOICE_MENU).find(x => x.toLowerCase() === key) ?? null;
+}
 export const DEFAULT_PREFS = Object.freeze({ voice: 'Puck', replyStyle: 'brief', language: 'en', name: null });
 
 // A preferred name ends up inside the model instructions, so it stays strict: letters, spaces, apostrophes and

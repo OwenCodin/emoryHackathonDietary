@@ -1,6 +1,9 @@
 import { isFiniteNonNegative, normalizeFoodName, readData } from './data.mjs';
 import { lookupFood } from './nutrients.mjs';
 
+// Said when no specific swap is known. It names no food, so list and recipe code must not treat it as one.
+export const GENERIC_SWAP = 'an unseasoned fresh alternative';
+
 const NUTRIENTS = [
   ['sodiumMg', 'sodium'],
   ['potassiumMg', 'potassium'],
@@ -128,7 +131,7 @@ export async function checkFood(input = {}, { ai } = {}) {
         reasons: [reason],
         nutrients: null,
         portion: food.grams == null ? 'not estimated' : `${food.grams} g`,
-        swap: SWAPS[names[names.length - 1]] ?? SWAPS[names[0]] ?? 'an unseasoned fresh alternative',
+        swap: SWAPS[names[names.length - 1]] ?? SWAPS[names[0]] ?? GENERIC_SWAP,
         source: 'rule',
       };
     };
@@ -302,7 +305,7 @@ export async function checkFood(input = {}, { ai } = {}) {
 
     const reasons = buildReasons(nutrients, profile, ruleReasons, countsAsFluid, active);
     if (fromWeb) reasons.push(`nutrition found online${webHost ? ` (${webHost})` : ''}, per ${portion}`);
-    const swap = verdict === 'avoid' ? ((canonical && SWAPS[canonical]) ?? SWAPS[normalizedName] ?? 'an unseasoned fresh alternative') : null;
+    const swap = verdict === 'avoid' ? ((canonical && SWAPS[canonical]) ?? SWAPS[normalizedName] ?? GENERIC_SWAP) : null;
     let say;
     if (!worst) {
       if (verdict === 'limit') {

@@ -51,7 +51,7 @@ describe('spokenVerdict', () => {
 describe('buildTools shape', () => {
   it('has the eight tools, anonymous', () => {
     const t = build();
-    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'dish_ingredients', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'remove_from_list', 'set_quantity', 'text_list', 'shopping_list', 'mark_item', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'text_recipe', 'kroger_status', 'text_kroger_sign_in', 'start_setup', 'save_profile_basics', 'propose_limits', 'confirm_limits', 'set_avoid_foods', 'set_preferences', 'finish_onboarding']);
+    assert.deepEqual(Object.keys(t), ['look_at_camera', 'check_food', 'dish_ingredients', 'suggest_meal', 'log_meal', 'todays_totals', 'start_cart', 'cart_status', 'text_cart_link', 'add_to_shopping_list', 'remove_from_list', 'set_quantity', 'text_list', 'shopping_list', 'mark_item', 'pantry_list', 'remove_from_pantry', 'clear_pantry', 'text_recipe', 'kroger_status', 'text_kroger_sign_in', 'start_setup', 'save_profile_basics', 'propose_limits', 'confirm_limits', 'set_avoid_foods', 'play_voice_samples', 'set_preferences', 'finish_onboarding']);
     for (const tool of Object.values(t)) assert.ok(!Object.hasOwn(tool, 'name'));
   });
 });
@@ -984,6 +984,63 @@ describe('recipeText', () => {
     assert.ok(huge.length <= 4000);
     assert.ok(huge.endsWith('does not replace their advice.'));
   });
+  it('adds the per-serving line after the Time line when the meal has totals', () => {
+    const t = tools.recipeText({ ...meal, totals: { sodiumMg: 412.4, potassiumMg: 600, phosphorusMg: 300 } });
+    const lines = t.split('\n');
+    assert.equal(lines[3], 'Time: about 25 minutes');
+    assert.equal(lines[4], 'Per serving (one typical portion of each ingredient): sodium 412 mg, potassium 600 mg, phosphorus 300 mg');
+    assert.ok(!tools.recipeText({ ...meal, totals: { sodiumMg: 1 } }).includes('Per serving'));
+  });
+});
+
+describe('dishRecipeText', () => {
+  const rec1 = {
+    dish: 'ham sandwich',
+    ingredients: [
+      { name: 'white bread', quantity: '2 slices', verdict: 'ok' },
+      { name: 'fresh unsalted chicken', quantity: '3 slices', verdict: 'ok', swappedFrom: 'ham' },
+      { name: 'cheddar cheese', quantity: '1 slice', verdict: 'limit' },
+      { name: 'mayonnaise', quantity: '1 tablespoon', verdict: 'unknown' },
+    ],
+    leftOut: ['bacon'],
+    steps: ['Lay out the bread.', 'Close the sandwich.'],
+    minutes: 5,
+    totals: { sodiumMg: 800.2, potassiumMg: 500, phosphorusMg: 300 },
+  };
+  it('gives the plain text shape', () => {
+    assert.equal(tools.dishRecipeText(rec1, [{ name: 'white bread', quantity: '2 slices' }, { name: 'lettuce', quantity: '1 leaf' }]), [
+      'Recipe from your AI renal dietitian: ham sandwich',
+      'Ingredients:',
+      '- white bread (2 slices)',
+      '- fresh unsalted chicken instead of ham (3 slices)',
+      '- cheddar cheese (1 slice)',
+      '- mayonnaise (1 tablespoon)',
+      'Small portions: cheddar cheese',
+      'Not checked against your limits: mayonnaise',
+      'Left out because it does not fit your limits: bacon',
+      'To buy: white bread (2 slices), lettuce (1 leaf)',
+      'Time: about 5 minutes',
+      'Per serving (one typical portion of each ingredient): sodium 800 mg, potassium 500 mg, phosphorus 300 mg',
+      'Steps:',
+      '1. Lay out the bread.',
+      '2. Close the sandwich.',
+      'This recipe follows the limits set by your care team and does not replace their advice.',
+    ].join('\n'));
+  });
+  it('omits To buy, Per serving and Left out lines when there is nothing for them; strips links', () => {
+    const t = tools.dishRecipeText({ ...rec1, dish: 'a https://evil.example/x b', leftOut: [], totals: undefined }, []);
+    assert.ok(!t.includes('To buy') && !t.includes('Per serving') && !t.includes('Left out') && !t.includes('http'));
+  });
+  it('stays within 4000 characters and keeps the closing line', () => {
+    const huge = tools.dishRecipeText({
+      dish: 'd'.repeat(200),
+      ingredients: Array.from({ length: 8 }, (_, i) => ({ name: `${'n'.repeat(80)}${i}`, quantity: 'q'.repeat(80), verdict: 'ok' })),
+      steps: Array.from({ length: 10 }, () => 'x'.repeat(300)),
+      leftOut: [], minutes: 5,
+    }, Array.from({ length: 30 }, (_, i) => ({ name: `${'b'.repeat(80)}${i}`, quantity: 'q'.repeat(50) })));
+    assert.ok(huge.length <= 4000);
+    assert.ok(huge.endsWith('does not replace their advice.'));
+  });
 });
 
 describe('text_recipe', () => {
@@ -1517,7 +1574,10 @@ describe('quick 261114-oyc: dish to cart', async () => {
     assert.ok(!/\d/.test(r.say), r.say);
     assert.match(r.say, /ham is a no for your limits; fresh unsalted chicken is a good swap/);
     assert.match(r.say, /couldn't check mayonnaise/);
-    assert.match(r.ask, /shall I put these on your list/);
+    assert.match(r.ask, /^Shall I use the swap, text you the full recipe and put the ingredients on your list\?$/);
+    // The ingredients are not read out: say gives the count and only the flagged items.
+    assert.ok(r.say.startsWith('ham sandwich usually takes four ingredients.'), r.say);
+    for (const name of ['white bread', 'lettuce']) assert.ok(!r.say.includes(name), name);
     assert.ok(JSON.stringify(r).length <= 900);
     assert.equal(shown.length, 1);
     assert.equal(shown[0].items[0].verdict, 'avoid');
@@ -1763,5 +1823,136 @@ describe('per-caller texting and check_text_received', () => {
     const mod = { ...actions, sendText: async () => ({ ok: false, error: 'Chert rejected the message (HTTP 403)' }) };
     const r = await (await readyMeal({ actions: mod })).text_recipe.execute({});
     assert.equal(r.error, 'text_failed');
+  });
+});
+
+// ---- quick 261114-pqe: the full recipe of a dish by text ----
+describe('quick 261114-pqe: dish recipe by text', async () => {
+  const { createMemory } = await import('./memory.mjs');
+  let n = 0;
+  const flow = (over = {}) => {
+    const texts = [];
+    const acts = { ...actions, sendText: async a => { texts.push(a); return { ok: true }; } };
+    const t = build({ memory: createMemory({ patientId: 'demo', dir: join(dir, `pqe-${n++}`) }), actions: acts, phone: PHONE, ...over });
+    return { t, texts };
+  };
+  const CLOSING = 'This recipe follows the limits set by your care team and does not replace their advice.';
+
+  it('spoken-name route with no look_at_camera: dish_ingredients then text_recipe {} sends the whole dish recipe', async () => {
+    const seen = [];
+    const spy = { ...renal, dishRecipe: async a => { seen.push(a); return renal.dishRecipe(a); } };
+    const { t, texts } = flow({ renal: spy });
+    const d = await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal(d.ok, true);
+    await t.add_to_shopping_list.execute({ items: ['white bread', 'lettuce'] });
+    const r = await t.text_recipe.execute({});
+    assert.deepEqual(r, { ok: true, sent: true, title: 'ham sandwich' });
+    assert.ok(JSON.stringify(r).length < 600);
+    assert.equal(texts.length, 1);
+    assert.equal(texts[0].phone, PHONE);
+    const text = texts[0].text;
+    assert.ok(text.startsWith('Recipe from your AI renal dietitian: ham sandwich'));
+    assert.ok(text.includes('- fresh unsalted chicken instead of ham (3 slices)'));
+    assert.ok(text.includes('- white bread (2 slices)') && text.includes('- lettuce (1 leaf)'));
+    assert.ok(text.includes('To buy: white bread (2 slices), lettuce (1 leaf)'));
+    for (const [i, step] of ['Lay out the two slices of bread.', 'Spread a thin layer of the spread on one slice.', 'Add the filling and the lettuce.', 'Close the sandwich, cut it in half and serve.'].entries()) {
+      assert.ok(text.includes(`${i + 1}. ${step}`), step);
+    }
+    assert.ok(text.endsWith(CLOSING));
+    assert.deepEqual(seen[0].ingredients, [
+      { name: 'white bread', quantity: '2 slices' }, { name: 'ham', quantity: '3 slices' },
+      { name: 'lettuce', quantity: '1 leaf' }, { name: 'mayonnaise', quantity: '1 tablespoon' },
+    ]);
+    assert.equal(seen[0].dish, 'ham sandwich');
+    // a second request is refused, nothing more is sent
+    assert.equal((await t.text_recipe.execute({})).error, 'recipe_already_sent');
+    assert.equal(texts.length, 1);
+  });
+
+  it('no To buy line when the list has nothing for the dish', async () => {
+    const { t, texts } = flow();
+    await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+    assert.equal((await t.text_recipe.execute({})).ok, true);
+    assert.ok(!texts[0].text.includes('To buy'));
+  });
+
+  describe('which one is sent', () => {
+    const meals = [{ title: 'Rice with herbed chicken', uses: ['rice'], missing: [], minutes: 25, steps: ['Cook.'], why: 'Gentle.' }];
+    const mk = () => flow({ renal: oneMealRenal(meals) });
+    it('the newer of meals and dish wins when nothing is named', async () => {
+      const a = mk();
+      await a.t.look_at_camera.execute({});
+      await a.t.suggest_meal.execute({});
+      await a.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      assert.equal((await a.t.text_recipe.execute({})).title, 'ham sandwich');
+      const b = mk();
+      await b.t.look_at_camera.execute({});
+      await b.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      await b.t.suggest_meal.execute({});
+      assert.equal((await b.t.text_recipe.execute({})).title, 'Rice with herbed chicken');
+      assert.ok(b.texts[0].text.includes('Uses from your kitchen'));
+    });
+    it('a named dish is sent even after a later suggest_meal; a position always means a meal', async () => {
+      const a = mk();
+      await a.t.look_at_camera.execute({});
+      await a.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      await a.t.suggest_meal.execute({});
+      assert.equal((await a.t.text_recipe.execute({ title: 'ham sandwich' })).title, 'ham sandwich');
+      const b = mk();
+      await b.t.look_at_camera.execute({});
+      await b.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      await b.t.suggest_meal.execute({});
+      assert.equal((await b.t.text_recipe.execute({ position: 1 })).title, 'Rice with herbed chicken');
+    });
+    it('only a dish known never asks which; nothing known is no_recipe', async () => {
+      const a = flow();
+      await a.t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      assert.equal((await a.t.text_recipe.execute({})).ok, true);
+      assert.equal((await flow().t.text_recipe.execute({})).error, 'no_recipe');
+    });
+  });
+
+  describe('failures', () => {
+    it('dishRecipe not ok, throwing or missing: recipe_unavailable, nothing sent, error text hidden, retry allowed', async () => {
+      for (const dishRecipe of [async () => ({ ok: false, error: 'SECRET123' }), async () => { throw new Error('SECRET123'); }, undefined]) {
+        const { t, texts } = flow({ renal: { ...renal, dishRecipe } });
+        await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+        const r = await t.text_recipe.execute({});
+        assert.equal(r.error, 'recipe_unavailable');
+        assert.ok(!JSON.stringify(r).includes('SECRET123'));
+        assert.equal(texts.length, 0);
+        assert.equal((await t.text_recipe.execute({})).error, 'recipe_unavailable');
+      }
+    });
+    it('profile problems', async () => {
+      let mode = 'ok';
+      const prof = { ...renal, getProfile: async a => (mode === 'ok' ? renal.getProfile(a) : mode === 'needed' ? { ok: false, limitsNeeded: true } : { ok: false }) };
+      const { t, texts } = flow({ renal: prof });
+      await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      mode = 'needed';
+      assert.equal((await t.text_recipe.execute({})).error, 'limits_needed');
+      mode = 'broken';
+      assert.equal((await t.text_recipe.execute({})).error, 'profile_unavailable');
+      assert.equal(texts.length, 0);
+    });
+    it('a dishRecipe that never answers says timeout, sends nothing, and does not block a later request', async () => {
+      let calls = 0;
+      const slow = { ...renal, dishRecipe: a => (++calls === 1 ? new Promise(() => {}) : renal.dishRecipe(a)) };
+      const { t, texts } = flow({ renal: slow, timeoutMs: 100 });
+      await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      assert.equal((await t.text_recipe.execute({})).error, 'timeout');
+      assert.equal(texts.length, 0);
+      assert.equal((await t.text_recipe.execute({})).ok, true);
+      assert.equal(texts.length, 1);
+    });
+    it('a send that never answers is text_unconfirmed and then never resent', async () => {
+      const calls = [];
+      const acts = { ...actions, sendText: async a => { calls.push(a); return new Promise(() => {}); } };
+      const t = build({ memory: createMemory({ patientId: 'demo', dir: join(dir, `pqe-${n++}`) }), actions: acts, phone: PHONE, timeoutMs: 200 });
+      await t.dish_ingredients.execute({ dish: 'ham sandwich' });
+      assert.equal((await t.text_recipe.execute({})).error, 'text_unconfirmed');
+      assert.equal((await t.text_recipe.execute({})).error, 'recipe_already_sent');
+      assert.equal(calls.length, 1);
+    });
   });
 });

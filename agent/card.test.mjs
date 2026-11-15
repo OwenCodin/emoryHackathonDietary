@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
-import { VOICE_INDICATOR, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintVoiceIndicator, renderSvg, VERDICTS, voiceIndicatorBand } from './card.mjs';
+import { VOICE_INDICATOR, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintVoiceIndicator, renderSvg, textWidth, VERDICTS, voiceIndicatorBand } from './card.mjs';
 
 globalThis.fetch = async () => { throw new Error('network used'); };
 
@@ -47,24 +47,30 @@ describe('cardSvg single', () => {
     assert.deepEqual(detailParts({ nutrients: { sodiumMg: 5, proteinG: -1, carbsG: NaN } }).nutrients, ['Sodium 5 mg']);
     assert.deepEqual(detailParts({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7 } }).nutrients, ['Sodium 5 mg', 'Potassium 6 mg', 'Phosphorus 7 mg']);
   });
-  it('lays 4 and 5 nutrients out in two rows inside a lifted panel above the wave', () => {
-    const tiles = s => (s.match(/rx="14" fill="#0C2029"/g) ?? []).length;
+  it('lays 4 and 5 nutrients out in two rows that stay inside the card', () => {
+    const tileYs = s => [...s.matchAll(/<rect x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)" rx="16" fill="#0C2029"/g)].map(m => [Number(m[1]), Number(m[2])]);
     const five = one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7, proteinG: 37, carbsG: 0 }, portion: '120 g' });
-    assert.equal(tiles(five), 5);
+    assert.equal(tileYs(five).length, 5);
     assert.ok(five.includes('PROTEIN') && five.includes('37 g') && five.includes('CARBS') && five.includes('0 g'));
-    assert.equal(tiles(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7, proteinG: 37 } })), 4);
-    assert.equal(tiles(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7 } })), 3);
-    // Every tile, text and the panel itself stays between y 40 and the wave (505); the panel bottom is 495 as before.
-    const ys = [...five.matchAll(/<(?:rect|text) [^>]*?\by="(-?[\d.]+)"(?: [^>]*?\bheight="([\d.]+)")?/g)].map(m => [Number(m[1]), Number(m[2] ?? 0)]);
-    const panelRect = five.match(/<rect x="692" y="(\d+)" width="510" height="(\d+)" rx="28"/);
-    assert.ok(panelRect);
-    assert.equal(Number(panelRect[1]) + Number(panelRect[2]), 495);
-    const inPanel = ys.filter(([y, h]) => y >= Number(panelRect[1]) && y < 505 && h < 300); // the panel layers themselves are checked above
-    assert.ok(inPanel.length > 8);
-    for (const [y, h] of inPanel) assert.ok(y + h <= 495 && y >= 40, `y ${y} h ${h}`);
-    assert.ok(Number(panelRect[1]) >= 40);
-    // The unlifted card keeps today's panel.
-    assert.ok(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7 } }).includes('<rect x="692" y="165" width="510" height="330" rx="28"'));
+    assert.equal(tileYs(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7, proteinG: 37 } })).length, 4);
+    const three = tileYs(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7 } }));
+    assert.equal(three.length, 3);
+    assert.equal(new Set(three.map(([y]) => y)).size, 1);
+    // Two rows: the first three tiles share one y, the last two share a lower one, and nothing overlaps.
+    const ys = tileYs(five);
+    assert.equal(new Set(ys.slice(0, 3).map(([y]) => y)).size, 1);
+    assert.equal(new Set(ys.slice(3).map(([y]) => y)).size, 1);
+    assert.ok(ys[3][0] >= ys[0][0] + ys[0][1]);
+    // Every tile and every line of text stays inside the card panel, with a long name and the online tag too.
+    for (const svg of [five, cardSvg({ items: [item({ food: 'Low sodium chicken noodle soup with vegetables', nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7, proteinG: 37, carbsG: 0 }, portion: '1 cup (240 mL)' })], online: true })]) {
+      const panel = svg.match(/<rect x="500" y="(\d+)" width="730" height="(\d+)" rx="28"/);
+      assert.ok(panel);
+      const top = Number(panel[1]), bottom = top + Number(panel[2]);
+      for (const [y, h] of tileYs(svg)) assert.ok(y >= top && y + h <= bottom, `tile y ${y} h ${h}`);
+      const textYs = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)"/g)].filter(m => Number(m[1]) >= 500 && !m.input.slice(m.index, m.index + 200).includes('>FOOD CHECK<')).map(m => Number(m[2]));
+      assert.ok(textYs.length > 8);
+      for (const y of textYs) assert.ok(y > top && y < bottom, `text y ${y}`);
+    }
   });
   it('online tag only when online', () => {
     const on = cardSvg({ items: [item()], online: true });
@@ -78,7 +84,7 @@ describe('cardSvg multi and unjudged', () => {
     const items = ['a1', 'b2', 'c3', 'd4'].map((food, i) => item({ food, verdict: ['avoid', 'limit', 'ok', 'ok'][i] }));
     const s = cardSvg({ items, more: 2, unjudged: false, seen: 6 });
     assert.ok(s.indexOf('A1') < s.indexOf('B2') && s.indexOf('B2') < s.indexOf('C3'));
-    assert.ok(!s.includes('D4'));
+    assert.ok(!s.includes('>D4<')); // the bare letters also occur in a colour code
     assert.ok(s.includes('+3 more'));
     assert.ok(!s.includes('Sodium'));
   });
@@ -92,6 +98,50 @@ describe('cardSvg multi and unjudged', () => {
   it('empty display falls back to the brand screen', () => {
     assert.equal(cardSvg({ items: [] }), brandSvg());
     assert.equal(cardSvg(null), brandSvg());
+  });
+});
+
+describe('layout', () => {
+  // Every text element's estimated right edge, in design pixels.
+  const rightEdges = svg => [...svg.matchAll(/<text x="([\d.]+)" y="[\d.]+" font-family="[^"]*" font-size="([\d.]+)" font-weight="(\d+)" fill="[^"]*" text-anchor="(\w+)">([^<]*)<\/text>/g)]
+    .map(([, x, size, weight, anchor, body]) => {
+      const w = textWidth(body.replace(/&[a-z#0-9]+;/g, 'x'), Number(size), Number(weight) >= 700);
+      return { body, left: anchor === 'middle' ? Number(x) - w / 2 : Number(x), right: Number(x) + (anchor === 'middle' ? w / 2 : w) };
+    });
+  const screens = {
+    brand: brandSvg(),
+    single: one({ verdict: 'limit', food: 'Great Value Original Homestyle Chicken Noodle Soup Family Size', nutrients: { sodiumMg: 6400, potassiumMg: 3100, phosphorusMg: 1200 }, portion: '1 cup (240 g) as prepared with water' }),
+    plain: one({ verdict: 'avoid', food: 'Star fruit' }),
+    multi: cardSvg({ items: ['Pickles in brine with extra garlic and dill', 'Orange juice', 'Apples'].map((food, i) => item({ food, verdict: ['avoid', 'limit', 'ok'][i], nutrients: { sodiumMg: 800 } })), more: 2 }),
+    unjudged: cardSvg({ items: [item({ food: 'A very long unjudged food name that keeps going and going on' })], unjudged: true, seen: 4 }),
+  };
+  it('never draws text past the right edge of the card', () => {
+    for (const [name, svg] of Object.entries(screens)) {
+      for (const t of rightEdges(svg)) if (t.left >= 500) assert.ok(t.right <= 1230 - 20, `${name}: "${t.body}" ends at ${Math.round(t.right)}`);
+    }
+  });
+  it('keeps the At a glance heading above the first row', () => {
+    const svg = screens.multi;
+    const headingY = Number(svg.match(/y="([\d.]+)"[^>]*>At a glance</)[1]);
+    const firstRowTop = Math.min(...[...svg.matchAll(/<rect x="524" y="([\d.]+)" width="682" height="96"/g)].map(m => Number(m[1])));
+    assert.ok(Number.isFinite(firstRowTop) && headingY + 10 <= firstRowTop, `${headingY} vs ${firstRowTop}`);
+  });
+  it('leaves room between the badge icon and its word, for every verdict', () => {
+    for (const verdict of ['ok', 'limit', 'avoid', 'unknown']) {
+      const svg = one({ verdict });
+      const iconX = Number(svg.match(new RegExp(`id="icon-${verdict}" transform="translate\\(([\\d.]+)`))[1]);
+      const wordX = Number(svg.match(new RegExp(`<text x="([\\d.]+)"[^>]*>${VERDICTS[verdict].word}<`))[1]);
+      assert.ok(wordX - (iconX + 36) >= 10, `${verdict}: ${wordX - iconX - 36}`);
+    }
+  });
+  it('wraps a long food name onto two lines instead of cutting it at the first', () => {
+    const svg = screens.single;
+    assert.ok(svg.includes('>Great Value Original Homestyle<') || svg.includes('>Great Value Original<'), 'first line holds whole words');
+    assert.ok(svg.includes('Chicken'));
+  });
+  it('fades the scene light out so no box shows inside the frame', () => {
+    assert.ok(/<radialGradient id="scene"[^>]*>.*stop-opacity="0"\/><\/radialGradient>/s.test(brandSvg()));
+    assert.ok(!brandSvg().includes('<linearGradient id="scene"'));
   });
 });
 
@@ -166,8 +216,8 @@ describe('render and voice indicator', () => {
     }
   });
   it('voice indicator band stays centered over the companion mark', () => {
-    assert.deepEqual(voiceIndicatorBand(1), { top: 212, bottom: 448, left: 264, right: 500 });
-    assert.equal(VOICE_INDICATOR.top, 212);
+    assert.deepEqual(voiceIndicatorBand(1), { top: 242, bottom: 478, left: 152, right: 388 });
+    assert.equal(VOICE_INDICATOR.top, 242);
   });
   it('voice indicator stays inside the safe rect at 0.8 for every tick', () => {
     const s = SAFE_SCALE_DEFAULT, a = safeArea(s), band = voiceIndicatorBand(s);
