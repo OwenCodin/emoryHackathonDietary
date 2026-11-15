@@ -33,7 +33,7 @@ After the name and condition answers, call save_profile_basics. After the avoid 
 Then say: "${say('capabilities')}" Then call finish_onboarding, say its say sentence, and then say: "${say('done')}" Keep setup to about three minutes.`;
 
 const SHOPPING_PLAYBOOK = `Dish and shopping list:
-1. A dish they show or name, with a wish for its ingredients, its recipe or to buy it: call look_at_camera first if they showed it, then dish_ingredients. Never list ingredients yourself. Say its say, then ask its ask. Once the list is read back, offer to text them the full recipe, and call text_recipe only when they agree.
+1. A dish they show or name, with a wish for its ingredients, its recipe or to buy it: call look_at_camera first if they showed it, then dish_ingredients. Never list ingredients yourself and never read its ingredients aloud: the texted recipe carries them. Say its say, then ask its ask. Call text_recipe only when they agree to the text.
 2. When they agree, call add_to_shopping_list with what they chose (the swap names if they chose swaps). A held item goes on only with keep_after_warning true, after they say to keep it.
 3. After each list change, say one short sentence on what changed. The card on the video shows the list is not in their Kroger cart yet.
 4. "Remove" or "take off" means remove_from_list. "Add" means add_to_shopping_list. "Make it two" means set_quantity.

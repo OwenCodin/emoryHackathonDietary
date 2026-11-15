@@ -1565,7 +1565,10 @@ describe('quick 261114-oyc: dish to cart', async () => {
     assert.ok(!/\d/.test(r.say), r.say);
     assert.match(r.say, /ham is a no for your limits; fresh unsalted chicken is a good swap/);
     assert.match(r.say, /couldn't check mayonnaise/);
-    assert.match(r.ask, /shall I put these on your list/);
+    assert.match(r.ask, /^Shall I use the swap, text you the full recipe and put the ingredients on your list\?$/);
+    // The ingredients are not read out: say gives the count and only the flagged items.
+    assert.ok(r.say.startsWith('ham sandwich usually takes four ingredients.'), r.say);
+    for (const name of ['white bread', 'lettuce']) assert.ok(!r.say.includes(name), name);
     assert.ok(JSON.stringify(r).length <= 900);
     assert.equal(shown.length, 1);
     assert.equal(shown[0].items[0].verdict, 'avoid');

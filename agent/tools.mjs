@@ -243,15 +243,20 @@ const DISH_LEVELS = [
   { qty: 0, name: 12, swap: 16, limit: false, unknown: false, okRows: false, swapSay: false, dish: 20 },
 ];
 
-// Said from names and verdict words only: no nutrient number ever appears in it.
+// Counts are said as words so the sentence never carries a digit.
+const NUM_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const numWord = n => NUM_WORDS[n] ?? 'several';
+
+// Said from a count, names of flagged items and verdict words only: no nutrient number ever appears in it.
+// The ingredients are not read out: the texted recipe carries them. Only what the caller must know is said.
 function dishSay(dish, rows, caps) {
   const nm = r => r.name.slice(0, caps.name);
-  const names = rows.map(nm);
-  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? 'nothing');
   const swapBit = r => (r.swap && caps.swapSay !== false ? `; ${r.swap.slice(0, caps.swap)} is a good swap` : '');
-  const parts = [`For ${dish.slice(0, caps.dish ?? 40)}, you usually need ${list}.`];
+  const count = rows.length === 1 ? 'one ingredient' : `${numWord(rows.length)} ingredients`;
+  const parts = [`${dish.slice(0, caps.dish ?? 40)} usually takes ${count}.`];
   for (const r of rows) if (r.verdict === 'avoid') parts.push(`${nm(r)} is a no for your limits${swapBit(r)}.`);
-  if (caps.limit) for (const r of rows) if (r.verdict === 'limit') parts.push(`Keep ${nm(r)} to a small portion${swapBit(r)}.`);
+  const small = rows.filter(r => r.verdict === 'limit');
+  if (caps.limit && small.length > 0) parts.push(small.length <= 2 ? `Keep ${small.map(nm).join(' and ')} to a small portion.` : `Keep ${numWord(small.length)} of them to a small portion.`);
   if (caps.unknown) for (const r of rows) if (r.verdict === 'unknown') parts.push(`I couldn't check ${nm(r)}.`);
   return parts.join(' ');
 }
@@ -259,7 +264,9 @@ function dishSay(dish, rows, caps) {
 export function dishResult(dishName, rows, omitted) {
   const dish = clean(dishName, 40);
   const hasSwap = rows.some(r => r.swap);
-  const ask = hasSwap ? 'Use the swap or keep the original, and shall I put these on your list?' : 'Shall I put these on your list?';
+  const ask = hasSwap
+    ? 'Shall I use the swap, text you the full recipe and put the ingredients on your list?'
+    : 'Shall I text you the full recipe and put the ingredients on your list?';
   let last = null;
   for (const caps of DISH_LEVELS) {
     const shown = caps.okRows ? rows : rows.filter(r => r.verdict !== 'ok');

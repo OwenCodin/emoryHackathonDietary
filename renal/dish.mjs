@@ -1,4 +1,4 @@
-import { checkFood } from './check.mjs';
+import { checkFood, GENERIC_SWAP } from './check.mjs';
 import { errorResult, normalizeFoodName, readData } from './data.mjs';
 import { generateJsonWithFallback } from './gemini.mjs';
 import { canonicalFoodName, isPantryStaple } from './meals.mjs';
@@ -37,6 +37,7 @@ export const BUILTIN_DISHES = Object.freeze({
 const DISH_SCHEMA = {
   type: 'OBJECT',
   properties: {
+    known: { type: 'BOOLEAN' },
     ingredients: {
       type: 'ARRAY',
       items: {
@@ -46,7 +47,7 @@ const DISH_SCHEMA = {
       },
     },
   },
-  required: ['ingredients'],
+  required: ['known', 'ingredients'],
 };
 
 function cleanText(value, max) {
@@ -77,6 +78,7 @@ function prompt(dish, catalogNames) {
     `Use plain generic ingredient names. Prefer exact names from this built-in list: ${catalogNames.join(', ')}.`,
     `Give between 3 and ${DISH_MAX_INGREDIENTS} ingredients covering every main part of the dish (for a sandwich: the bread, the filling, any cheese, any vegetables and the spread). Never list water, oil, pepper, herbs or spices.`,
     'Give each ingredient as {name, quantity} with a plain quantity such as "2 slices". Names and quantities only: no nutrition numbers, no brands, no advice.',
+    'If the text is not a real food or dish you recognize (nonsense, a misheard word, or not food), set known to false and give no ingredients. Never guess a dish. Otherwise set known to true.',
     'Return JSON only matching the schema.',
   ].join('\n');
 }
@@ -84,6 +86,8 @@ function prompt(dish, catalogNames) {
 function parseIngredients(text) {
   const parsed = JSON.parse(text);
   if (!Array.isArray(parsed?.ingredients)) return null;
+  // The model does not recognize the dish: no ingredients, so the caller is asked what goes in it.
+  if (parsed.known === false) return [];
   return parsed.ingredients
     .filter((item) => typeof item?.name === 'string' && typeof item?.quantity === 'string')
     .map((item) => ({ name: cleanText(item.name, 60), quantity: cleanText(item.quantity, 30) }))
@@ -154,7 +158,7 @@ async function recheck(item, profile, check, checkMs) {
     if (!verdict || verdict.ok !== true) return { ...UNCHECKED };
     return {
       verdict: VERDICTS.has(verdict.verdict) ? verdict.verdict : 'unknown',
-      swap: typeof verdict.swap === 'string' && verdict.swap ? verdict.swap : null,
+      swap: typeof verdict.swap === 'string' && verdict.swap && verdict.swap !== GENERIC_SWAP ? verdict.swap : null,
       nutrients: verdict.nutrients ?? null,
       portion: verdict.portion ?? null,
       say: verdict.say ?? null,

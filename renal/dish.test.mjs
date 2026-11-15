@@ -315,3 +315,38 @@ test('dishRecipe: invalid dish or profile fails cleanly and never throws', async
   const p = await dishRecipe({ dish: 'omelet' }, { check: okCheck() });
   assert.deepEqual(p, { ok: false, error: 'a valid patient profile is required' });
 });
+
+// ---- fast 261114: unrecognized dishes and the generic swap ----
+test('a dish the model does not recognize gives no ingredients, even if it lists some', async () => {
+  const ai = { models: { generateContent: async () => ({ text: JSON.stringify({ known: false, ingredients: [{ name: 'white bread', quantity: '2 slices' }, { name: 'ketchup', quantity: '1 tablespoon' }] }) }) } };
+  const r = await dishIngredients({ dish: 'xqzv plorb', profile: P }, { ai, check: okCheck() });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.ingredients, []);
+  assert.equal(r.source, 'none');
+  const recipe = await dishRecipe({ dish: 'xqzv plorb', profile: P }, { ai, check: okCheck() });
+  assert.equal(recipe.ok, false);
+});
+
+test('a table dish still uses the built-in list when the model says it does not know it', async () => {
+  const ai = { models: { generateContent: async () => ({ text: JSON.stringify({ known: false, ingredients: [] }) }) } };
+  const r = await dishIngredients({ dish: 'ham sandwich', profile: P }, { ai, check: okCheck() });
+  assert.equal(r.source, 'builtin');
+  assert.ok(r.ingredients.length >= 3);
+});
+
+test('the dish prompt asks for known and tells the model never to guess a dish', async () => {
+  const seen = [];
+  await dishIngredients({ dish: 'ham sandwich', profile: P }, { ai: fakeAi([{ name: 'ham', quantity: '3 slices' }, { name: 'white bread', quantity: '2 slices' }, { name: 'lettuce', quantity: '1 leaf' }], seen), check: okCheck() });
+  assert.ok(seen[0].contents.includes('set known to false and give no ingredients'));
+  assert.deepEqual(seen[0].config.responseSchema.required, ['known', 'ingredients']);
+});
+
+test('the generic swap phrase is never returned as a swap', async () => {
+  const { GENERIC_SWAP } = await import('./check.mjs');
+  const check = async ({ food }) => ({ ok: true, food: food.name, verdict: food.name === 'yogurt' ? 'avoid' : 'ok', say: 'x', nutrients: { sodiumMg: 1, potassiumMg: 2, phosphorusMg: 3 }, portion: '1 portion', swap: food.name === 'yogurt' ? GENERIC_SWAP : null, source: 'catalog' });
+  const ai = fakeAi([{ name: 'banana', quantity: '1' }, { name: 'milk', quantity: '1 cup' }, { name: 'yogurt', quantity: '1/2 cup' }]);
+  const r = await dishIngredients({ dish: 'banana smoothie', profile: P }, { ai, check });
+  const yogurt = r.ingredients.find((i) => i.name === 'yogurt');
+  assert.equal(yogurt.verdict, 'avoid');
+  assert.equal(yogurt.swap, null);
+});
