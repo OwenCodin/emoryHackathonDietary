@@ -29,6 +29,15 @@ function setup(over = {}) {
   return { t, renal, memory, clock };
 }
 
+// start_setup asks the caller first; a second call after they answer opens setup.
+async function openSetup(t, clock) {
+  assert.equal((await t.start_setup.execute({})).confirm, true);
+  clock.t += 3000;
+  const r = await t.start_setup.execute({});
+  assert.equal(r.ok, true);
+  assert.ok(!r.confirm);
+}
+
 describe('propose_limits', () => {
   it('reads all four numbers back', async () => {
     const { t } = setup();
@@ -125,18 +134,50 @@ describe('confirm_limits', () => {
 
 describe('the setup gate', () => {
   it('setup-only tools refuse outside setup, and start_setup opens them', async () => {
-    const { t } = setup({ build: { setupDue: false } });
+    const { t, clock } = setup({ build: { setupDue: false } });
     for (const [name, args] of [['save_profile_basics', { name: 'Ana' }], ['propose_limits', L], ['confirm_limits', L], ['set_avoid_foods', { foods: [] }], ['finish_onboarding', {}]]) {
-      assert.equal((await t[name].execute(args)).error, 'setup_not_started', name);
+      const r = await t[name].execute(args);
+      assert.equal(r.error, 'setup_not_started', name);
+      // The refusal must not invite the model to start setup.
+      assert.ok(!/update my setup/i.test(r.say), name);
     }
-    assert.equal((await t.start_setup.execute({})).ok, true);
+    await openSetup(t, clock);
     assert.equal((await t.propose_limits.execute(L)).ok, true);
+  });
+  it('start_setup asks first and opens setup only after the caller answers', async () => {
+    // Called twice in a row with no time for an answer: still closed.
+    const a = setup({ build: { setupDue: false } });
+    const first = await a.t.start_setup.execute({});
+    assert.deepEqual([first.ok, first.confirm], [true, true]);
+    assert.match(first.say, /change your setup\?/);
+    assert.equal((await a.t.start_setup.execute({})).error, 'setup_not_confirmed');
+    assert.equal((await a.t.save_profile_basics.execute({ name: 'Ana' })).error, 'setup_not_started');
+    // Enough time, but the caller said nothing after the question: still closed.
+    const b = setup({ build: { setupDue: false, callerHeardAfter: () => false } });
+    await b.t.start_setup.execute({});
+    b.clock.t += 3000;
+    assert.equal((await b.t.start_setup.execute({})).error, 'setup_not_confirmed');
+    assert.equal((await b.t.propose_limits.execute(L)).error, 'setup_not_started');
+    // The caller answered: setup opens.
+    const c = setup({ build: { setupDue: false, callerHeardAfter: () => true } });
+    await c.t.start_setup.execute({});
+    c.clock.t += 3000;
+    const opened = await c.t.start_setup.execute({});
+    assert.equal(opened.ok, true);
+    assert.ok(!opened.confirm);
+    assert.equal((await c.t.propose_limits.execute(L)).ok, true);
+    // A stale question (over a minute old) is asked again, not treated as a yes.
+    const d = setup({ build: { setupDue: false, callerHeardAfter: () => true } });
+    await d.t.start_setup.execute({});
+    d.clock.t += 61_000;
+    assert.equal((await d.t.start_setup.execute({})).confirm, true);
+    assert.equal((await d.t.propose_limits.execute(L)).error, 'setup_not_started');
   });
   it('an update that skips limits keeps the saved ones', async () => {
     const renal = makeFakeRenal();
     await renal.saveProfile({ patientId: 'demo', profile: { name: 'Ana', condition: 'ckd', limits: { sodiumMg: 1800, potassiumMg: 2000, phosphorusMg: 800, fluidMl: 1500 }, avoid: [], setupDone: true } });
-    const { t } = setup({ renal, build: { setupDue: false } });
-    await t.start_setup.execute({});
+    const { t, clock } = setup({ renal, build: { setupDue: false } });
+    await openSetup(t, clock);
     await t.set_avoid_foods.execute({ foods: ['peanuts'] });
     const s = (await renal.getSavedProfile({ patientId: 'demo' })).saved;
     assert.equal(s.limits.sodiumMg, 1800);
@@ -233,7 +274,7 @@ describe('save_profile_basics and finish_onboarding', () => {
     const a = setup();
     await a.t.propose_limits.execute(L);
     await a.t.finish_onboarding.execute({});
-    await a.t.start_setup.execute({});
+    await openSetup(a.t, a.clock);
     a.clock.t += 3000;
     assert.equal((await a.t.confirm_limits.execute(L)).error, 'no_proposal');
   });

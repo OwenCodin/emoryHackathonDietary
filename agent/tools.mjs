@@ -120,7 +120,8 @@ const FAILS = {
   memory_unavailable: "I can't keep a shopping list right now, but I can still check foods for you.",
   bad_items: 'Tell me the items you need, a few words each.',
   bad_item: 'Tell me which item you mean, in a few words.',
-  setup_not_started: "Say 'update my setup' and I'll take you through setup.",
+  setup_not_started: "You're already set up, so there's nothing to change. What would you like me to check?",
+  setup_not_confirmed: 'Please tell me if you want to change your setup.',
   bad_name: "I didn't catch the name. Tell me the first name you'd like me to use, or say skip.",
   limit_missing: "I need all four numbers from your care team: sodium, potassium, phosphorus and fluid. Read me the ones on their sheet, or tell me you don't have them.",
   bad_sodium: "That sodium number doesn't sound right; can you read it again from your care team's sheet?",
@@ -417,6 +418,8 @@ async function saveDebugFrame(dir, picture) {
 
 // Minimum time between reading the limits back and accepting the caller's yes. The read-back alone takes longer.
 export const CONFIRM_MIN_MS = 2500;
+// How long the caller's yes to "change your setup?" stays valid; after that start_setup asks again.
+export const SETUP_ASK_MAX_MS = 60_000;
 export const KROGER_FINISH_LATER = "Kroger isn't connected yet; you can finish from the link I texted, or ask me for a new one on any call.";
 const LIMIT_FIELDS = [['sodium', 'sodiumMg', 'sodium_mg'], ['potassium', 'potassiumMg', 'potassium_mg'], ['phosphorus', 'phosphorusMg', 'phosphorus_mg'], ['fluid', 'fluidMl', 'fluid_ml']];
 const OPTIONAL_LIMIT_FIELDS = [['protein', 'proteinG', 'protein_g'], ['carbs', 'carbsG', 'carbs_g']];
@@ -524,6 +527,7 @@ export function buildTools({
 
   // First-call setup state, for this call only. The draft mirrors the saved profile; each setup tool saves at once.
   let setupActive = setupDue === true;
+  let setupAsk = null; // when start_setup last asked the caller to confirm (by now()); null when not asked
   let draft = null;
   let pending = null; // limits read back by propose_limits and waiting for the caller's yes
   const emptyDraft = () => ({ name: null, condition: null, limits: null, avoid: [], setupDone: false });
@@ -1243,8 +1247,20 @@ export function buildTools({
       }, { timeoutMs, onTimeout: () => fail('kroger_text_unconfirmed') }),
     }),
     start_setup: llm.tool({
-      description: 'Only when the caller explicitly asks to change their setup, limits, voice or preferences (for example "update my setup"). Never for a food, a dish, ingredients, a list or a cart. Setup tools only work after this.',
+      description: 'Only when the caller explicitly asks to change their setup, limits, voice or preferences (for example "update my setup"). Never for a food, a dish, ingredients, a list or a cart, and never because the caller said their name or their condition. The first call only returns a question: say it, wait for the caller to say yes, then call start_setup again. Setup tools only work after that second call.',
       execute: guard(async call => {
+        // Setup never opens on the model's say-so alone: the caller is asked first and must answer.
+        if (!setupActive) {
+          const asked = setupAsk;
+          let heard = null;
+          if (asked !== null) { try { heard = callerHeardAfter(asked + 1000); } catch { heard = null; } }
+          if (asked === null || now() - asked > SETUP_ASK_MAX_MS) {
+            setupAsk = now();
+            return { ok: true, confirm: true, say: 'Do you want to change your setup? Say yes and we can start.' };
+          }
+          if (now() - asked < CONFIRM_MIN_MS || heard === false) return fail('setup_not_confirmed');
+          setupAsk = null;
+        }
         setupActive = true;
         pending = null;
         draft = null;
