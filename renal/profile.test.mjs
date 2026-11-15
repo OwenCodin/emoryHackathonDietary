@@ -36,6 +36,23 @@ test('nothing saved: built-in profile, unchanged', async () => {
   assert.equal(r.profile.source, 'builtin');
 });
 
+test('per-caller ids with nothing saved need limits, never the built-in ones', async () => {
+  for (const id of ['p' + 'a1b2c3d4e5f60718293a4b5c'.slice(0, 24), 'g' + '0'.repeat(24)]) {
+    assert.deepEqual(await getProfile({ patientId: id }), { ok: false, error: 'limits not set', limitsNeeded: true });
+    const today = await getToday({ patientId: id });
+    assert.equal(today.ok, false);
+    assert.equal(today.limitsNeeded, true);
+  }
+  const missing = await getProfile({ patientId: 'missing' });
+  assert.deepEqual([missing.ok, missing.error], [false, 'patient not found']);
+  assert.equal((await getProfile({ patientId: 'demo' })).profile.name, 'Sam');
+  // a saved per-caller profile still wins
+  const id = 'p' + 'f'.repeat(24);
+  await save(full(), id);
+  assert.equal((await getProfile({ patientId: id })).ok, true);
+  await resetProfile({ patientId: id });
+});
+
 test('save then get returns patient profile', async () => {
   const s = await save(full({ avoid: ['Grapefruit ', 'grapefruit', 'Star Fruit'] }));
   assert.equal(s.ok, true);

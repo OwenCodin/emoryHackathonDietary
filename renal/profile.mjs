@@ -26,6 +26,7 @@ const FILE_NAME = 'profiles.json';
 const MAX_FILE_BYTES = 65536;
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const CALLER_ID = /^[pg][0-9a-f]{24}$/;
 
 const isInside = (root, target) => {
   const rel = relative(root, target);
@@ -263,6 +264,8 @@ export async function getProfile(input = {}) {
           },
         };
       }
+      // Per-caller ids (p = a caller's phone, g = a one-call guest) never fall back to built-in limits (someone else's).
+      if (CALLER_ID.test(key)) return { ok: false, error: 'limits not set', limitsNeeded: true };
     }
 
     const patients = await readData('patients.json');
