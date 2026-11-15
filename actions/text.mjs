@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 
 const API_BASE = 'https://app.trychert.com/api/v1';
 
-function getSettings(phone, text) {
+const E164 = /^\+[1-9]\d{7,14}$/;
+
+function getSettings(phone, text, allow) {
   const settings = {
     apiKey: process.env.CHERT_API_KEY,
     projectId: process.env.CHERT_PROJECT_ID,
@@ -15,7 +17,10 @@ function getSettings(phone, text) {
   if (!settings.apiKey.startsWith('ftk_')) {
     return { error: 'CHERT_API_KEY is not a project API key' };
   }
-  if (!/^\+[1-9]\d{7,14}$/.test(settings.patientPhone) || phone !== settings.patientPhone) {
+  const isPatient = E164.test(settings.patientPhone) && phone === settings.patientPhone;
+  // `allow` is supplied by agent code (never the model): one verified caller number for one call.
+  const isAllowed = typeof allow === 'string' && E164.test(allow) && phone === allow;
+  if (!isPatient && !isAllowed) {
     return { error: 'Recipient must be the configured verified patient number' };
   }
   if (typeof text !== 'string' || text.trim().length === 0 || text.length > 4000) {
@@ -47,6 +52,14 @@ function classifyMessageState(state) {
   return 'unknown';
 }
 
+function messageItems(body) {
+  if (Array.isArray(body)) return body;
+  for (const candidate of [body?.data?.items, body?.data?.messages, body?.messages, body?.data]) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+}
+
 async function findExistingMessage(fetchImpl, settings, idempotencyKey) {
   const response = await fetchImpl(`${API_BASE}/shared-messages`, {
     headers: authHeaders(settings.apiKey, settings.projectId),
@@ -54,10 +67,7 @@ async function findExistingMessage(fetchImpl, settings, idempotencyKey) {
   });
   if (!response.ok) return null;
   const data = await response.json();
-  const messages = Array.isArray(data)
-    ? data
-    : data.messages ?? data.data?.messages ?? data.data ?? [];
-  if (!Array.isArray(messages)) return null;
+  const messages = messageItems(data);
   return messages.find((message) =>
     message?.idempotency_key === idempotencyKey ||
     message?.idempotencyKey === idempotencyKey
@@ -77,8 +87,8 @@ async function resolveMessageOutcome(fetchImpl, settings, idempotencyKey, body) 
 }
 
 export function createTextSender({ fetchImpl = fetch, createKey = randomUUID } = {}) {
-  return async function sendText({ phone, text } = {}) {
-    const { settings, error } = getSettings(phone, text);
+  return async function sendText({ phone, text, allow } = {}) {
+    const { settings, error } = getSettings(phone, text, allow);
     if (error) return { ok: false, error };
 
     const idempotencyKey = `msg-${createKey()}`;
@@ -109,7 +119,18 @@ export function createTextSender({ fetchImpl = fetch, createKey = randomUUID } =
       return { ok: false, error: 'Send outcome is unknown; inspect Chert before retrying' };
     }
 
-    if (!response.ok) return { ok: false, error: `Chert rejected the message (HTTP ${response.status})` };
+    if (!response.ok) {
+      const result = { ok: false, error: `Chert rejected the message (HTTP ${response.status})` };
+      if (response.status === 403) {
+        try {
+          const errBody = await response.json();
+          if (errBody?.error?.code === 'shared_reply_window_closed') result.code = 'reply_window_closed';
+        } catch {
+          // unreadable body: keep the plain error
+        }
+      }
+      return result;
+    }
 
     let body;
     try {
@@ -127,3 +148,57 @@ export function createTextSender({ fetchImpl = fetch, createKey = randomUUID } =
 }
 
 export const sendText = createTextSender();
+
+// Has this phone texted the line in the last 24 h? A last-four match is weak evidence (two callers
+// can share the last four digits, and an old text from another phone with the same last four
+// counts). Chert's 24 h reply window is the real enforcement; this only decides what the agent says.
+// Never logs message text or numbers.
+export function createInboundCheck({
+  fetchImpl = fetch,
+  env = process.env,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now = () => Date.now(),
+} = {}) {
+  return async function hasRecentInboundText({ phone, tries = 3, waitMs = 2000 } = {}) {
+    try {
+      if (typeof phone !== 'string' || !E164.test(phone)) return { ok: false, error: 'no_phone' };
+      const apiKey = env.CHERT_API_KEY;
+      const projectId = env.CHERT_PROJECT_ID;
+      if (!apiKey || !projectId || !apiKey.startsWith('ftk_')) return { ok: false, error: 'lookup_failed' };
+      const last4 = phone.slice(-4);
+      const deadline = now() + 9000;
+      let anyRead = false;
+      for (let attempt = 0; attempt < tries; attempt++) {
+        if (attempt > 0) {
+          if (now() + waitMs > deadline) break;
+          await sleep(waitMs);
+        }
+        try {
+          const response = await fetchImpl(`${API_BASE}/shared-messages`, {
+            headers: authHeaders(apiKey, projectId),
+            signal: AbortSignal.timeout(3000),
+          });
+          if (!response.ok) continue;
+          const items = messageItems(await response.json());
+          anyRead = true;
+          const found = items.some((m) => {
+            if (m?.direction !== 'inbound') return false;
+            if (String(m.masked_recipient ?? '').replace(/\D/g, '').slice(-4) !== last4) return false;
+            const created = Date.parse(m.created_at);
+            if (!Number.isFinite(created) || now() - created > 24 * 3600 * 1000) return false;
+            if (m.line_id && env.CHERT_LINE_ID && m.line_id !== env.CHERT_LINE_ID) return false;
+            return true;
+          });
+          if (found) return { ok: true, texted: true };
+        } catch {
+          // try again
+        }
+      }
+      return anyRead ? { ok: true, texted: false } : { ok: false, error: 'lookup_failed' };
+    } catch {
+      return { ok: false, error: 'lookup_failed' };
+    }
+  };
+}
+
+export const hasRecentInboundText = (args) => createInboundCheck()(args);

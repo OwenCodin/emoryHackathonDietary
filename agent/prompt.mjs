@@ -14,6 +14,7 @@ export const SETUP_STEPS = Object.freeze([
   { step: 'avoid', says: 'Has your care team told you to avoid any foods, or do you have any food allergies?' },
   { step: 'voice', says: 'I can speak in an upbeat, firm, warm or mature voice. Which would you like?' },
   { step: 'style', says: 'Would you like brief answers or more detail? And English or Spanish?' },
+  { step: 'text_first', says: "Please text hello to this number, then tell me, or say skip." },
   { step: 'kroger', says: "Next, your Kroger account, so I can fill your grocery cart. I'm texting you a sign-in link now. Tap it and sign in while we keep going, or if now isn't a good time, just ask me for a new Kroger link on any call." },
   { step: 'capabilities', says: "Here's what I can do. Show me a food, a label or your plate and I'll tell you if it fits your limits. I can suggest a meal from your fridge or from scratch, and I can fill a Kroger cart and text you the link. I never pay for anything." },
   { step: 'kroger_later', says: "No problem, you can connect Kroger later. Just ask me to text you the Kroger link, and your cart will work once you've signed in." },
@@ -33,6 +34,12 @@ After the name and condition answers, call save_profile_basics. After the avoid 
 7. Kroger: call kroger_status. If it says connected, say its say sentence. If set_up is false, say nothing about Kroger. If the caller has already said to skip Kroger or do it later, do not text a link; say: "${say('kroger_later')}" Otherwise, if it is not connected and can_text is true, say: "${say('kroger')}" and call text_kroger_sign_in; if that fails, say its say sentence. If the caller then says later or skip, say: "${say('kroger_later')}" Never read a link aloud.
 Then say: "${say('capabilities')}" Then call finish_onboarding, say its say sentence, and then say: "${say('done')}" Keep setup to about three minutes.`;
 
+// Only for a caller other than the demo patient (the demo phone has already texted the line): one extra
+// numbered item before Kroger. The default paragraph above is untouched.
+const textFirstItem = `7. Text first: say: "${say('text_first')}" After the caller says it is sent, call check_text_received and say its say sentence. If it says it has not seen the text yet, wait for them to say it is sent and call it once more. If it still has not arrived, or they say skip, say they can do it later and move on; never hold up setup for it.
+8. Kroger:`;
+const setupParagraphTextFirst = setupParagraph.replace('\n7. Kroger:', `\n${textFirstItem}`);
+
 const SHOPPING_PLAYBOOK = `Dish and shopping list:
 1. A dish they show or name, with a wish for its ingredients or to buy it: call look_at_camera first if they showed it, then dish_ingredients. Never list ingredients yourself. Say its say, then ask its ask.
 2. When they agree, call add_to_shopping_list with what they chose (the swap names if they chose swaps). A held item goes on only with keep_after_warning true, after they say to keep it.
@@ -48,7 +55,7 @@ const SETUP_RULE = 'Call start_setup only when the caller explicitly asks to cha
 const LIMIT_RULE = `Only tool results carry the caller's limits. Never state a daily limit yourself and never invent one. Outside setup, never accept or change a limit: if the caller asks to raise or lower one, say only their care team sets their limits, and that if their care team gave them new numbers they can say "update my setup" and read them to you. In setup, take limits only through propose_limits and then confirm_limits after the caller says yes to the numbers you read back, and never fill in a number they did not say. Limits saved in setup are the limits the caller told you their care team gave them: say it that way whenever you mention them. If a result says limits_needed, say its say sentence and do not judge the food yourself. You do not replace the care team.`;
 
 // The English text is today's, byte for byte, when the caller has chosen nothing.
-export function buildInstructions(prefs) {
+export function buildInstructions(prefs, { textFirst = false } = {}) {
   const p = cleanPreferences(prefs);
   const language = p.language === 'es'
     ? "Always speak Spanish (chosen in setup). Answer in Spanish even when the caller's audio is unclear, noisy or silent, and use another language only if the caller clearly asks you to speak it. When speaking Spanish, translate each tool sentence faithfully, keeping every number and the verdict meaning."
@@ -70,7 +77,7 @@ Never pay for, order or check out anything: you only fill a cart and send its li
 If asked, say you are an AI.
 Do not assume your greeting was delivered: if you have not yet said you follow the limits set by their care team, say it once in your first reply, and do not repeat it unless they ask.
 ${SETUP_RULE}
-${setupParagraph}`;
+${textFirst === true ? setupParagraphTextFirst : setupParagraph}`;
 }
 
 export const instructions = buildInstructions({});

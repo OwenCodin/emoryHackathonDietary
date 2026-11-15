@@ -144,6 +144,8 @@ const FAILS = {
   kroger_texting_refused: "Your phone didn't accept the text. Please send any message to this number from your phone, then ask me again.",
   kroger_text_unconfirmed: "I tried to text the Kroger link but couldn't confirm it went through. Please check your messages before we try again.",
   kroger_text_failed: "I couldn't text you the Kroger link just now. I can try again if you like.",
+  texting_refused: "Your phone didn't accept the text. Please send any message to this number from your phone, then ask me again.",
+  text_check_failed: "I couldn't check for your text just now. That's fine, we can keep going, and you can text this number any time before asking me to send something.",
   limits_needed: "I don't have your care team's limits yet, so I can't judge foods against them. When you have them, say 'update my setup' and read them to me.",
 };
 // renal/check.mjs composes "Okay, this product has about N milligrams of sodium." from this name.
@@ -405,6 +407,8 @@ export function buildTools({
   setupDue = false,
   callerHeardAfter = () => null,
   now = () => Date.now(),
+  textAllow = null,
+  textFirst = false,
 } = {}) {
   // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
   const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity, display: onDisplay });
@@ -424,6 +428,10 @@ export function buildTools({
     return all.slice(-PANTRY_MAX);
   };
   const phoneOk = typeof phone === 'string' && /^\+[1-9]\d{6,14}$/.test(phone);
+  // textAllow is set by agent code for a verified caller (never by the model). With none set, sendText gets exactly { phone, text } as before.
+  const textArgs = text => (typeof textAllow === 'string' && textAllow === phone ? { phone, text, allow: textAllow } : { phone, text });
+  // A reply-window refusal. Only recognised for per-caller texting (textAllow set), so the demo path keeps its existing failure wording.
+  const refused = r => typeof textAllow === 'string' && (r?.code === 'reply_window_closed' || (typeof r?.error === 'string' && /HTTP 403/.test(r.error)));
   const cut = v => String(v ?? '').trim().slice(0, 80);
 
   // Dish-to-cart state, for this call only. Quantities are not stored in memory (it keeps names only).
@@ -858,8 +866,9 @@ export function buildTools({
         // Marked before sending: if the send times out it may still arrive, and a repeat would duplicate it.
         sentLinks.add(link);
         let r;
-        try { r = await actions.sendText({ phone, text: `Your grocery cart from your renal dietitian is ready to review: ${link} Nothing has been paid; please check it and check out yourself.` }); }
+        try { r = await actions.sendText(textArgs(`Your grocery cart from your renal dietitian is ready to review: ${link} Nothing has been paid; please check it and check out yourself.`)); }
         catch { sentLinks.delete(link); return fail('tool_failed'); }
+        if (refused(r)) { sentLinks.delete(link); return fail('texting_refused'); }
         if (!r?.ok) { sentLinks.delete(link); return fail('tool_failed'); }
         return { ok: true, sent: true };
       }, { timeoutMs }),
@@ -968,9 +977,10 @@ export function buildTools({
         // Marked before sending: a send that times out may still arrive, and a repeat would duplicate it.
         sentLists.add(text);
         let r;
-        try { r = await actions.sendText({ phone, text }); }
+        try { r = await actions.sendText(textArgs(text)); }
         catch { sentLists.delete(text); return fail('list_text_failed'); }
         if (r?.ok) return { ok: true, sent: true, count: Math.min(items.length, 20) };
+        if (refused(r)) { sentLists.delete(text); return fail('texting_refused'); }
         if (typeof r?.error === 'string' && /outcome is unknown/i.test(r.error)) return fail('list_text_unconfirmed');
         sentLists.delete(text);
         return fail('list_text_failed');
@@ -1094,9 +1104,10 @@ export function buildTools({
         // Marked before sending: a send that times out may still arrive, and a repeat would duplicate it.
         sentRecipes.add(key);
         let r;
-        try { r = await actions.sendText({ phone, text: recipeText(meal) }); }
+        try { r = await actions.sendText(textArgs(recipeText(meal))); }
         catch { sentRecipes.delete(key); return fail('text_failed'); }
         if (r?.ok) return { ok: true, sent: true, title: meal.title.slice(0, 60) };
+        if (refused(r)) { sentRecipes.delete(key); return fail('texting_refused'); }
         if (typeof r?.error === 'string' && /outcome is unknown/i.test(r.error)) return fail('text_unconfirmed');
         sentRecipes.delete(key);
         return fail('text_failed');
@@ -1134,11 +1145,11 @@ export function buildTools({
         // Marked before sending: a send that times out may still arrive, and a repeat would duplicate it.
         krogerTextAt = now();
         let r;
-        try { r = await actions.sendText({ phone, text: `Sign in to Kroger so your renal dietitian can fill your cart: ${link} Nothing is ever paid for you.` }); }
+        try { r = await actions.sendText(textArgs(`Sign in to Kroger so your renal dietitian can fill your cart: ${link} Nothing is ever paid for you.`)); }
         catch { krogerTextAt = null; return fail('kroger_text_failed'); }
         if (r?.ok) return { ok: true, sent: true, say: "I've texted you a Kroger sign-in link. Tap it and sign in while we keep going." };
         const why = typeof r?.error === 'string' ? r.error : '';
-        if (/HTTP 403/.test(why)) { krogerTextAt = null; return fail('kroger_texting_refused'); }
+        if (/HTTP 403/.test(why) || r?.code === 'reply_window_closed') { krogerTextAt = null; return fail('kroger_texting_refused'); }
         if (/outcome is unknown/i.test(why)) return fail('kroger_text_unconfirmed');
         krogerTextAt = null;
         return fail('kroger_text_failed');
@@ -1320,6 +1331,20 @@ export function buildTools({
         return base;
       }, { timeoutMs }),
     }),
+    // Only for a verified caller other than the demo patient (textFirst); the default tool list is unchanged.
+    ...(textFirst === true ? {
+      check_text_received: llm.tool({
+        description: 'Setup only, after the caller says they sent a text to this number: checks whether it arrived so you can text them later. Say its say.',
+        execute: guard(async () => {
+          if (!phoneOk) return fail('no_phone');
+          if (typeof actions.hasRecentInboundText !== 'function') return fail('text_check_failed');
+          const r = await actions.hasRecentInboundText({ phone });
+          if (r?.ok === true && r.texted === true) return { ok: true, texted: true, say: 'Got it, thanks. I can text you now.' };
+          if (r?.ok === true && r.texted === false) return { ok: true, texted: false, say: "I haven't seen it yet. Please send any short text, like hello, to this number, and tell me when it's sent." };
+          return fail('text_check_failed');
+        }, { timeoutMs }),
+      }),
+    } : {}),
   };
 }
 

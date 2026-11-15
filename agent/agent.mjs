@@ -6,7 +6,8 @@ import { createScreen } from './screen.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
 import { buildTools, endCall, setupStatus, withTimeout } from './tools.mjs';
-import { getCartFrame } from '../actions/index.mjs';
+import { getCartFrame, getCallerPhone } from '../actions/index.mjs';
+import { resolveCaller } from './caller.mjs';
 import { createVideoPicker } from './video.mjs';
 import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
@@ -93,11 +94,17 @@ const agent = defineAgent({
     console.log(bargeInConfig(process.env) ? '[agent] barge-in off' : '[agent] barge-in on');
     console.log(`[agent] end of speech wait_ms=${realtimeInputConfig.automaticActivityDetection.silenceDurationMs}`);
     // Shopping list kept between calls (one small file per patient, outside the repo).
-    const memory = createMemory({ patientId: 'demo' });
+    // Who is calling: with AGENT_OPEN_ACCESS unset (default) this is always the demo patient and makes no Chert lookup.
+    let identity = { kind: 'demo', patientId: 'demo', phone: process.env.PATIENT_PHONE, textAllow: null, textFirst: false };
+    try {
+      identity = await resolveCaller({ outbound: Boolean(call), identity: linkedIdentity, roomMetadata: ctx.room?.metadata, jobMetadata: metadata, getCallerPhone, timeoutMs: 1500 });
+    } catch { /* resolveCaller never throws; the demo identity stays */ }
+    console.log(`[agent] caller kind=${identity.kind}`);
+    const memory = createMemory({ patientId: identity.patientId });
     // The voice, reply length and language chosen in first-call setup apply from the start of the call.
     const prefs = await readPreferences(memory);
     // A caller with no finished setup is set up on an inbound call (AGENT_SKIP_ONBOARDING=1 turns that off).
-    const setupDue = !call && process.env.AGENT_SKIP_ONBOARDING !== '1' && (await setupStatus({ patientId: 'demo' })).needsSetup;
+    const setupDue = !call && process.env.AGENT_SKIP_ONBOARDING !== '1' && (await setupStatus({ patientId: identity.patientId })).needsSetup;
     console.log(`[agent] setup due=${setupDue}`);
     const session = new voice.AgentSession({
       llm: new google.realtime.RealtimeModel(realtimeOptions({ model, prefs, realtimeInputConfig })),
@@ -271,7 +278,7 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions: buildInstructions(prefs), tools: buildTools({ camera, patientId: 'demo', memory, setupDue, callerHeardAfter: t => (heardAny ? heardAt > t : null), onToolActivity: delta => watchdog.toolActivity(delta), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
+        agent: new voice.Agent({ instructions: buildInstructions(prefs, { textFirst: identity.textFirst }), tools: buildTools({ camera, patientId: identity.patientId, phone: identity.phone, textAllow: identity.textAllow, textFirst: identity.textFirst, memory, setupDue, callerHeardAfter: t => (heardAny ? heardAt > t : null), onToolActivity: delta => watchdog.toolActivity(delta), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,

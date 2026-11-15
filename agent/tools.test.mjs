@@ -1704,3 +1704,64 @@ describe('quick 261114-oyc: dish to cart', async () => {
     assert.match(d, /Never for a food, a dish, ingredients, a list or a cart/);
   });
 });
+
+describe('per-caller texting and check_text_received', () => {
+  const CALLER = '+15555550123';
+  const readyMeal = async over => {
+    const t = build({ renal: oneMealRenal(), phone: CALLER, ...over });
+    await t.look_at_camera.execute({});
+    await t.suggest_meal.execute({});
+    return t;
+  };
+  it('default tool list has no check_text_received; textFirst adds it last', () => {
+    assert.ok(!('check_text_received' in build()));
+    const keys = Object.keys(build({ textFirst: true }));
+    assert.equal(keys[keys.length - 1], 'check_text_received');
+    assert.equal(keys.length, Object.keys(build()).length + 1);
+  });
+  it('every tool is named in the textFirst instructions', () => {
+    const text = prompt.buildInstructions({}, { textFirst: true });
+    for (const k of Object.keys(build({ textFirst: true }))) assert.ok(text.includes(k), k);
+  });
+  it('check_text_received reports texted, not yet, failure and no phone', async () => {
+    const mk = (impl, over = {}) => build({ textFirst: true, phone: CALLER, actions: { ...actions, hasRecentInboundText: impl }, ...over }).check_text_received;
+    const a = await mk(async () => ({ ok: true, texted: true })).execute({});
+    assert.deepEqual([a.ok, a.texted, typeof a.say], [true, true, 'string']);
+    const b = await mk(async () => ({ ok: true, texted: false })).execute({});
+    assert.deepEqual([b.ok, b.texted], [true, false]);
+    assert.match(b.say, /tell me/);
+    const c = await mk(async () => ({ ok: false, error: 'lookup_failed' })).execute({});
+    assert.deepEqual([c.ok, c.error], [false, 'text_check_failed']);
+    const d = await mk(async () => ({ ok: true, texted: true }), { phone: '' }).execute({});
+    assert.equal(d.error, 'no_phone');
+    assert.ok(!JSON.stringify([a, b, c, d]).includes('5555550123'));
+  });
+  it('sendText gets allow only when textAllow equals the phone', async () => {
+    const withAllow = rec(actions, 'sendText');
+    await (await readyMeal({ actions: withAllow.mod, textAllow: CALLER })).text_recipe.execute({});
+    assert.deepEqual(Object.keys(withAllow.calls[0]).sort(), ['allow', 'phone', 'text']);
+    assert.equal(withAllow.calls[0].allow, CALLER);
+    const without = rec(actions, 'sendText');
+    await (await readyMeal({ actions: without.mod })).text_recipe.execute({});
+    assert.deepEqual(Object.keys(without.calls[0]).sort(), ['phone', 'text']);
+    const mismatch = rec(actions, 'sendText');
+    await (await readyMeal({ actions: mismatch.mod, textAllow: '+15555550999' })).text_recipe.execute({});
+    assert.deepEqual(Object.keys(mismatch.calls[0]).sort(), ['phone', 'text']);
+  });
+  it('a reply-window refusal is spoken and clears the sent marker', async () => {
+    for (const refusal of [{ ok: false, error: 'Chert rejected the message (HTTP 403)', code: 'reply_window_closed' }, { ok: false, error: 'Chert rejected the message (HTTP 403)' }]) {
+      let n = 0;
+      const mod = { ...actions, sendText: async () => (n++ === 0 ? refusal : { ok: true }) };
+      const t = await readyMeal({ actions: mod, textAllow: CALLER });
+      const r = await t.text_recipe.execute({});
+      assert.deepEqual([r.ok, r.error], [false, 'texting_refused']);
+      assert.match(r.say, /send any message to this number/);
+      assert.equal((await t.text_recipe.execute({})).sent, true);
+    }
+  });
+  it("without textAllow a 403 on text_recipe keeps today's failure wording", async () => {
+    const mod = { ...actions, sendText: async () => ({ ok: false, error: 'Chert rejected the message (HTTP 403)' }) };
+    const r = await (await readyMeal({ actions: mod })).text_recipe.execute({});
+    assert.equal(r.error, 'text_failed');
+  });
+});

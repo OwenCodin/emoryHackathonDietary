@@ -18,6 +18,8 @@ Run from the command line against the real services, not on a call:
 
 - The grounded online lookup, the USDA lookup, the vision fallback and meal suggestion.
 - One iMessage was sent successfully through Chert's shared-messages API.
+
+Built and tested with fakes only, not yet proven on a live call: per-caller identity behind `AGENT_OPEN_ACCESS=1` (own profile, memory, diary, texting and a text-first setup step for any phone that has joined the project).
 - Along the way the shared USDA key and Gemini limits were hit (see "Limits and deadlines").
 
 Built and tested with fakes, not yet proven on a live call:
@@ -121,6 +123,7 @@ On the Chert trial line the agent can only reply to the patient. Follow these ru
 - After both, a send returned `{"state":"sent"}`.
 - `PATIENT_PHONE` must be set in `.env.local`, or `text_cart_link` and `text_recipe` fail with `no_phone`.
 - Photo-only iMessages did not show up in the project's message list, so receiving photos is parked.
+- With `AGENT_OPEN_ACCESS=1` the agent texts the verified caller of the current call only (the number comes from Chert's call record, never from what the caller says); `PATIENT_PHONE` and outbound calls are unchanged. Chert still requires that phone to have joined the project and texted the line in the last 24 hours. Setup asks for that text, and `check_text_received` checks it by the last four digits only, which is weak evidence; Chert's window is the real gate. A refusal is spoken as "send any message to this number, then ask me again".
 - Something on Chert's side auto-replies "Hi there! How can I help you today?" to inbound texts on the project. How to turn it off is an open question for Chert staff.
 
 ## Limits and deadlines
@@ -136,6 +139,7 @@ On the Chert trial line the agent can only reply to the patient. Follow these ru
 - Diet colas reuse regular cola numbers. "Soda", "pop" and "soft drink" are judged as cola.
 - The online lookup can return different results for the same product on different tries.
 - The demo patient profile ("Sam", fixed limits) is hard-coded data.
+- Open access (`AGENT_OPEN_ACCESS=1`): Kroger sign-in and cart are one shared account, not per caller; the mealtime outbound call still uses `PATIENT_PHONE`; one Chert line answers one call at a time; a caller whose FaceTime handle is an email (or whose lookup fails) gets a one-call guest identity with no texting, and their setup is not kept for next time (each guest call writes a small profile/memory file under a new random id); the per-caller id is an unsalted hash of the phone, so the local state folder is pseudonymous, not anonymous; the call-start lookup can add up to 1.5 s before the session starts.
 - Optional protein and carbohydrate limits (grams) can be set in first-call setup and are judged by the food check and shown on the verdict card. The protein and carbs values for the 65 seed foods were entered from USDA reference values and need a spot-check. Meal and dish totals and online lookups do not use them yet.
 - The Kroger sign-in relay (`kroger-relay/`) and the texted sign-in link have not been deployed or run live; only unit tests and a local end-to-end test with a fake Kroger token endpoint have run.
 - The grocery cart (Track C) has not been seen working on a live call. The Kroger API cart works from the command line; it needs `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` and a one-time sign-in. Its quantity is a count of packages, so "3 apples" can become three multi-packs.
