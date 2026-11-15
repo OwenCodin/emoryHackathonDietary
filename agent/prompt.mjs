@@ -11,7 +11,7 @@ export const SETUP_STEPS = Object.freeze([
   { step: 'condition', says: 'Which fits you best: kidney disease without dialysis, hemodialysis, peritoneal dialysis, a kidney transplant, or not sure?' },
   { step: 'limits', says: 'Do you have the daily limits your care team gave you? Please read me your sodium, potassium and phosphorus in milligrams, and your fluid in milliliters.' },
   { step: 'avoid', says: 'Has your care team told you to avoid any foods, or do you have any food allergies?' },
-  { step: 'voice', says: "I can speak in a man's or a woman's voice. Which would you like?" },
+  { step: 'voice', says: 'I have two voices. Here is a sample of each.' },
   { step: 'style', says: 'Would you like brief answers or more detail? And English or Spanish?' },
   { step: 'kroger', says: "Next, your Kroger account, so I can fill your grocery cart. I'm texting you a sign-in link now. Tap it and sign in while we keep going, or if now isn't a good time, just ask me for a new Kroger link on any call." },
   { step: 'capabilities', says: "Here's what I can do. Show me a food, a label or your plate and I'll tell you if it fits your limits. I can suggest a meal from your fridge or from scratch, and I can fill a Kroger cart and text you the link. I never pay for anything." },
@@ -26,7 +26,7 @@ const setupParagraph = `Setup. Setup runs only on a caller's first call (when yo
 2. Condition: "${say('condition')}"
 3. Limits: "${say('limits')}"
 4. Foods to avoid: "${say('avoid')}"
-5. Voice: "${say('voice')}"
+5. Voice: "${say('voice')}" Then call play_voice_samples and say its say sentence. Never describe the voices as a man's or a woman's.
 6. Style: "${say('style')}"
 After the name and condition answers, call save_profile_basics. After the avoid answer, call set_avoid_foods. After the style answer, call set_preferences once with voice, reply_style and language. For limits: once you have all four numbers, call propose_limits (convert grams to milligrams and liters to milliliters), say its say sentence, and call confirm_limits with the same numbers only after the caller says yes. If they correct a number, call propose_limits again. If a result says a number doesn't sound right, ask them to read it again. If they don't have the limits or don't know one, say that is fine, you won't guess, and they can add them later by saying "update my setup", then move on. The caller may say skip for any step, except that limits you have read back are either confirmed or dropped. After set_preferences, say any say sentence it returned (a new voice starts on their next call).
 7. Kroger: call kroger_status. If it says connected, say its say sentence. If set_up is false, say nothing about Kroger. If the caller has already said to skip Kroger or do it later, do not text a link; say: "${say('kroger_later')}" Otherwise, if it is not connected and can_text is true, say: "${say('kroger')}" and call text_kroger_sign_in; if that fails, say its say sentence. If the caller then says later or skip, say: "${say('kroger_later')}" Never read a link aloud.

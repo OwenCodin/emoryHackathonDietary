@@ -6,6 +6,7 @@ import { createScreen } from './screen.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
 import { buildTools, endCall, setupStatus, withTimeout } from './tools.mjs';
+import { playVoiceSamples } from './voices.mjs';
 import { getCartFrame } from '../actions/index.mjs';
 import { createVideoPicker } from './video.mjs';
 import { createFakeCart } from './sim/fake-cart.mjs';
@@ -271,7 +272,7 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions: buildInstructions(prefs), tools: buildTools({ camera, patientId: 'demo', memory, setupDue, callerHeardAfter: t => (heardAny ? heardAt > t : null), onToolActivity: delta => watchdog.toolActivity(delta), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
+        agent: new voice.Agent({ instructions: buildInstructions(prefs), tools: buildTools({ camera, patientId: 'demo', memory, setupDue, callerHeardAfter: t => (heardAny ? heardAt > t : null), onToolActivity: delta => watchdog.toolActivity(delta), playSamples: () => playVoiceSamples(session), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,

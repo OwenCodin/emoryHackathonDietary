@@ -177,11 +177,23 @@ describe('set_preferences', () => {
     assert.deepEqual((await memory.loadPreferences()).prefs, { voice: 'Sulafat', replyStyle: 'detailed', language: 'es', name: null });
     assert.equal((await t.set_preferences.execute({ voice: 'warm' })).say, 'Saved.');
   });
-  it("maps a man's or a woman's voice, however it is worded", async () => {
+  it('maps voice one and voice two, however it is worded', async () => {
     const { t, memory } = setup({ build: { setupDue: false } });
-    for (const [said, voice] of [['female', 'Sulafat'], ['male', 'Puck'], ["a woman's voice", 'Sulafat'], ['Man', 'Puck'], ['woman', 'Sulafat']]) {
+    for (const [said, voice] of [['two', 'Sulafat'], ['one', 'Puck'], ['Voice 2', 'Sulafat'], ['the first one', 'Puck'], ['number two', 'Sulafat'], ['1', 'Puck']]) {
       assert.equal((await t.set_preferences.execute({ voice: said })).ok, true, said);
       assert.equal((await memory.loadPreferences()).prefs.voice, voice, said);
+    }
+    for (const said of ['one two', 'both', 'voice']) assert.equal((await t.set_preferences.execute({ voice: said })).error, 'bad_preference', said);
+  });
+  it('play_voice_samples queues the samples and asks which voice; without them it still asks', async () => {
+    let calls = 0;
+    const ok = setup({ build: { setupDue: false, playSamples: async () => { calls++; return 2; } } }).t;
+    assert.deepEqual(await ok.play_voice_samples.execute({}), { ok: true, played: 2, say: 'Would you like voice one or voice two?' });
+    assert.equal(calls, 1);
+    for (const playSamples of [undefined, async () => 0, async () => { throw new Error('boom'); }]) {
+      const r = await setup({ build: { setupDue: false, playSamples } }).t.play_voice_samples.execute({});
+      assert.equal(r.error, 'no_voice_samples');
+      assert.match(r.say, /voice one or voice two/);
     }
   });
   it('refuses unknown or empty choices and a missing memory', async () => {

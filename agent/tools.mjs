@@ -9,7 +9,7 @@ import * as renalModule from '../renal/index.mjs';
 import { CONDITIONS, LIMIT_BOUNDS, MAX_AVOID } from '../renal/index.mjs';
 import * as actionsModule from '../actions/index.mjs';
 import { mergePantry, matchPantry, PANTRY_MAX } from './memory.mjs';
-import { VOICE_MENU, VOICE_WORDS, cleanCallName } from './prefs.mjs';
+import { cleanCallName, voiceFor } from './prefs.mjs';
 
 const WORDS = { ok: 'Yes', avoid: 'No', limit: 'Small portion' };
 const RANK = { avoid: 0, limit: 1, unknown: 2, ok: 3 };
@@ -131,7 +131,8 @@ const FAILS = {
   limits_changed: "Those aren't the numbers I read back. Let me read the new ones back to you first.",
   limits_not_confirmed: 'Please tell me if the numbers I read back are right.',
   bad_foods: 'Tell me up to ten foods to avoid, a few words each.',
-  bad_preference: "I can use a man's or a woman's voice, give brief or detailed answers, and speak English or Spanish. Which would you like?",
+  no_voice_samples: "I couldn't play the samples just now. Would you like voice one or voice two?",
+  bad_preference: 'I can use voice one or voice two, give brief or detailed answers, and speak English or Spanish. Which would you like?',
   profile_unsaved: "I couldn't save that just now. You can finish it later by saying 'update my setup'.",
   prefs_unsaved: "I couldn't save that preference just now. We can try again on your next call.",
   bad_condition: 'Tell me which fits best: kidney disease without dialysis, hemodialysis, peritoneal dialysis, a kidney transplant, or not sure.',
@@ -445,6 +446,7 @@ export function buildTools({
   setupDue = false,
   callerHeardAfter = () => null,
   now = () => Date.now(),
+  playSamples = null,
 } = {}) {
   // Every tool reports start (+1) and end (-1) so the reply watchdog never nudges while one runs.
   const guard = (fn, opts) => guardTool(fn, { ...opts, activity: onToolActivity, display: onDisplay });
@@ -1322,8 +1324,17 @@ export function buildTools({
         return { ok: true, count: draft.avoid.length };
       }, { timeoutMs }),
     }),
+    play_voice_samples: llm.tool({
+      description: 'Play the caller a short sample of voice one and of voice two. Call it at the voice step of setup, or when the caller asks to hear the voices. Say nothing while it plays; then say its say sentence.',
+      execute: guard(async () => {
+        let played = 0;
+        try { played = typeof playSamples === 'function' ? await playSamples() : 0; } catch { played = 0; }
+        if (!(played > 0)) return fail('no_voice_samples');
+        return { ok: true, played, say: 'Would you like voice one or voice two?' };
+      }, { timeoutMs }),
+    }),
     set_preferences: llm.tool({
-      description: 'Save how the caller wants the agent to sound: voice (male or female; upbeat, firm, warm and mature also work), reply_style (brief or detailed) and language (english or spanish). Pass null for what they did not choose.',
+      description: 'Save how the caller wants the agent to sound: voice (one or two, as the caller chose after play_voice_samples), reply_style (brief or detailed) and language (english or spanish). Pass null for what they did not choose.',
       parameters: z.object({ voice: z.string().max(20).nullish(), reply_style: z.string().max(20).nullish(), language: z.string().max(20).nullish() }),
       execute: guard(async (call, args = {}) => {
         const given = v => v !== null && v !== undefined;
@@ -1331,8 +1342,7 @@ export function buildTools({
         const next = {};
         if (given(args?.voice)) {
           const v = word(args.voice);
-          const w = v.replace(/^an? /, '').replace(/ voice$/, '');
-          const name = Object.hasOwn(VOICE_WORDS, w) ? VOICE_WORDS[w] : Object.hasOwn(VOICE_MENU, w) ? VOICE_MENU[w] : Object.values(VOICE_MENU).find(x => x.toLowerCase() === w);
+          const name = voiceFor(v);
           if (!name) return fail('bad_preference');
           next.voice = name;
         }
