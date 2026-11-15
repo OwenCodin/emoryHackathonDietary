@@ -852,12 +852,12 @@ export function buildTools({
         // Kroger configured but nobody signed in: say so plainly and offer the texted link, instead of failing the cart.
         if (typeof actions.getKrogerStatus === 'function') {
           let ks = null;
-          try { ks = await actions.getKrogerStatus(); } catch { ks = null; }
+          try { ks = await actions.getKrogerStatus({ patientId }); } catch { ks = null; }
           if (ks?.ok === true && ks.configured === true && ks.connected === false) {
             return fail(ks.pending === true ? 'kroger_sign_in_pending' : ks.relay === true ? 'kroger_not_connected' : 'kroger_sign_in_needed');
           }
         }
-        const r = await actions.startCart({ items: list });
+        const r = await actions.startCart({ items: list, patientId });
         if (r?.error === 'busy') return fail('cart_busy');
         if (!r?.ok) return fail('tool_failed');
         if (!call.timedOut) for (const i of list) sentToKroger.add(i.name.toLowerCase());
@@ -868,7 +868,7 @@ export function buildTools({
     cart_status: llm.tool({
       description: 'How the grocery cart is going.',
       execute: guard(async () => {
-        const s = await actions.getCartStatus();
+        const s = await actions.getCartStatus({ patientId });
         if (!s?.ok) return fail('tool_failed');
         const SAY = {
           idle: 'No cart is running.',
@@ -899,13 +899,13 @@ export function buildTools({
       description: 'Text the caller a link to their filled cart so they can review it and check out themselves.',
       execute: guard(async () => {
         if (!phoneOk) return fail('no_phone');
-        let s = await actions.getCartStatus();
+        let s = await actions.getCartStatus({ patientId });
         if (!s?.ok) return fail('tool_failed');
         // The model often asks for the link right after start_cart: give a running cart a short time to finish.
         const waitUntil = Date.now() + Math.max(0, Math.min(Number(cartWaitMs) || 0, 10000));
         while (s.state === 'running' && Date.now() < waitUntil) {
           await new Promise(resolve => setTimeout(resolve, 400));
-          s = await actions.getCartStatus();
+          s = await actions.getCartStatus({ patientId });
           if (!s?.ok) return fail('tool_failed');
         }
         let link = null;
@@ -1204,7 +1204,7 @@ export function buildTools({
       description: "Whether the caller's Kroger account is connected for grocery carts. Call it during setup, and after the caller says they signed in. Its say sentence is what to tell the caller.",
       execute: guard(async () => {
         if (typeof actions.getKrogerStatus !== 'function') return fail('tool_failed');
-        const s = await actions.getKrogerStatus();
+        const s = await actions.getKrogerStatus({ patientId });
         if (s?.ok !== true) return fail('tool_failed');
         if (s.configured !== true) return { ok: true, connected: false, set_up: false, can_text: false, say: "Kroger shopping isn't set up on this line, so there's nothing to sign in to." };
         if (s.connected === true) return { ok: true, connected: true, say: 'Your Kroger account is connected.' };
@@ -1219,7 +1219,7 @@ export function buildTools({
         if (!phoneOk) return fail('no_phone');
         if (krogerTextAt !== null && now() - krogerTextAt < 60_000) return fail('kroger_link_already_sent');
         if (typeof actions.startKrogerSignIn !== 'function') return fail('tool_failed');
-        const started = await actions.startKrogerSignIn();
+        const started = await actions.startKrogerSignIn({ patientId });
         if (started?.ok !== true) {
           return fail(started?.error === 'not_configured' || started?.error === 'no_relay' ? 'kroger_not_configured' : 'tool_failed');
         }
@@ -1419,7 +1419,7 @@ export function buildTools({
           let timer;
           try {
             const late = new Promise(resolve => { timer = setTimeout(() => resolve(null), Math.min(3000, Math.floor(timeoutMs / 2))); });
-            const s = await Promise.race([Promise.resolve().then(() => actions.getKrogerStatus()).catch(() => null), late]);
+            const s = await Promise.race([Promise.resolve().then(() => actions.getKrogerStatus({ patientId })).catch(() => null), late]);
             if (s?.ok && s.configured && s.connected) return { ...base, say: `${base.say} Your Kroger account is connected.` };
             if (s?.ok && s.configured && s.relay && !s.connected) return { ...base, say: `${base.say} ${KROGER_FINISH_LATER}` };
           } catch { /* no Kroger sentence */ } finally { clearTimeout(timer); }

@@ -247,3 +247,61 @@ describe('finish_onboarding Kroger sentence', () => {
     assert.ok(!out.say.includes('relay.example') && !out.say.includes('A'.repeat(43)) && !out.say.includes(PHONE.slice(2)));
   });
 });
+
+describe('per-caller Kroger: patientId reaches every Kroger and cart call', () => {
+  const ID = `p${'a'.repeat(24)}`;
+  const ITEMS = { items: [{ name: 'rice', quantity: '1' }] };
+  const record = (build) => {
+    const seen = { status: [], signIn: [], startCart: [], cartStatus: [] };
+    const s = setup({ status: STATUS({ connected: true }), build: { cartWaitMs: 0, ...build } });
+    Object.assign(s.actions, {
+      async getKrogerStatus(a) { seen.status.push(a); return STATUS({ connected: true }); },
+      async startKrogerSignIn(a) { seen.signIn.push(a); return { ok: true, link: LINK }; },
+      async startCart(a) { seen.startCart.push(a); return { ok: true }; },
+      async getCartStatus(a) {
+        seen.cartStatus.push(a);
+        return { ok: true, state: 'done', step: '', added: [], missing: [], total: 0, cartUrl: 'https://www.kroger.com/cart' };
+      },
+    });
+    return { ...s, seen };
+  };
+
+  it('passes the caller id to start_cart, cart_status, text_cart_link, kroger_status and text_kroger_sign_in', async () => {
+    const { t, seen } = record({ patientId: ID });
+    await t.start_cart.execute(ITEMS);
+    await t.cart_status.execute();
+    await t.text_cart_link.execute();
+    await t.kroger_status.execute();
+    await t.text_kroger_sign_in.execute();
+    assert.deepEqual(seen.startCart, [{ items: ITEMS.items, patientId: ID }]);
+    assert.ok(seen.cartStatus.length >= 2);
+    for (const a of seen.cartStatus) assert.deepEqual(a, { patientId: ID });
+    assert.ok(seen.status.length >= 2); // the start_cart pre-check and kroger_status
+    for (const a of seen.status) assert.deepEqual(a, { patientId: ID });
+    assert.deepEqual(seen.signIn, [{ patientId: ID }]);
+  });
+  it('passes the caller id to the finish-setup Kroger sentence', async () => {
+    const { t, seen } = record({ patientId: ID, setupDue: true });
+    await t.text_kroger_sign_in.execute();
+    seen.status.length = 0;
+    await t.finish_onboarding.execute();
+    assert.deepEqual(seen.status, [{ patientId: ID }]);
+  });
+  it('defaults to the demo patient', async () => {
+    const { t, seen } = record({});
+    await t.start_cart.execute(ITEMS);
+    await t.cart_status.execute();
+    await t.kroger_status.execute();
+    await t.text_kroger_sign_in.execute();
+    assert.equal(seen.startCart[0].patientId, 'demo');
+    assert.deepEqual(seen.cartStatus[0], { patientId: 'demo' });
+    assert.deepEqual(seen.status[0], { patientId: 'demo' });
+    assert.deepEqual(seen.signIn[0], { patientId: 'demo' });
+  });
+  it('a caller with no sign-in of their own gets kroger_not_connected and no cart run', async () => {
+    const a = setup({ status: STATUS(), build: { patientId: ID } });
+    const r = await a.t.start_cart.execute(ITEMS);
+    assert.equal(r.error, 'kroger_not_connected');
+    assert.equal(a.calls.startCart, 0);
+  });
+});
