@@ -129,13 +129,13 @@ export function makeFakeRenal({ scenes } = {}) {
 
 export function makeFakeActions() {
   return {
-    async startCart({ items } = {}) {
+    async startCart({ items, patientId } = {}) {
       return { ok: true };
     },
     async previewCart({ items } = {}) {
       return { ok: true, shown: Array.isArray(items) && items.length > 0, found: Array.isArray(items) ? items.length : 0, notFound: 0, total: 0 };
     },
-    async getCartStatus() {
+    async getCartStatus(_input) {
       return {
         ok: true,
         state: 'done',
@@ -164,10 +164,10 @@ export function makeFakeActions() {
     async getCallerPhone({ callId } = {}) {
       return { ok: false, error: 'not_configured' };
     },
-    async getKrogerStatus() {
+    async getKrogerStatus(_input) {
       return { ok: true, configured: false, relay: false, connected: false, pending: false };
     },
-    async startKrogerSignIn() {
+    async startKrogerSignIn(_input) {
       return { ok: true, link: 'https://relay.example/k/' + 'A'.repeat(43) };
     },
   };

@@ -23,6 +23,7 @@ import {
   parseQuantity,
   pickImageUrl,
   readKrogerConfig,
+  tokenDirFor,
 } from './kroger.mjs';
 import { resumeKrogerSignIn } from './kroger-signin.mjs';
 
@@ -103,6 +104,10 @@ function parseItemResult(text, item) {
 
   return { added: null, missing: `${item.name}: no confirmed result` };
 }
+
+// The patient a cart run belongs to: 'demo' for undefined, null or 'demo', else the id as given. An invalid id keeps
+// its own key, so it can never match a real patient's cart.
+const ownerKey = (patientId) => (patientId === undefined || patientId === null || patientId === 'demo' ? 'demo' : patientId);
 
 function normalizeState(status) {
   return {
@@ -325,7 +330,7 @@ export function createCartController({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   cardHoldMs = CARD_HOLD_MS,
-  resumeSignIn = (config) => resumeKrogerSignIn({ config }),
+  resumeSignIn = (config, patientId) => resumeKrogerSignIn({ config, patientId }),
   resumeWaitMs = 3000,
 } = {}) {
   let context = null;
@@ -346,6 +351,7 @@ export function createCartController({
     cartUrl: null,
   };
   let stopRequested = false;
+  let owner = 'demo'; // whose cart `status` describes
 
   function fail(step) {
     status = { ...status, state: 'failed', step };
@@ -487,12 +493,17 @@ export function createCartController({
   }
 
   // Kroger public API path: no browser, no Gemini. Never throws.
-  async function runKroger(items, config) {
+  async function runKroger(items, config, patientId) {
     const startedAt = now();
     cardItems = [];
     const expired = `Kroger sign-in expired: run ${KROGER_LOGIN_COMMAND} again`;
     try {
-      const kroger = createKroger(config);
+      const dir = tokenDirFor(config.tokenDir, patientId);
+      if (dir === null) {
+        fail(`Sign in to Kroger first: ${KROGER_LOGIN_COMMAND}`);
+        return;
+      }
+      const kroger = createKroger({ ...config, tokenDir: dir });
       let auth = await kroger.getUserToken();
       if (!auth.ok && auth.error === 'no_sign_in') {
         // A sign-in the patient finished after the call that texted the link: claim it once (bounded), then look again.
@@ -500,7 +511,7 @@ export function createCartController({
           const t = setTimeout(resolve, resumeWaitMs); // real timer: the injected one belongs to the card hold
           t.unref?.();
           Promise.resolve()
-            .then(() => resumeSignIn(config))
+            .then(() => resumeSignIn(config, patientId))
             .catch(() => null)
             .then(() => {
               clearTimeout(t);
@@ -582,9 +593,9 @@ export function createCartController({
     }
   }
 
-  async function run(items) {
+  async function run(items, patientId) {
     const krogerConfig = getKrogerConfig();
-    if (krogerConfig) return runKroger(items, krogerConfig);
+    if (krogerConfig) return runKroger(items, krogerConfig, patientId);
     const startedAt = now();
     let actions = 0;
     let page;
@@ -796,7 +807,7 @@ export function createCartController({
     }
   }
 
-  async function startCart({ items } = {}) {
+  async function startCart({ items, patientId } = {}) {
     if (runPromise) return { ok: false, error: 'busy' };
     const error = validateItems(items);
     if (error) return { ok: false, error };
@@ -811,12 +822,17 @@ export function createCartController({
       total: 0,
       cartUrl: null,
     };
+    owner = ownerKey(patientId);
     stopRequested = false;
-    runPromise = Promise.resolve().then(() => run(items));
+    runPromise = Promise.resolve().then(() => run(items, patientId));
     return { ok: true };
   }
 
-  function getCartStatus() {
+  // Only the patient who started the cart hears about it; anyone else sees an idle, empty cart.
+  function getCartStatus(input) {
+    if (ownerKey(input?.patientId) !== owner) {
+      return normalizeState({ state: 'idle', step: '', added: [], missing: [], total: 0, cartUrl: null });
+    }
     return normalizeState(status);
   }
 
@@ -845,5 +861,5 @@ const controller = createCartController();
 
 export const startCart = (input) => controller.startCart(input);
 export const previewCart = (input) => controller.previewCart(input);
-export const getCartStatus = async () => controller.getCartStatus();
+export const getCartStatus = async (input) => controller.getCartStatus(input);
 export const stopCart = () => controller.stopCart();

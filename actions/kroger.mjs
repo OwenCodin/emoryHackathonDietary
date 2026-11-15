@@ -29,6 +29,17 @@ export function defaultTokenDir(env = process.env) {
   return custom ? resolve(custom) : join(homedir(), '.config', 'renal-dietitian');
 }
 
+// Which folder holds a patient's sign-in. The demo patient (undefined, null or 'demo') keeps the base folder exactly
+// as before; a verified caller (p + 24 hex) or guest (g + 24 hex) gets <base>/callers/<id>. Anything else returns
+// null so no path is ever built from an unvalidated id. Never throws, never touches the disk.
+const PATIENT_DIR_ID = /^[pg][0-9a-f]{24}$/;
+
+export function tokenDirFor(baseDir, patientId) {
+  if (patientId === undefined || patientId === null || patientId === 'demo') return baseDir;
+  if (typeof patientId !== 'string' || !PATIENT_DIR_ID.test(patientId)) return null;
+  return join(baseDir, 'callers', patientId);
+}
+
 export function readKrogerConfig(env = process.env) {
   const clientId = clean(env.KROGER_CLIENT_ID);
   const clientSecret = clean(env.KROGER_CLIENT_SECRET);
