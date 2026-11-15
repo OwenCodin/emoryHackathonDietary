@@ -684,7 +684,7 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     dish_ingredients: llm.tool({
-      description: 'Get the usual ingredients of a dish, with a quantity, a verdict for the caller\'s limits and a swap for each. Call it after look_at_camera when they showed the dish, or straight away when they name it, and for "what is in it", "get the ingredients" or "buy what it needs". Never list ingredients yourself. Say its say, then ask its ask.',
+      description: 'Get the usual ingredients of a dish, with a quantity, a verdict for the caller\'s limits and a swap for each. Call it after look_at_camera when they showed the dish, or straight away when they name it, and for "what is in it", "get the ingredients" or "buy what it needs". Never list ingredients yourself. Say its say, then ask its ask, unless the caller already said what to do with them (list, cart, recipe): then do that next without asking.',
       parameters: z.object({ dish: z.string().trim().min(1).max(80) }),
       execute: guard(async (call, args = {}) => {
         const dish = typeof args.dish === 'string' ? args.dish.trim() : '';
@@ -819,7 +819,7 @@ export function buildTools({
       }, { timeoutMs }),
     }),
     start_cart: llm.tool({
-      description: 'Add exactly the caller\'s current shopping list to their online Kroger cart. Pass an empty list to use that list. Call it only after the caller has heard the list and clearly said to put it in their Kroger cart. If it fails with confirm_list, read the items back, ask, and call again only after they say yes. It says which items it is adding, and never pays or checks out. If it says it has not heard back, check cart_status before trying again.',
+      description: 'Add exactly the caller\'s current shopping list to their online Kroger cart. Pass an empty list to use that list. Call it whenever the caller asks for their cart or Kroger, or to buy or order the items ("add it to my cart" is this tool), or says yes when you ask about the cart. Never call it without that. If it fails with confirm_list, read the items back, ask, and call again only after they say yes. It says which items it is adding, and never pays or checks out. If it says it has not heard back, check cart_status before trying again.',
       parameters: z.object({ items: z.array(z.object({ name: z.string(), quantity: z.string() })) }),
       execute: guard(async (call, args = {}) => {
         let list = (Array.isArray(args.items) ? args.items : []).map(i => ({ name: cut(i?.name), quantity: cut(i?.quantity) })).filter(i => i.name);

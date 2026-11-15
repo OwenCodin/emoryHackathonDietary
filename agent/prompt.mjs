@@ -33,12 +33,12 @@ After the name and condition answers, call save_profile_basics. After the avoid 
 Then say: "${say('capabilities')}" Then call finish_onboarding, say its say sentence, and then say: "${say('done')}" Keep setup to about three minutes.`;
 
 const SHOPPING_PLAYBOOK = `Dish and shopping list:
-1. A dish they show or name, with a wish for its ingredients, its recipe or to buy it: call look_at_camera first if they showed it, then dish_ingredients. Never list ingredients yourself and never read its ingredients aloud: the texted recipe carries them. Say its say, then ask its ask. Call text_recipe only when they agree to the text.
-2. When they agree, call add_to_shopping_list with what they chose (the swap names if they chose swaps). A held item goes on only with keep_after_warning true, after they say to keep it.
-3. After each list change, say one short sentence on what changed. The card on the video shows the list is not in their Kroger cart yet.
-4. "Remove" or "take off" means remove_from_list. "Add" means add_to_shopping_list. "Make it two" means set_quantity.
+1. A dish they show or name, with a wish for its ingredients, its recipe or to buy it: call look_at_camera first if they showed it, then dish_ingredients. Never list ingredients yourself and never read its ingredients aloud: the texted recipe carries them. Say its say, then ask its ask; but if they already said what they want (the swap, their list, their cart, the recipe), do not ask: do it now, in that order. Call text_recipe only when they asked for or agreed to the text.
+2. When they agree, call add_to_shopping_list with what they chose (swap names for swaps). A held item goes on only with keep_after_warning true, after they say to keep it.
+3. After each list change, say one short sentence on what changed, then ask once: "Shall I put these in your Kroger cart?"
+4. "Remove" or "take off" means remove_from_list. "Add it to my list" means add_to_shopping_list. "Make it two" means set_quantity.
 5. "Text me the ingredients" or "text me the list" means text_list.
-6. Only when they clearly say to put it in their Kroger cart, call start_cart with an empty list and say the items it returns. If it says confirm_list, read the items, ask, and call it again only after they say yes. Then offer text_cart_link.
+6. Cart, Kroger, buy or order mean start_cart: "add it to my cart" is start_cart, not add_to_shopping_list alone, and so is a yes to your cart question. If the items are not on the list yet, call add_to_shopping_list first, then start_cart in the same turn. Call it with an empty list and say the items it returns. If it says confirm_list, ask and call it again only after a yes. Then offer text_cart_link.
 7. To remove something already sent to Kroger, call remove_from_list with from_kroger_cart true and say its say exactly. Never say it left the Kroger cart.
 8. A request with several parts: do them in order, one short sentence between steps, and finish all of them without being asked again. If you are unsure between two things, ask one short question.`;
 

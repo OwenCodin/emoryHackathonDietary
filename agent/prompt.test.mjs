@@ -148,7 +148,7 @@ describe('dish and shopping playbook', () => {
   });
   it('offers the full recipe of a dish and texts it only on agreement', async () => {
     const { instructions } = await import('./prompt.mjs');
-    for (const w of ['never read its ingredients aloud: the texted recipe carries them', 'Call text_recipe only when they agree to the text', 'or the dish name']) assert.ok(instructions.includes(w), w);
+    for (const w of ['never read its ingredients aloud: the texted recipe carries them', 'Call text_recipe only when they asked for or agreed to the text', 'do not ask: do it now', '"add it to my cart" is start_cart', 'or the dish name']) assert.ok(instructions.includes(w), w);
   });
   it('restricts start_setup to explicit setup requests', async () => {
     const { instructions } = await import('./prompt.mjs');
@@ -159,6 +159,6 @@ describe('dish and shopping playbook', () => {
     const text = buildInstructions({});
     const start = text.indexOf('Dish and shopping list:');
     const end = text.indexOf('Never pay for, order');
-    assert.ok(end - start < 1700, `${end - start} characters`);
+    assert.ok(end - start < 1800, `${end - start} characters`);
   });
 });
