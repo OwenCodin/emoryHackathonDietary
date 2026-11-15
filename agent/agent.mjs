@@ -70,8 +70,8 @@ const agent = defineAgent({
     const source = new VideoSource(WIDTH, HEIGHT);
     const track = LocalVideoTrack.createVideoTrack('agent-video', source);
     let tick = 0, speaking = false, timer = null;
-    // Track C's browser frame while a cart runs (exact size or nothing), the cached face otherwise.
-    // The brand screen renders in the background; the drawn face shows until it is ready. Nothing is awaited on the call path.
+    // Track C's browser frame while a cart runs (exact size or nothing), the cached companion otherwise.
+    // The brand screen renders in the background; the abstract companion shows until it is ready. Nothing is awaited on the call path.
     const screen = createScreen();
     const fakeCart = process.env.AGENT_FAKE_CART === '1' ? createFakeCart() : null;
     if (fakeCart) console.log('[agent] video: fake cart provider on (simulated proof only)');

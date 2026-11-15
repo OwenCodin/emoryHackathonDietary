@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
-import { VOICE_INDICATOR, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintMouth, paintVoiceIndicator, renderSvg, VERDICTS, voiceIndicatorBand } from './card.mjs';
+import { VOICE_INDICATOR, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintVoiceIndicator, renderSvg, VERDICTS, voiceIndicatorBand } from './card.mjs';
 
 globalThis.fetch = async () => { throw new Error('network used'); };
 
@@ -13,7 +13,8 @@ describe('brandSvg', () => {
     const s = brandSvg();
     assert.ok(s.startsWith('<svg'));
     assert.ok(s.includes(`width="${WIDTH}" height="${HEIGHT}"`));
-    for (const t of ['RenaLine', 'YOUR RENAL DIETITIAN', 'A calm companion for food choices', 'care team&#39;s limits', 'aria-label="RenaLine AI nutrition companion"']) assert.ok(s.includes(t), t);
+    for (const t of ['RenaLine', 'YOUR RENAL DIETITIAN', 'A calm companion for food choices', 'care team&#39;s limits', 'aria-label="RenaLine voice companion"']) assert.ok(s.includes(t), t);
+    assert.ok(!s.includes('aria-label="RenaLine AI nutrition companion"'));
   });
 });
 
@@ -140,22 +141,9 @@ describe('render and voice indicator', () => {
       }
     }
   });
-  it('animates the portrait mouth only while speaking', () => {
-    const idle = new Uint8Array(WIDTH * HEIGHT * 4).fill(7);
-    const closed = idle.slice(), open = idle.slice();
-    paintMouth(closed, 1, false);
-    paintMouth(open, 1, true);
-    assert.notDeepEqual(open, closed);
-    const outside = (x, y) => {
-      const i = (y * WIDTH + x) * 4;
-      return [...open.subarray(i, i + 4)].every((value, k) => value === closed[i + k]);
-    };
-    assert.ok(outside(0, 0));
-    assert.ok(outside(WIDTH - 1, HEIGHT - 1));
-  });
-  it('voice indicator band stays centered and within its reserved area', () => {
-    assert.deepEqual(voiceIndicatorBand(1), { top: 505, bottom: 585, left: 602, right: 678 });
-    assert.equal(VOICE_INDICATOR.top, 505);
+  it('voice indicator band stays centered over the companion mark', () => {
+    assert.deepEqual(voiceIndicatorBand(1), { top: 212, bottom: 448, left: 264, right: 500 });
+    assert.equal(VOICE_INDICATOR.top, 212);
   });
   it('voice indicator stays inside the safe rect at 0.8 for every tick', () => {
     const s = SAFE_SCALE_DEFAULT, a = safeArea(s), band = voiceIndicatorBand(s);
@@ -175,7 +163,7 @@ describe('render and voice indicator', () => {
 describe('safe area rendering', () => {
   const s = SAFE_SCALE_DEFAULT;
   const MX = Math.floor(0.09 * WIDTH), MY = Math.floor(0.09 * HEIGHT);
-  const BG = [15, 36, 48, 255];
+  const BG = [20, 40, 39, 255];
   const bandOnly = px => {
     for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
       if (x >= MX && x < WIDTH - MX && y >= MY && y < HEIGHT - MY) continue;

@@ -1,7 +1,7 @@
 // Fake cart frame provider for the SIMULATED PROOF only.
 // The agent uses it only when AGENT_FAKE_CART is exactly '1' (decided in agent/agent.mjs; this file reads no environment).
 // It stands in for Track C's getCartFrame: nothing for 6 s after start(), then a solid magenta frame for 6 s, then nothing.
-// The helpers isMagenta and followsFaceCartFace are used by agent/sim/sim-call.mjs to classify what the caller sees.
+// The helpers isMagenta and followsCompanionCartCompanion classify what the caller sees.
 import { HEIGHT, WIDTH } from '../../shared/video.mjs';
 
 export const FAKE_CART_DELAY_MS = 6000;
@@ -25,15 +25,15 @@ export function createFakeCart({ now = () => Date.now() } = {}) {
   };
 }
 
-// Tolerates video compression; the face, background and accent colours are all outside this range.
+// Tolerates video compression; the companion, background and accent colours are all outside this range.
 export function isMagenta(r, g, b) {
   return r >= 180 && g <= 90 && b >= 180;
 }
 
-// True when the timeline contains 'face', later 'cart', later 'face' (a subsequence, not an exact match).
-export function followsFaceCartFace(timeline) {
+// True when the timeline contains 'companion', later 'cart', later 'companion' (a subsequence).
+export function followsCompanionCartCompanion(timeline) {
   if (!Array.isArray(timeline)) return false;
-  const want = ['face', 'cart', 'face'];
+  const want = ['companion', 'cart', 'companion'];
   let k = 0;
   for (const entry of timeline) if (k < want.length && entry === want[k]) k++;
   return k === want.length;

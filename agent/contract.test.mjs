@@ -14,14 +14,14 @@ globalThis.fetch = async () => {
   throw new Error('network used by a stub');
 };
 
-let video, renal, actions, tools, face;
+let video, renal, actions, tools, companion;
 
 before(async () => {
   video = await import('../shared/video.mjs');
   renal = await import('../renal/index.mjs');
   actions = await import('../actions/index.mjs');
   tools = await import('./tools.mjs');
-  face = await import('./face.mjs');
+  companion = await import('./companion.mjs');
 });
 after(async () => {
   globalThis.fetch = originalFetch;
@@ -270,10 +270,10 @@ describe('agent/tools.mjs', () => {
   });
 });
 
-describe('agent/face.mjs', () => {
+describe('agent/companion.mjs', () => {
   it('draws WIDTH x HEIGHT RGBA frames', () => {
     for (const [tick, speaking] of [[0, false], [1, true]]) {
-      const px = face.drawFace(tick, speaking);
+      const px = companion.drawCompanion(tick, speaking);
       assert.ok(px instanceof Uint8Array);
       assert.equal(px.length, video.WIDTH * video.HEIGHT * 4);
     }

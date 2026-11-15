@@ -7,7 +7,7 @@
 //   node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch] [--outbound]
 // --image PATH publishes a facetime-remote-video track showing that picture (1280x720, about 5 frames a second).
 // --say TEXT (repeatable) speaks the text into the caller microphone after the greeting, using macOS say.
-// --expect-cart-switch checks that the agent's video goes face, then cart (magenta), then face; run against an agent
+// --expect-cart-switch checks that the agent's video goes companion, cart (magenta), then companion; run against an agent
 // started with AGENT_FAKE_CART=1.
 // --outbound simulates Track C's callPatient: dispatches the agent with outbound metadata before the bridge joins and
 // checks that the agent already publishes audio and video.
@@ -22,7 +22,7 @@ import {
 } from '@livekit/rtc-node';
 import { AccessToken, AgentDispatchClient, RoomServiceClient, TrackType } from 'livekit-server-sdk';
 import { HEIGHT, WIDTH } from '../../shared/video.mjs';
-import { followsFaceCartFace, isMagenta } from './fake-cart.mjs';
+import { followsCompanionCartCompanion, isMagenta } from './fake-cart.mjs';
 import { MAX_SPEECH_CHARS, speechPcm } from './speech.mjs';
 
 const USAGE = '[sim] usage: node --env-file=.env.local agent/sim/sim-call.mjs [--seconds N] [--calls N] [--image PATH] [--say TEXT]... [--expect-cart-switch] [--outbound] [--expect-speech-after N]';
@@ -131,7 +131,7 @@ async function runCall(n) {
               try {
                 const rgba = value.frame.convert(VideoBufferType.RGBA);
                 const i = ((Math.floor(rgba.height / 2) * rgba.width) + Math.floor(rgba.width / 2)) * 4;
-                const kind = isMagenta(rgba.data[i], rgba.data[i + 1], rgba.data[i + 2]) ? 'cart' : 'face';
+                const kind = isMagenta(rgba.data[i], rgba.data[i + 1], rgba.data[i + 2]) ? 'cart' : 'companion';
                 if (stats.timeline[stats.timeline.length - 1] !== kind && stats.timeline.length < 30) stats.timeline.push(kind);
               } catch { /* sampling must never stop the reader */ }
             }
@@ -271,7 +271,7 @@ async function runCall(n) {
     }
     if (EXPECT_CART) {
       result.videoTimeline = stats.timeline;
-      result.cartSwitch = followsFaceCartFace(stats.timeline);
+      result.cartSwitch = followsCompanionCartCompanion(stats.timeline);
     }
     if (SCRIPTED) {
       result.image = picture !== null;
