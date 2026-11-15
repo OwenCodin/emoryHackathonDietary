@@ -300,7 +300,12 @@ const displayItem = (v, fallbackName, verdict) => ({
   food: clean(v.food ?? fallbackName, 80),
   verdict,
   nutrients: v.nutrients && typeof v.nutrients === 'object'
-    ? { sodiumMg: v.nutrients.sodiumMg ?? null, potassiumMg: v.nutrients.potassiumMg ?? null, phosphorusMg: v.nutrients.phosphorusMg ?? null }
+    ? {
+      sodiumMg: v.nutrients.sodiumMg ?? null, potassiumMg: v.nutrients.potassiumMg ?? null, phosphorusMg: v.nutrients.phosphorusMg ?? null,
+      // Only for a patient who has a protein/carbs limit; otherwise the object is exactly the three minerals.
+      ...(Number.isFinite(v.nutrients.proteinG) ? { proteinG: v.nutrients.proteinG } : {}),
+      ...(Number.isFinite(v.nutrients.carbsG) ? { carbsG: v.nutrients.carbsG } : {}),
+    }
     : null,
   portion: typeof v.portion === 'string' ? clean(v.portion, 60) : null,
   online: v.source === 'web',
@@ -539,7 +544,7 @@ export function buildTools({
         });
         // Never invent nutrient numbers: renal/check.mjs falls back to a name lookup when a label has no numbers,
         // and 'this product' is not a real food, so only numbers printed on the label may reach the caller.
-        if (nameless && good.some(g => g.v?.source === 'web' || ['sodiumMg', 'potassiumMg', 'phosphorusMg'].some(k => {
+        if (nameless && good.some(g => g.v?.source === 'web' || ['sodiumMg', 'potassiumMg', 'phosphorusMg', 'proteinG', 'carbsG'].some(k => {
           const x = g.v?.nutrients?.[k];
           return Number.isFinite(x) && x !== label[k];
         }))) return fail('label_unreadable');

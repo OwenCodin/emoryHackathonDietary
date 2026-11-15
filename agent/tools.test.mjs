@@ -1300,6 +1300,15 @@ describe('display hook', () => {
     assert.deepEqual(Object.keys(r), ['ok', 'food', 'verdict', 'spoken', 'swap']);
     assert.ok(!JSON.stringify(r).includes('422'));
   });
+  it('check_food passes protein and carbs to the display only when the check returned them', async () => {
+    const c = collect();
+    const withMacros = { ...nutr, proteinG: 37, carbsG: 0 };
+    await build({ ...c, renal: { ...renal, checkFood: async a => ({ ...web(a.food.name), nutrients: withMacros }) } }).check_food.execute({ name: 'chicken', grams: null });
+    assert.deepEqual(c.calls[0].items[0].nutrients, withMacros);
+    const c2 = collect();
+    await build({ ...c2, renal: { ...renal, checkFood: async a => ({ ...web(a.food.name), nutrients: { ...nutr, proteinG: NaN, carbsG: null } }) } }).check_food.execute({ name: 'chicken', grams: null });
+    assert.deepEqual(c2.calls[0].items[0].nutrients, nutr);
+  });
   it('check_food failures and timeouts emit nothing', async () => {
     const c = collect();
     const bad = (over, args = { name: 'a', grams: null }) => build({ ...c, ...over }).check_food.execute(args);

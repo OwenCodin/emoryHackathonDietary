@@ -41,6 +41,30 @@ describe('cardSvg single', () => {
     const s = one({ nutrients: null });
     assert.ok(!s.includes('Sodium') && !s.includes('Portion'));
   });
+  it('adds protein and carbs tiles in grams after the minerals, only when numbers are given', () => {
+    assert.deepEqual(detailParts({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7, proteinG: 37.2, carbsG: 0 } }).nutrients, ['Sodium 5 mg', 'Potassium 6 mg', 'Phosphorus 7 mg', 'Protein 37 g', 'Carbs 0 g']);
+    assert.deepEqual(detailParts({ nutrients: { sodiumMg: 5, proteinG: -1, carbsG: NaN } }).nutrients, ['Sodium 5 mg']);
+    assert.deepEqual(detailParts({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7 } }).nutrients, ['Sodium 5 mg', 'Potassium 6 mg', 'Phosphorus 7 mg']);
+  });
+  it('lays 4 and 5 nutrients out in two rows inside a lifted panel above the wave', () => {
+    const tiles = s => (s.match(/rx="14" fill="#0C2029"/g) ?? []).length;
+    const five = one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7, proteinG: 37, carbsG: 0 }, portion: '120 g' });
+    assert.equal(tiles(five), 5);
+    assert.ok(five.includes('PROTEIN') && five.includes('37 g') && five.includes('CARBS') && five.includes('0 g'));
+    assert.equal(tiles(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7, proteinG: 37 } })), 4);
+    assert.equal(tiles(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7 } })), 3);
+    // Every tile, text and the panel itself stays between y 40 and the wave (505); the panel bottom is 495 as before.
+    const ys = [...five.matchAll(/<(?:rect|text) [^>]*?\by="(-?[\d.]+)"(?: [^>]*?\bheight="([\d.]+)")?/g)].map(m => [Number(m[1]), Number(m[2] ?? 0)]);
+    const panelRect = five.match(/<rect x="692" y="(\d+)" width="510" height="(\d+)" rx="28"/);
+    assert.ok(panelRect);
+    assert.equal(Number(panelRect[1]) + Number(panelRect[2]), 495);
+    const inPanel = ys.filter(([y, h]) => y >= Number(panelRect[1]) && y < 505 && h < 300); // the panel layers themselves are checked above
+    assert.ok(inPanel.length > 8);
+    for (const [y, h] of inPanel) assert.ok(y + h <= 495 && y >= 40, `y ${y} h ${h}`);
+    assert.ok(Number(panelRect[1]) >= 40);
+    // The unlifted card keeps today's panel.
+    assert.ok(one({ nutrients: { sodiumMg: 5, potassiumMg: 6, phosphorusMg: 7 } }).includes('<rect x="692" y="165" width="510" height="330" rx="28"'));
+  });
   it('online tag only when online', () => {
     const on = cardSvg({ items: [item()], online: true });
     assert.ok(on.includes('FOUND ONLINE'));

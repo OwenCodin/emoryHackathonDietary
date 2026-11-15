@@ -217,6 +217,7 @@ Not verified yet:
 - The USDA `DEMO_KEY` allows only 10 requests an hour. Use a personal key.
 - The online lookup needs billing enabled on the Gemini key.
 - The agent gives guidance inside limits a care team set. It says so on the call, never changes the limits, and never pays for anything.
+- Optional protein and carbohydrate limits: setup asks one skippable question after the four limits. `propose_limits` and `confirm_limits` take optional `protein_g` and `carbs_g` (whole grams, 20 to 200 and 50 to 500), read them back only when given, and save them only on a matching confirm. The verdict card adds Protein and Carbs tiles in a second row when the check returned them (the panel grows upward; cards for three or fewer nutrients are unchanged). Known gaps: meal and dish totals, picking the best item and the diary stay on the three minerals; online lookups have no protein or carbs.
 
 ### Checkpoints
 
