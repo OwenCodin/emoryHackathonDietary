@@ -136,6 +136,6 @@ test('abstract companion keeps the outer 9% bands background-only at the safe sc
 
 test('abstract companion has a warm core inside the safe area at scale 1', () => {
   const px = drawCompanion(5, false, 1);
-  const index = (330 * WIDTH + 382) * 4;
+  const index = (360 * WIDTH + 270) * 4;
   assert.ok(px[index] > 220 && px[index + 1] > 200 && px[index] > px[index + 2]);
 });

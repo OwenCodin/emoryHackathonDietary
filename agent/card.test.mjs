@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HEIGHT, SAFE_SCALE_DEFAULT, WIDTH, safeArea } from '../shared/video.mjs';
-import { VOICE_INDICATOR, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintVoiceIndicator, renderSvg, VERDICTS, voiceIndicatorBand } from './card.mjs';
+import { VOICE_INDICATOR, brandSvg, cardSvg, cleanText, detailParts, escapeXml, fitText, paintVoiceIndicator, renderSvg, textWidth, VERDICTS, voiceIndicatorBand } from './card.mjs';
 
 globalThis.fetch = async () => { throw new Error('network used'); };
 
@@ -54,7 +54,7 @@ describe('cardSvg multi and unjudged', () => {
     const items = ['a1', 'b2', 'c3', 'd4'].map((food, i) => item({ food, verdict: ['avoid', 'limit', 'ok', 'ok'][i] }));
     const s = cardSvg({ items, more: 2, unjudged: false, seen: 6 });
     assert.ok(s.indexOf('A1') < s.indexOf('B2') && s.indexOf('B2') < s.indexOf('C3'));
-    assert.ok(!s.includes('D4'));
+    assert.ok(!s.includes('>D4<')); // the bare letters also occur in a colour code
     assert.ok(s.includes('+3 more'));
     assert.ok(!s.includes('Sodium'));
   });
@@ -68,6 +68,50 @@ describe('cardSvg multi and unjudged', () => {
   it('empty display falls back to the brand screen', () => {
     assert.equal(cardSvg({ items: [] }), brandSvg());
     assert.equal(cardSvg(null), brandSvg());
+  });
+});
+
+describe('layout', () => {
+  // Every text element's estimated right edge, in design pixels.
+  const rightEdges = svg => [...svg.matchAll(/<text x="([\d.]+)" y="[\d.]+" font-family="[^"]*" font-size="([\d.]+)" font-weight="(\d+)" fill="[^"]*" text-anchor="(\w+)">([^<]*)<\/text>/g)]
+    .map(([, x, size, weight, anchor, body]) => {
+      const w = textWidth(body.replace(/&[a-z#0-9]+;/g, 'x'), Number(size), Number(weight) >= 700);
+      return { body, left: anchor === 'middle' ? Number(x) - w / 2 : Number(x), right: Number(x) + (anchor === 'middle' ? w / 2 : w) };
+    });
+  const screens = {
+    brand: brandSvg(),
+    single: one({ verdict: 'limit', food: 'Great Value Original Homestyle Chicken Noodle Soup Family Size', nutrients: { sodiumMg: 6400, potassiumMg: 3100, phosphorusMg: 1200 }, portion: '1 cup (240 g) as prepared with water' }),
+    plain: one({ verdict: 'avoid', food: 'Star fruit' }),
+    multi: cardSvg({ items: ['Pickles in brine with extra garlic and dill', 'Orange juice', 'Apples'].map((food, i) => item({ food, verdict: ['avoid', 'limit', 'ok'][i], nutrients: { sodiumMg: 800 } })), more: 2 }),
+    unjudged: cardSvg({ items: [item({ food: 'A very long unjudged food name that keeps going and going on' })], unjudged: true, seen: 4 }),
+  };
+  it('never draws text past the right edge of the card', () => {
+    for (const [name, svg] of Object.entries(screens)) {
+      for (const t of rightEdges(svg)) if (t.left >= 500) assert.ok(t.right <= 1230 - 20, `${name}: "${t.body}" ends at ${Math.round(t.right)}`);
+    }
+  });
+  it('keeps the At a glance heading above the first row', () => {
+    const svg = screens.multi;
+    const headingY = Number(svg.match(/y="([\d.]+)"[^>]*>At a glance</)[1]);
+    const firstRowTop = Math.min(...[...svg.matchAll(/<rect x="524" y="([\d.]+)" width="682" height="96"/g)].map(m => Number(m[1])));
+    assert.ok(Number.isFinite(firstRowTop) && headingY + 10 <= firstRowTop, `${headingY} vs ${firstRowTop}`);
+  });
+  it('leaves room between the badge icon and its word, for every verdict', () => {
+    for (const verdict of ['ok', 'limit', 'avoid', 'unknown']) {
+      const svg = one({ verdict });
+      const iconX = Number(svg.match(new RegExp(`id="icon-${verdict}" transform="translate\\(([\\d.]+)`))[1]);
+      const wordX = Number(svg.match(new RegExp(`<text x="([\\d.]+)"[^>]*>${VERDICTS[verdict].word}<`))[1]);
+      assert.ok(wordX - (iconX + 36) >= 10, `${verdict}: ${wordX - iconX - 36}`);
+    }
+  });
+  it('wraps a long food name onto two lines instead of cutting it at the first', () => {
+    const svg = screens.single;
+    assert.ok(svg.includes('>Great Value Original Homestyle<') || svg.includes('>Great Value Original<'), 'first line holds whole words');
+    assert.ok(svg.includes('Chicken'));
+  });
+  it('fades the scene light out so no box shows inside the frame', () => {
+    assert.ok(/<radialGradient id="scene"[^>]*>.*stop-opacity="0"\/><\/radialGradient>/s.test(brandSvg()));
+    assert.ok(!brandSvg().includes('<linearGradient id="scene"'));
   });
 });
 
@@ -142,8 +186,8 @@ describe('render and voice indicator', () => {
     }
   });
   it('voice indicator band stays centered over the companion mark', () => {
-    assert.deepEqual(voiceIndicatorBand(1), { top: 212, bottom: 448, left: 264, right: 500 });
-    assert.equal(VOICE_INDICATOR.top, 212);
+    assert.deepEqual(voiceIndicatorBand(1), { top: 242, bottom: 478, left: 152, right: 388 });
+    assert.equal(VOICE_INDICATOR.top, 242);
   });
   it('voice indicator stays inside the safe rect at 0.8 for every tick', () => {
     const s = SAFE_SCALE_DEFAULT, a = safeArea(s), band = voiceIndicatorBand(s);
