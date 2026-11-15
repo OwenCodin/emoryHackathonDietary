@@ -945,3 +945,105 @@ test('a render failure shows nothing and says render_failed', async () => {
   assert.deepEqual(await controller.previewCart({ items: [{ name: 'bread', quantity: '1' }] }), { ok: false, error: 'render_failed' });
   assert.equal(frames.length, 0);
 });
+
+
+// ---- per-caller sign-in and cart ----
+
+const CALLER_A = `p${'a'.repeat(24)}`;
+const CALLER_B = `p${'b'.repeat(24)}`;
+const BROTH = [{ name: 'broth', quantity: '1' }];
+const BASE_CONFIG = { clientId: 'c', clientSecret: 's', locationId: '1', redirectUri: 'http://x', tokenDir: '/base' };
+
+async function waitForCaller(controller, patientId, expected) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (controller.getCartStatus({ patientId }).state === expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(controller.getCartStatus({ patientId }).state, expected);
+}
+
+function perCallerCart({ hold = null, signedIn = true } = {}) {
+  const seen = { dirs: [], resumes: [] };
+  const controller = createCartController({
+    getKrogerConfig: () => BASE_CONFIG,
+    createKroger: (config) => {
+      seen.dirs.push(config.tokenDir);
+      return {
+        getUserToken: async () => {
+          if (hold) await hold;
+          return signedIn ? { ok: true, token: 't' } : { ok: false, error: 'no_sign_in' };
+        },
+        searchProducts: async () => ({ ok: true, products: [krogerProduct('1', 'Plain Broth', 2)] }),
+        addToCart: async () => ({ ok: true }),
+      };
+    },
+    resumeSignIn: async (config, patientId) => { seen.resumes.push({ tokenDir: config.tokenDir, patientId }); },
+    fetchPicture: async () => null,
+    renderCard: async () => null,
+    publishFrame: () => true,
+    activateFrame: () => {},
+    setTimer: () => ({ unref() {} }),
+    clearTimer: () => {},
+  });
+  return { controller, seen };
+}
+
+test('per caller: the cart reads the calling patient folder, demo keeps the base folder', async () => {
+  const { controller, seen } = perCallerCart();
+  await controller.startCart({ items: BROTH, patientId: CALLER_A });
+  await waitForCaller(controller, CALLER_A, 'done');
+  await controller.startCart({ items: BROTH });
+  await waitForCaller(controller, undefined, 'done');
+  await controller.startCart({ items: BROTH, patientId: 'demo' });
+  await waitForCaller(controller, 'demo', 'done');
+  assert.deepEqual(seen.dirs, [`/base/callers/${CALLER_A}`, '/base', '/base']);
+});
+
+test('per caller: no sign-in resumes with the base config plus the patient id', async () => {
+  const { controller, seen } = perCallerCart({ signedIn: false });
+  await controller.startCart({ items: BROTH, patientId: CALLER_A });
+  await waitForCaller(controller, CALLER_A, 'failed');
+  assert.deepEqual(seen.resumes, [{ tokenDir: '/base', patientId: CALLER_A }]);
+  assert.match(controller.getCartStatus({ patientId: CALLER_A }).step, /^Sign in to Kroger first/);
+});
+
+test('per caller: an invalid patient id never reaches createKroger and fails as not signed in', async () => {
+  const { controller, seen } = perCallerCart();
+  await controller.startCart({ items: BROTH, patientId: '../x' });
+  await waitForCaller(controller, '../x', 'failed');
+  assert.deepEqual(seen.dirs, []);
+  assert.match(controller.getCartStatus({ patientId: '../x' }).step, /^Sign in to Kroger first/);
+});
+
+test('per caller: another caller never sees a finished cart, the owner keeps theirs', async () => {
+  const { controller } = perCallerCart();
+  await controller.startCart({ items: BROTH, patientId: CALLER_A });
+  await waitForCaller(controller, CALLER_A, 'done');
+  const idle = { ok: true, state: 'idle', step: '', added: [], missing: [], total: 0, cartUrl: null };
+  assert.deepEqual(controller.getCartStatus({ patientId: CALLER_B }), idle);
+  assert.deepEqual(controller.getCartStatus(), idle); // the demo patient is not caller A either
+  const mine = controller.getCartStatus({ patientId: CALLER_A });
+  assert.equal(mine.state, 'done');
+  assert.equal(mine.added.length, 1);
+  assert.ok(mine.cartUrl);
+});
+
+test('per caller: while a cart runs for one caller, others get busy and an idle status', async () => {
+  let release;
+  const hold = new Promise((r) => { release = r; });
+  const { controller } = perCallerCart({ hold });
+  await controller.startCart({ items: BROTH, patientId: CALLER_A });
+  assert.deepEqual(await controller.startCart({ items: BROTH, patientId: CALLER_B }), { ok: false, error: 'busy' });
+  assert.equal(controller.getCartStatus({ patientId: CALLER_B }).state, 'idle');
+  assert.equal(controller.getCartStatus({ patientId: CALLER_A }).state, 'running');
+  release();
+  await waitForCaller(controller, CALLER_A, 'done');
+});
+
+test('per caller: the demo patient default status is unchanged', async () => {
+  const { controller } = perCallerCart();
+  await controller.startCart({ items: BROTH });
+  await waitForState(controller, 'done');
+  assert.equal(controller.getCartStatus({ patientId: 'demo' }).state, 'done');
+  assert.equal(controller.getCartStatus({ patientId: null }).state, 'done');
+});
