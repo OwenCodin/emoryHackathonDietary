@@ -3,7 +3,7 @@ import { acceptWebEntry, lookupWeb } from './websearch.mjs';
 
 export { plausibleMatch };
 
-const NUTRIENT_IDS = { sodiumMg: 1093, potassiumMg: 1092, phosphorusMg: 1091, waterMl: 1051 };
+const NUTRIENT_IDS = { sodiumMg: 1093, potassiumMg: 1092, phosphorusMg: 1091, waterMl: 1051, proteinG: 1003, carbsG: 1005 };
 let cache;
 
 function findSeed(name, foods) {
@@ -77,6 +77,46 @@ function cachedFood(name, entries) {
   return entries?.[normalizeFoodName(name)] ?? null;
 }
 
+function portionFromUSDA(food) {
+  if (!Array.isArray(food.foodPortions)) return null;
+  const portions = food.foodPortions
+    .filter((portion) => Number.isFinite(portion.gramWeight) && portion.gramWeight > 0 &&
+      Number.isFinite(portion.amount) && portion.amount > 0)
+    .sort((left, right) => {
+      const leftText = `${left.portionDescription ?? ''} ${left.modifier ?? ''} ${left.unitName ?? ''}`;
+      const rightText = `${right.portionDescription ?? ''} ${right.modifier ?? ''} ${right.unitName ?? ''}`;
+      const household = /\b(cup|tablespoon|teaspoon|slice|piece|medium|large|small|can|bottle|bar)\b/i;
+      return Number(household.test(rightText)) - Number(household.test(leftText));
+    });
+  const portion = portions[0];
+  if (!portion) return null;
+  const description = portion.portionDescription?.trim() ||
+    [portion.amount, portion.modifier || portion.unitName].filter(Boolean).join(' ');
+  if (!description) return null;
+  return {
+    servingGrams: portion.gramWeight,
+    portion: `${description} (${Math.round(portion.gramWeight)} g)`,
+    servingEstimated: false,
+  };
+}
+
+function typicalServing(name) {
+  const normalized = normalizeFoodName(name);
+  if (/\b(cereal|corn flakes|granola)\b/.test(normalized)) {
+    return { servingGrams: 30, portion: 'about 1 cup (30 g)', servingEstimated: true };
+  }
+  if (/\b(ketchup)\b/.test(normalized)) {
+    return { servingGrams: 17, portion: 'about 1 tablespoon (17 g)', servingEstimated: true };
+  }
+  if (/\b(mustard|mayonnaise|mayo|dressing|condiment)\b/.test(normalized)) {
+    return { servingGrams: 15, portion: 'about 1 tablespoon (15 g)', servingEstimated: true };
+  }
+  if (/\b(coconut water|juice|milk|beverage|drink|tea|coffee|water)\b/.test(normalized)) {
+    return { servingGrams: 240, portion: 'about 1 cup (240 mL)', servingEstimated: true };
+  }
+  return null;
+}
+
 async function loadCache() {
   if (!cache) {
     try {
@@ -146,11 +186,15 @@ async function lookupUsda(name) {
       sodiumMg: nutrients.sodiumMg,
       potassiumMg: nutrients.potassiumMg,
       phosphorusMg: nutrients.phosphorusMg,
+      // Only when USDA gave a number, so entries (and cache files) for foods without them are unchanged.
+      ...(typeof nutrients.proteinG === 'number' ? { proteinG: nutrients.proteinG } : {}),
+      ...(typeof nutrients.carbsG === 'number' ? { carbsG: nutrients.carbsG } : {}),
     },
     waterMl: nutrients.waterMl,
     fdcId: result.fdcId ?? null,
     name: result.description,
     query: name,
+    ...(portionFromUSDA(result) ?? typicalServing(name) ?? {}),
   };
   currentCache.foods[cacheKey] = entry;
   await writeData('cache.json', currentCache);

@@ -21,10 +21,11 @@ RenaLine is a renal dietitian you can FaceTime. (The repo is still called `emory
 package.json         one package for the whole repo
 .env.example         names of every variable below, no values
 .env.local           real values, never committed
-shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15
+shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15, and the safe area SAFE
 agent/               Track A  the call: voice, camera in, video out, tools
 renal/               Track B  the renal brain: profile, image reading, verdicts, meals
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video
+kroger-relay/        Track C  small public Vercel relay for the Kroger sign-in callback (not part of the agent; deployed by a person)
 ```
 
 Root `package.json`:
@@ -76,26 +77,34 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `AGENT_DEBUG_FRAME_DIR` | A | Optional | A folder outside this repo where each camera picture sent to `describeImage` is also saved. Empty saves nothing. The pictures show what the caller shows, so keep them out of git. |
 | `AGENT_FAKE_CART` | A | Optional | `1` shows a built-in magenta test frame as the cart, for the simulated proof only. Leave empty for real calls. |
 | `AGENT_ALLOW_BARGE_IN` | A | Optional | `1` lets the caller interrupt the agent mid-reply. Empty keeps replies uninterrupted. |
-| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only). Empty uses a folder in the system temp directory. |
+| `AGENT_END_SILENCE_MS` | A | Optional | How long the caller must be silent before the agent treats their turn as finished, in milliseconds (300 to 3000). Empty means 1000. Raise it if the agent answers while the caller is still talking. |
+| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only) and the caller's chosen voice, reply length, language and preferred name. Empty uses a folder in the system temp directory. |
 | `AGENT_CALL_WARN_SECONDS` | A | Optional | Seconds after the greeting before the agent warns the call will end soon. Empty means 240. |
+| `AGENT_SKIP_ONBOARDING` | A | Optional | `1` stops first-call setup from starting by itself ("update my setup" still works). Empty means a caller with no finished setup is set up on their first call. |
+| `VIDEO_SAFE_SCALE` | A, C | Optional | Share of the frame's width and height used by everything shown on the call, centred, because FaceTime shows the agent's video zoomed and cuts off the edges. Backgrounds still fill the whole frame. 0.5 to 1; empty or invalid means 0.8; 1 is the old full-frame layout. Read once at start. |
 | `USDA_API_KEY` | B | Optional | FoodData Central key from api.data.gov. `DEMO_KEY` works but allows 10 requests an hour; a personal key allows 3600 an hour. |
-| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json`. Empty uses `renal/data`. Tests use a temp folder. |
+| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json` (empty uses `renal/data`) and the patient's saved `profiles.json` (empty uses a `renal-state` folder in the system temp directory; never inside the repo). Tests use a temp folder. |
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Required for texts and outbound calls | Project API key (`ftk_...`, from the Chert Developer page), project id and line id. |
 | `PATIENT_PHONE` | A, C | Required for texts and outbound calls | The patient's phone in international form, for example `+1XXXXXXXXXX`. If it is empty, `text_cart_link` and `text_recipe` fail with `no_phone`. |
 | `GROCERY_STORE_URL` | C | Required for the cart | HTTPS URL of a supported grocery retailer. |
 | `INSTACART_API_KEY` | C | Optional | Instacart shopping-list fallback when the store blocks automation. |
+| `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | C | Optional | Kroger public API app credentials (developer.kroger.com, Production, with Cart, Locations, Products and Profile). When both are set the cart uses the Kroger API instead of the browser. |
+| `KROGER_LOCATION_ID` | C | Optional | Kroger store used for product search and prices. Empty means `01100695` (Kroger - Ponce). |
+| `KROGER_REDIRECT_URI` | C | Optional | Used only by the localhost sign-in, when the two relay variables below are empty; must match the redirect URI registered on the Kroger app. Empty means `http://localhost:8765/callback`. |
+| `KROGER_RELAY_URL`, `KROGER_RELAY_SECRET` | C | Optional | The sign-in relay's production domain (https, no trailing slash) and the shared secret (the relay's `RELAY_SECRET`, 32 characters or more). When both are set, Kroger sign-in goes through the relay (a texted link, or `actions/kroger-login.mjs`), and the Kroger app's redirect URI must be `<relay>/api/kroger/callback`. See `kroger-relay/README.md`. |
+| `KROGER_TOKEN_DIR` | C | Optional | A folder outside this repo for the saved Kroger sign-in. Empty means `~/.config/renal-dietitian`. |
 
 ### Rules for every function that crosses a track boundary
 
 1. `async`, takes one plain object, returns one plain object. The one exception is `getCartFrame`, which is synchronous because it is called 15 times a second.
 2. Never throws. On failure it returns `{ ok: false, error: 'short reason' }`. On success the object has `ok: true`.
-3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
+3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model; `dishIngredients` about 8.5 s, `dishRecipe` about 7.5 s when given the ingredients, and `previewCart` about 6 s. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
 4. Works with no network where it can (cached or seeded data), so the demo survives bad wifi.
 
 ### Types
 
 ```js
-// Profile: the patient's daily limits, set by their care team.
+// Profile: the patient's daily limits, from their care team (built-in demo) or as the patient read them out in first-call setup (setBy 'patient, as told by their care team', plus setOn and condition).
 { id: 'demo', name: 'Sam', limits: { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
   avoid: ['star fruit', 'salt substitute'], setBy: 'care team' }
 
@@ -139,11 +148,16 @@ Track A imports everything below and exports nothing. B and C do not import each
 
 | Function | Returns |
 |---|---|
-| `getProfile({ patientId })` | `{ ok, profile }` |
+| `getProfile({ patientId })` | `{ ok, profile }`. The patient's saved profile when first-call setup saved all four limits (`setBy: 'patient, as told by their care team'`, `setOn`, `condition`, `source: 'patient'`), otherwise the built-in one from `renal/data/patients.json` (`source: 'builtin'`). A saved profile without limits gives `{ ok: false, error, limitsNeeded: true }`, never a default. |
+| `getSavedProfile({ patientId })` | `{ ok, saved }`, where `saved` is `null` or `{ id, name, condition, limits, avoid, setBy, setOn, setupDone }` and `limits` may be `null`. Used to decide whether a caller needs setup. |
+| `saveProfile({ patientId, profile: { name, condition, limits, avoid, setupDone } })` | `{ ok, saved }` or `{ ok: false, error, field? }`. Replaces the saved profile after strict checks: `limits` is `null` or all four whole numbers within `LIMIT_BOUNDS` (sanity bounds, not medical advice), `condition` is one of `CONDITIONS` or `null`, and `avoid` holds at most 10 short names. Stored in `profiles.json` outside the repo, mode 600. |
+| `resetProfile({ patientId })` | `{ ok, removed }`. Deletes the saved profile, so the built-in profile and first-call setup come back (for demos). |
 | `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
-| `suggestMeals({ foods, profile, count }, { ai }?)` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
+| `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
 | `logFood({ patientId, verdict })` | `{ ok }` |
+| `dishIngredients({ dish, profile }, { ai }?)` | `{ ok, dish, source: 'model' \| 'builtin' \| 'none', ingredients: [{ name, quantity, verdict, swap, nutrients, portion, say, source, checked }], omitted? }`. The model gives names and quantities only; every ingredient is re-checked with `checkFood` and its verdict, swap and numbers come from there. At most 8 ingredients, no water, oil, pepper, herbs or spices. A built-in table covers a few common dishes when the model is absent or slow. About 8.5 s worst case. |
+| `dishRecipe({ dish, profile, ingredients? }, { ai }?)` | `{ ok, dish, source: 'model' \| 'builtin', ingredients: [{ name, quantity, verdict, swappedFrom? }], leftOut: string[], steps: string[], minutes?, totals? }`. Ingredients come from `ingredients` (`[{ name, quantity }]`, at most 8, re-checked) or from `dishIngredients`. An `avoid` ingredient is replaced by its `checkFood` swap when the swap re-checks ok or limit, otherwise it is left out and named in `leftOut`. The model writes only the steps (at most 10, 300 characters each, no salt) and minutes for the final list; built-in steps cover the `dishIngredients` table dishes. `totals` (per serving, one typical portion of each ingredient) is present only when every ingredient has `checkFood` numbers. No steps gives `{ ok: false, error }`. About 7.5 s worst case with `ingredients`. |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
 
 The optional second argument `{ ai }` is an injected Gemini client. It is a test seam only; the agent never passes it.
@@ -156,8 +170,11 @@ The optional second argument `{ ai }` is an injected Gemini client. It is a test
 | `getCartStatus()` | `{ ok, state: 'idle' \| 'running' \| 'waiting_for_patient' \| 'done' \| 'failed', step, added: [{ name, price }], missing: string[], total, cartUrl }` |
 | `getCartFrame()` (synchronous) | A `Uint8Array` of exactly `WIDTH * HEIGHT * 4` RGBA bytes showing the browser, or `null` when no cart is running. |
 | `stopCart()` | `{ ok }` |
+| `previewCart({ items })` where `items` is `CartItem[]` (at most 12) | `{ ok, shown, found, notFound, total }`, or `{ ok: false, error: 'not_configured' \| 'busy' \| 'render_failed' \| ... }`. Read-only: app-token product search and product pictures only, no sign-in, no user token, no cart call. The card is titled "Your list · not in your Kroger cart yet", held 20 s, and removed by `startCart` or `stopCart`. An empty list shows nothing (and hides a showing preview). |
 | `callPatient({ phone, reason })` | `{ ok, callId }` once Chert has accepted the request |
 | `sendText({ phone, text })` | `{ ok }`. Refuses any recipient other than `PATIENT_PHONE`. |
+| `startKrogerSignIn()` | `{ ok: true, link }`, where `link` is `${KROGER_RELAY_URL}/k/<43-character state>`; otherwise `{ ok: false, error: 'not_configured' \| 'no_relay' }`. Starts polling the relay in the background for up to 4 minutes and saves the Kroger sign-in when the patient finishes. Nothing but the link is returned, and no code, state, secret or token is logged. |
+| `getKrogerStatus()` | `{ ok: true, configured, relay, connected, pending }`, all booleans: both Kroger keys set; both relay variables set and valid; a stored sign-in exists (no refresh call, so an expired sign-in reads as connected until the cart reports it); a relay sign-in is being polled. |
 
 The agent log prints each tool result as `[agent] tool <name> ok=true|false [error=<code>]`.
 
@@ -176,6 +193,7 @@ Seen in live testing on 14 November 2026:
 - A real call runs with `npm start` in one terminal and `npx @trychert/facetime@0.1.0-beta.20 dev --agent renal-dietitian --minutes 30` in another. One `chert dev` session holds the team's single line at a time.
 - The caller's camera now reaches the agent. With `AGENT_DEBUG_FRAME_DIR` set, the saved frames show what the caller shows.
 - iMessage through Chert on the trial line: the agent can only reply. A send is refused with HTTP 403 `shared_reply_window_closed` until the patient's phone has joined the project and has texted the line a message with words in it within the last 24 hours. After that a send returned `{"state":"sent"}`.
+- Kroger's public API only adds to a cart. With a real signed-in token, `GET /v1/carts` returned 403 "required scope not found"; `PUT /v1/cart/add` with quantity 0 or -1 returned 400 ("Quantity is required", "Quantity must be at least 1"); there is no remove route; and the sign-in page accepts only the `cart.basic:write` cart scope (`cart.basic:rw` and `:read` give `invalid_scope`). The agent can neither remove nor read items in the real Kroger cart, so removing happens on the list before anything is sent.
 - The shared USDA `DEMO_KEY` allows 10 requests an hour and ran out during testing.
 - `gemini-3.8-flash` was overloaded all day (503s, timeouts). Vision and meals fall back to `gemini-3.5-flash-lite` after 2.5 s. Google Search grounding needs billing on the Gemini key; without it every grounded request returned 429 "exceeded your current quota".
 
@@ -184,6 +202,7 @@ The Live voice model defaults to `gemini-3.8-live` when `GEMINI_LIVE_MODEL` is e
 Not verified yet:
 
 - The grocery cart on a live call.
+- The Kroger sign-in relay deployed on Vercel, the switch of the Kroger app's redirect URI, and the texted sign-in link tapped on a real phone. Only the handlers and a local end-to-end test with a fake Kroger token endpoint have run.
 - The outbound mealtime call, and whether the trial allows outbound calls.
 - `text_cart_link` and `text_recipe` from a live call. Only a direct API send worked.
 - Pantry memory on a live call (tested with fakes only).
@@ -225,14 +244,14 @@ Times assume submission at 8:00am Sunday. Merge to `main` at each one; `main` mu
 
 ### What to do next
 
-1. Run the cart end to end through the agent: set `GROCERY_STORE_URL` (and `INSTACART_API_KEY` for the fallback) and sign in by hand with `node actions/login.mjs`. The cart and the outbound mealtime call have not been seen working on a live call since the merge.
+1. Run the cart end to end through the agent: set `GROCERY_STORE_URL` (and `INSTACART_API_KEY` for the fallback) and sign in by hand with `node actions/login.mjs` (Kroger shows "access denied" to a sign-in from automation, so on kroger.com the cart runs as a guest; try another approved store if search results matter). The cart and the outbound mealtime call have not been seen working on a live call since the merge.
 2. Ask Chert staff: how to turn off the auto-reply the project sends to inbound texts, whether the trial line can place outbound calls, and whether photos can be received on the trial.
 3. The demo video and the write-up.
 4. Everyone: the patient texts the line before the demo call.
 
 ### Local implementation status
 
-The Track C modules are implemented, but no grocery store login has been tested yet. Set `GROCERY_STORE_URL` and sign in manually before claiming a retailer works. `agent/agent.mjs` exists and the root `npm start` runs the agent.
+The Track C modules are implemented. On 14 Nov 2026 the cart was run against the real Gemini Interactions API on https://www.kroger.com, headed, as a guest (Kroger refuses sign-in to automation), asking for unsalted butter, white rice and 3 apples. The model loop worked: about 30 actions were carried out and every `function_result` was accepted. No item was added (0 added, 0 missing, total $0.00): Kroger's search never produced results for the model, it kept retrying search and browsing categories, and the run stopped on the first item (unsalted butter) with state `failed` when a `go_back` timed out after about 200 seconds. It never reached checkout. Later the same day a Kroger public API cart path was added beside the browser one (see "Kroger API cart" below). The cart has still not been run on a live call. Set `GROCERY_STORE_URL` and test a retailer before claiming it works. `agent/agent.mjs` exists and the root `npm start` runs the agent.
 
 Reported when Track C was written: the runtime dependency audit showed three high advisories in
 `sharp@0.35.3`, which is pinned transitively by `@livekit/agents@1.8.0`.
@@ -247,6 +266,9 @@ LiveKit stack can be upgraded safely. I have not re-run the audit.
 |---|---|
 | `actions/index.mjs` | Re-exports the six functions in the contract. |
 | `actions/cart.mjs` | `startCart`, `getCartStatus`, `stopCart`. The Gemini computer-use loop over a Playwright browser. |
+| `actions/kroger.mjs` | Kroger public API client: app-token product search, stored sign-in, add to cart, product choice. |
+| `actions/cart-card.mjs` | Draws the Kroger cart card (product photos, names, prices, total) as a video frame. |
+| `actions/kroger-login.mjs` | One-time Kroger sign-in, run by a person: `node --env-file=.env.local actions/kroger-login.mjs`. |
 | `actions/frames.mjs` | `getCartFrame`. Keeps the latest browser screenshot as RGBA at `WIDTH` by `HEIGHT`. |
 | `actions/login.mjs` | Opens the browser profile so you can sign in to the store by hand, once. |
 | `actions/outbound.mjs` | `callPatient`. |
@@ -297,13 +319,14 @@ latest = new Uint8Array(await sharp(png)
 
 **Why you cannot publish the video yourself.** Chert only shows the caller video that comes from the same participant that speaks. The browser has to travel through Track A's video track, which is why the hand-off is a frame, not a LiveKit track.
 
-**The model loop.** Google's computer-use guide is at https://ai.google.dev/gemini-api/docs/computer-use. The current implementation follows the Interactions API and enables its prompt-injection check. Real store interactions remain unverified until the user signs into a store and runs the manual test.
+**The model loop.** Google's computer-use guide is at https://ai.google.dev/gemini-api/docs/computer-use. The current implementation follows the Interactions API and enables its prompt-injection check. Seen live on 14 Nov 2026 on kroger.com: the loop runs and the API accepts the follow-up turns, but the model could not get Kroger search results, so no item was added yet (see Local implementation status).
 
-- Use `@google/genai` and the Interactions API: `ai.interactions.create({ model, input, tools: [{ type: 'computer_use', environment: 'browser' }] })`. The guide's examples use `gemini-4-hydrogen`.
-- The model replies with function calls such as `navigate { url }`, `click { x, y }`, `type { text, press_enter }`, `scroll { x, y, direction }`, `press_key { key }`, `wait { seconds }`, `go_back`, `take_screenshot`. Each also carries an `intent` string.
-- Coordinates are 0 to 999 on both axes. Convert with `x / 1000 * WIDTH` and `y / 1000 * HEIGHT` before calling Playwright.
-- After each action, send back a `function_result` with the same `call_id`, the current URL as text, and a PNG screenshot, passing `previous_interaction_id` from the last response.
-- A function call may include `safety_decision` with `require_confirmation`. Do not auto-approve. Set `state: 'waiting_for_patient'` and stop; the agent asks the patient on the call.
+- Use `@google/genai` and the Interactions API: `ai.interactions.create({ model, input, tools: [{ type: 'computer_use', environment: 'browser' }] })`. The guide's examples use `gemini-4-hydrogen`. Build the client with `new GoogleGenAI({ apiKey, apiVersion: 'v1beta' })`: on v1 an image input is rejected (`'image' is not supported ... in v1, it is available in v1beta`).
+- The reply has no `outputs`. It has `status` (`requires_action` while it wants an action, `completed` when done) and `steps`: `thought` steps, `function_call` steps (`id`, `name`, `arguments`) and `model_output` steps whose `content` holds the final text. `intent` and `safety_decision` are inside `arguments`.
+- The model replies with function calls such as `navigate { url }`, `click { x, y }`, `double_click`, `triple_click`, `move`, `type { text, press_enter }`, `scroll { x, y, direction, magnitude_in_pixels }`, `press_key { key }`, `hotkey { keys }`, `wait { seconds }`, `go_back`, `go_forward`, `take_screenshot`. Each also carries an `intent` string inside `arguments`. Actions the cart does not support get a `function_result` saying `unsupported action`.
+- Coordinates are 0 to 999 on both axes (seen live: a click for the cart icon came back as x 967, y 61, which only lands on the cart link when scaled). Convert with `x / 1000 * WIDTH` and `y / 1000 * HEIGHT` before calling Playwright.
+- After each action, send back a `function_result` with the same `call_id`, a text part `{"url":"<origin+path>"}`, and a PNG image part, passing `previous_interaction_id` from the last response. Do not send `tools` again on the follow-up (a follow-up that re-sent `tools` was rejected with a 400 safety error in a probe; the form without `tools` was accepted in the live run).
+- A function call may include `arguments.safety_decision` with `require_confirmation`. Do not auto-approve. Set `state: 'waiting_for_patient'` and stop; the agent asks the patient on the call.
 
 The `intent` strings are useful: copy the latest one into `getCartStatus().step` so the agent can narrate what is happening ("searching for unsalted chicken broth").
 
@@ -320,6 +343,45 @@ The generated link is a shopping list: the patient must choose a store and revie
 No store login has been tested by this implementation yet; the user must sign in and validate the selected site before it can be called reliable.
 
 **Where it runs.** Track A imports `actions/index.mjs`, so the browser runs inside the agent's process for that call. Module-level state is fine. Close the browser context in `stopCart()` and when the cart finishes, or the next call cannot open the profile.
+
+### Kroger API cart
+
+The browser cart cannot fill a real cart: kroger.com, walmart.com and Instacart all block the guest browser. So `startCart` has a second path that uses Kroger's public API and opens no browser.
+
+**When it is used.** The API path runs when both `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` are set. With either unset the browser cart runs exactly as before. There is no other switch. Argument validation runs first on both paths.
+
+**One-time sign-in.** There are two flows, chosen by environment.
+
+- *Relay flow* (`KROGER_RELAY_URL` and `KROGER_RELAY_SECRET` both set; see `kroger-relay/README.md`). The agent's `text_kroger_sign_in` tool (or `node --env-file=.env.local actions/kroger-login.mjs`) calls `startKrogerSignIn()`, which makes a random 256-bit state and returns the link `<KROGER_RELAY_URL>/k/<state>`. The patient opens it on their phone, signs in at Kroger, and Kroger redirects to the relay's `/api/kroger/callback`, which keeps only the one-time code under the state. This machine polls the relay's claim endpoint every 2 seconds for up to 4 minutes with the shared secret, exchanges the code locally with the Kroger client secret (the redirect URI in the exchange is `<relay>/api/kroger/callback`) and saves the refresh token in the same token store as below. Only one sign-in is pending at a time; a second start cancels the first. Polling stops on a relay 401 or 403 (`relay_rejected`), on a failed exchange (`exchange_failed`), or after the wait (`timed_out`); network errors and 5xx keep polling. *Finishing later:* `startKrogerSignIn()` also writes `kroger-signin-pending.json` in the token folder (the state and the start time only; mode 600 in the 700 folder, written atomically, same folder checks as the token file). The in-process poller still runs for 4 minutes, but the record outlives it. Any later process resumes it: `getKrogerStatus()` and the Kroger cart's no-sign-in path make one claim (capped at about 2.5 s; the cart waits at most 3 s), exchange the code, save the token and delete the record. A relay 404 keeps the record; a record older than 10 minutes (the relay's window), one Kroger rejects, or a malformed file is deleted; a relay 401 or 403 keeps it. The relay hands a code out once, so a second claim from another process or call is a harmless 404 and the token is never saved twice (within one process, a resume leaves a state the poller owns alone). `pending` is true for an in-memory poll or a fresh record. `resumeKrogerSignIn({ config })` is an internal export used by the cart, not part of the shared contract. Kroger's authorization-code lifetime is unknown, so a late pick-up can be rejected; that deletes the record and the agent offers a new link.
+- *Localhost flow* (relay variables empty). A person runs `node --env-file=.env.local actions/kroger-login.mjs`. It opens Kroger's sign-in page in the normal browser, receives the redirect on `KROGER_REDIRECT_URI` (default `http://localhost:8765/callback`, which must be registered on the Kroger app), checks a random state value, exchanges the code and saves a refresh token.
+
+The Kroger app has one registered redirect URI, so switching it to the relay callback disables the localhost flow. The token is stored in `KROGER_TOKEN_DIR` (default `~/.config/renal-dietitian`) as `kroger-tokens.json`, folder mode 700, file mode 600. The folder is refused if it is inside this repo. Without a stored sign-in a run ends `failed` with the step "Sign in to Kroger first: node --env-file=.env.local actions/kroger-login.mjs"; it does not fall back to the browser. If Kroger rejects the stored sign-in the step says it expired and to run the command again (the agent turns either failure into "not connected, I can text you a link").
+
+**Per-caller sign-in.** Each caller has their own Kroger sign-in. The demo patient (no `patientId`, null or `'demo'`) keeps the base token folder and the file names above exactly as before. Every other caller (a verified caller `p` plus 24 hex characters, or a guest `g` plus 24 hex characters, the ids from `agent/caller.mjs`) is kept in `<token folder>/callers/<id>/` (folders mode 700, token file mode 600). Any other id value is refused: no path is built from it, sign-in returns `not_configured`, status reports not connected, and a cart run fails with the "Sign in to Kroger first" step. The sign-in controller is one per patient (created on first use, at most 64 kept; the oldest non-demo one is cancelled and dropped, its pending record stays on disk), so a link texted to caller A finishes into A's folder even after the call ended, and starting a sign-in for B never cancels A's. The cart reads only the calling patient's folder, and `getCartStatus({ patientId })` gives anyone but the patient who started the cart an idle, empty status (no items, no `cartUrl`). `stopCart` at call end is not scoped: it stops whatever is running. `actions/kroger-login.mjs` signs in the demo patient only. Guest folders are never reused and are left behind (a known leftover; delete `callers/g...` by hand).
+
+**`getKrogerStatus()` trade-off.** `connected` only checks that a stored sign-in exists; it does not call Kroger. A refresh would rotate the refresh token, add up to 10 seconds of network on a live call, and could race a running cart's own refresh. So a revoked or expired sign-in reads as connected until the cart reports it.
+
+**How a run works.** For each item: search products at `KROGER_LOCATION_ID` (default 01100695, Kroger - Ponce), choose a product, add it with `PUT /v1/cart/add` (pickup). Product choice is deterministic: it needs a positive price (promo if there is one, else regular) and every content word of the item name in the description. A request for unsalted, low sodium, no salt added, reduced sodium or sodium free must match such a marker; otherwise a product with a marker is preferred; ties keep Kroger's order. Quantity is the leading integer of the quantity text ("3 apples" is 3, "a dozen" is 1) and is capped at 5. Status steps read "Searching Kroger for ...", "Adding ... to the Kroger cart", then "Kroger cart updated" (or "No items could be added to the Kroger cart" with no `cartUrl`). `getCartStatus` has the same shape as on the browser path, and `cartUrl` is `https://www.kroger.com/cart` when at least one item was added.
+
+**The cart card.** After each item is added, the cart draws a card and offers it through `getCartFrame`: a photo on white, a short name, the line price ("x3" after it when the quantity is more than 1), the running total and the line "Nothing is paid. Review and check out yourself." It shows up to 6 tiles; with more than 6 items the first 5 are drawn and the sixth tile reads "+N more". When the run ends the final card stays for 20 seconds and then the agent's own picture returns. `stopCart` or a new `startCart` removes it at once. Nothing is shown when nothing was added. Pictures come only from `https://www.kroger.com/product/images/...` (https, exact host, redirects refused), with a 3 second timeout and a 2 MB cap each, and only if the response is an image. A missing or failed picture gives a "No picture" tile and never fails the run. The download starts before the add and runs alongside it. The drawing code is in `actions/cart-card.mjs`. The card and the browser cart frames are drawn inside the same safe area (`VIDEO_SAFE_SCALE`, default 0.8) so the zoomed FaceTime picture does not cut them off. The product names (26 px), step line and footer were made slightly larger so they stay readable after the inset. The click coordinates sent to Gemini are unaffected, because it sees the raw screenshot. The inset card has not yet been seen on a live call.
+
+**Safety.** Adding to a cart is not a purchase. The code has no checkout, order or payment call; a test checks that every URL it fetches is the token, products or cart/add endpoint or a www.kroger.com product picture. Kroger's public API can only add to a cart: `GET /v1/carts` returns 403 "required scope not found", `PUT /v1/cart/add` with quantity 0 or -1 returns 400, there is no remove route, and sign-in accepts only `cart.basic:write`. So the code can neither view nor remove cart items, and the patient reviews the cart on kroger.com.
+
+**The list preview card.** `previewCart({ items })` draws the shopping list before anything is sent: the same card layout, titled "Your list · not in your Kroger cart yet", with the footer "Not in your Kroger cart yet. Nothing is added or paid until you say so." and the total labelled "About". It is read-only: a separate client searches products with the app token and downloads the product pictures, and never loads the user token or calls `/v1/cart/*` (a test allow-lists the URLs). An item with no match still gets a tile with its list name and no price. Searches share a budget of about 6 s, and found products and pictures are cached (40 entries) so a changed list re-renders quickly. The card is held 20 s, then deactivated; `startCart` and `stopCart` remove it at once, and a slower older preview never publishes over a newer one. An empty list shows nothing and hides a showing preview card.
+
+**What was verified live (14 Nov 2026):** the app token, the locations lookup, and product search at 01100695, including a read-only check through this code: "unsalted butter" chose Kroger Unsalted Butter Sticks ($3.59), "white rice" chose Kroger Enriched Long Grain White Rice ($1.89), "apples" chose Kroger Honeycrisp Apples 4 Pack Tray ($5.00). Kroger's authorize URL with `http://localhost:8765/callback` returns the Kroger sign-in page.
+
+**Also verified live (14 Nov 2026), from the command line, not on a call:** the one-time sign-in completed and was saved, and a three-item run through `startCart` finished in 5.5 s with state `done`: Kroger Unsalted Butter Sticks ($3.59), Kroger Enriched Long Grain White Rice ($1.89) and 3 x Kroger Honeycrisp Apples 4 Pack Tray ($15.00), total $20.48. A person then confirmed the items were in the cart on kroger.com. So `PUT /v1/cart/add` with scope `cart.basic:write` and body `{items:[{upc, quantity, modality}]}`, and the authorization-code grant, are confirmed by use. They still come from third-party libraries, because Kroger's official docs could not be read (JavaScript-rendered pages).
+
+**Cart card check (14 Nov 2026), read-only:** a script outside the repo searched the same three items, downloaded the three front pictures from www.kroger.com (25 to 52 KB each, 130 to 290 ms) and rendered the card to a PNG outside the repo. The photos showed on white, names and prices fitted inside their tiles, and the total ($20.48) and footer were readable. No sign-in and no cart call was used.
+
+**Relay sign-in verified:** unit tests and a local end-to-end test (`actions/kroger-relay-e2e.test.mjs`: the real relay handlers on a loopback server, a simulated phone, the real poller, a fake Kroger token endpoint). **Also verified live (14 Nov 2026):** the relay deployed at https://renaline-kroger-relay.vercel.app (short link redirect, callback page, one claim then 404, wrong secret refused, private Blob store), Kroger accepting the relay callback as a redirect URI next to the localhost one, and one real sign-in: the link was texted to the patient phone through Chert, the patient signed in on the phone, and `actions/kroger-login.mjs` saved the sign-in about 30 s after the text. **Relay sign-in not verified:** `text_kroger_sign_in` and the setup step on a live call (the text above was sent from the command line), an add to cart with the sign-in saved this way, and what happens when the same code is delivered twice (the Blob "already exists" message).
+
+**Not verified:** the cart on a live call (the agent's `start_cart` tool calls the same code), the cart card on a live call (not seen until a person calls), and the token refresh after the first access token expires.
+
+**Known weakness:** quantity is a count of packages, and the first priced match wins, so "apples" with quantity 3 became three 4-pack trays.
+
+**Browser cart, same day:** kroger.com returned an empty search page to the automated browser, walmart.com showed a "Robot or human?" press-and-hold page (the cart paused with "The patient must confirm the next browser action"; its challenge check does not recognise that wording), and the Instacart Kroger storefront asked a guest to sign in or give an address (the cart paused on its blocked-intent guard).
 
 ### `sendText`
 
@@ -409,6 +471,9 @@ The API key needs the `facetime:write` and `facetime:read` scopes. The project o
 - Steps 5 to 7 use FaceTime minutes. Do them with Track A present, inside the integration budget.
 
 ### Demo video
+
+The written product overview and verification status are in
+[the demo write-up](./demo/write-up.md).
 
 The team wants an impressive demo using Higgsfield. The rule: generated footage tells the story, real recordings show the product. Never use a generated shot where the product is supposed to be working.
 

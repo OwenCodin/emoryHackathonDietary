@@ -6,8 +6,28 @@ const LIMITS = { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000, fluidMl:
 
 export function makeFakeRenal({ scenes } = {}) {
   let sceneIndex = 0;
+  const saved = new Map(); // in-memory saved profiles, by patient id
   return {
+    // Saved-profile functions: same shapes as renal/profile.mjs, but in memory and without validation
+    // (the real bounds are tested in renal/profile.test.mjs). Override saveProfile in a test to make it fail.
+    async getSavedProfile({ patientId } = {}) {
+      const s = saved.get(patientId || 'demo');
+      return { ok: true, saved: s ? JSON.parse(JSON.stringify(s)) : null };
+    },
+    async saveProfile({ patientId, profile } = {}) {
+      const s = { id: patientId || 'demo', ...JSON.parse(JSON.stringify(profile)), setBy: 'patient, as told by their care team', setOn: '2026-11-14' };
+      saved.set(s.id, s);
+      return { ok: true, saved: s };
+    },
+    async resetProfile({ patientId } = {}) {
+      return { ok: true, removed: saved.delete(patientId || 'demo') };
+    },
     async getProfile({ patientId } = {}) {
+      const s = saved.get(patientId || 'demo');
+      if (s) {
+        if (!s.limits) return { ok: false, error: 'limits not set', limitsNeeded: true };
+        return { ok: true, profile: { ...s, name: s.name ?? '', limits: { ...s.limits }, source: 'patient' } };
+      }
       return {
         ok: true,
         profile: {
@@ -48,6 +68,46 @@ export function makeFakeRenal({ scenes } = {}) {
       const n = Math.min(5, Math.max(1, Number.isInteger(count) ? count : 1));
       return { ok: true, meals: Array.from({ length: n }, () => ({ ...meal })) };
     },
+    // Deterministic ham sandwich, as the real module would return after re-checking each ingredient.
+    async dishIngredients({ dish, profile } = {}) {
+      const row = (name, quantity, verdict, swap, nutrients) => ({
+        name, quantity, verdict, swap, nutrients, portion: nutrients ? '1 portion' : null, say: null,
+        source: nutrients ? 'usda' : 'none', checked: nutrients !== null,
+      });
+      return {
+        ok: true,
+        dish: String(dish ?? ''),
+        source: 'builtin',
+        ingredients: [
+          row('white bread', '2 slices', 'ok', null, { sodiumMg: 490, potassiumMg: 115, phosphorusMg: 98 }),
+          row('ham', '3 slices', 'avoid', 'fresh unsalted chicken', { sodiumMg: 1200, potassiumMg: 240, phosphorusMg: 210 }),
+          row('lettuce', '1 leaf', 'ok', null, { sodiumMg: 10, potassiumMg: 141, phosphorusMg: 20 }),
+          row('mayonnaise', '1 tablespoon', 'unknown', null, null),
+        ],
+      };
+    },
+    // Deterministic recipe for the same ham sandwich: the avoid ham is swapped, the unchecked spread stays.
+    async dishRecipe({ dish, profile, ingredients } = {}) {
+      return {
+        ok: true,
+        dish: String(dish ?? ''),
+        source: 'builtin',
+        ingredients: [
+          { name: 'white bread', quantity: '2 slices', verdict: 'ok' },
+          { name: 'fresh unsalted chicken', quantity: '3 slices', verdict: 'ok', swappedFrom: 'ham' },
+          { name: 'lettuce', quantity: '1 leaf', verdict: 'ok' },
+          { name: 'mayonnaise', quantity: '1 tablespoon', verdict: 'unknown' },
+        ],
+        leftOut: [],
+        steps: [
+          'Lay out the two slices of bread.',
+          'Spread a thin layer of the spread on one slice.',
+          'Add the filling and the lettuce.',
+          'Close the sandwich, cut it in half and serve.',
+        ],
+        minutes: 5,
+      };
+    },
     async logFood({ patientId, verdict } = {}) {
       return { ok: true };
     },
@@ -69,10 +129,13 @@ export function makeFakeRenal({ scenes } = {}) {
 
 export function makeFakeActions() {
   return {
-    async startCart({ items } = {}) {
+    async startCart({ items, patientId } = {}) {
       return { ok: true };
     },
-    async getCartStatus() {
+    async previewCart({ items } = {}) {
+      return { ok: true, shown: Array.isArray(items) && items.length > 0, found: Array.isArray(items) ? items.length : 0, notFound: 0, total: 0 };
+    },
+    async getCartStatus(_input) {
       return {
         ok: true,
         state: 'done',
@@ -92,8 +155,20 @@ export function makeFakeActions() {
     async callPatient({ phone, reason } = {}) {
       return { ok: true, callId: 'stub-call-1' };
     },
-    async sendText({ phone, text } = {}) {
+    async sendText({ phone, text, allow } = {}) {
       return { ok: true };
+    },
+    async hasRecentInboundText({ phone } = {}) {
+      return { ok: true, texted: true };
+    },
+    async getCallerPhone({ callId } = {}) {
+      return { ok: false, error: 'not_configured' };
+    },
+    async getKrogerStatus(_input) {
+      return { ok: true, configured: false, relay: false, connected: false, pending: false };
+    },
+    async startKrogerSignIn(_input) {
+      return { ok: true, link: 'https://relay.example/k/' + 'A'.repeat(43) };
     },
   };
 }

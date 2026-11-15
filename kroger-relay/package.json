@@ -1,0 +1,11 @@
+{
+  "name": "kroger-relay",
+  "private": true,
+  "type": "module",
+  "description": "Public HTTPS callback for the Kroger sign-in; holds only a short-lived one-time authorization code",
+  "engines": { "node": "24.x" },
+  "scripts": { "test": "node --test" },
+  "dependencies": {
+    "@vercel/blob": "2.9.0"
+  }
+}

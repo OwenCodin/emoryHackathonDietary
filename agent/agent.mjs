@@ -2,18 +2,21 @@ import { fileURLToPath } from 'node:url';
 import { defineAgent, voice } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
 import { LocalVideoTrack, TrackPublishOptions, TrackSource, VideoBufferType, VideoFrame, VideoSource } from '@livekit/rtc-node';
-import { createFaceFrames } from './face.mjs';
+import { createScreen } from './screen.mjs';
 import { FPS, HEIGHT, WIDTH } from '../shared/video.mjs';
 import { watchCaller } from './camera.mjs';
-import { buildTools, endCall, withTimeout } from './tools.mjs';
-import { getCartFrame } from '../actions/index.mjs';
+import { buildTools, endCall, setupStatus, withTimeout } from './tools.mjs';
+import { playVoiceSamples } from './voices.mjs';
+import { getCartFrame, getCallerPhone } from '../actions/index.mjs';
+import { resolveCaller } from './caller.mjs';
 import { createVideoPicker } from './video.mjs';
 import { createFakeCart } from './sim/fake-cart.mjs';
 import { runAgent } from './chert-rooms.mjs';
 import { greetOnBridgeReady } from './greet.mjs';
 import { createDeadline, outboundCall, outboundRequested, outboundWaitMs, parseJobMetadata } from './outbound.mjs';
-import { chooseGreeting, instructions, replyNudge, timeWarning } from './prompt.mjs';
-import { bargeInConfig, callWarnMs, createReplyWatchdog, turnHandlingConfig } from './turns.mjs';
+import { buildInstructions, chooseGreeting, replyNudge, timeWarning } from './prompt.mjs';
+import { readPreferences, realtimeOptions } from './prefs.mjs';
+import { bargeInConfig, callWarnMs, createReplyWatchdog, realtimeInputConfig as buildRealtimeInputConfig, turnHandlingConfig } from './turns.mjs';
 import { createMemory } from './memory.mjs';
 import { toolLogLine } from './toollog.mjs';
 
@@ -68,13 +71,14 @@ const agent = defineAgent({
     const source = new VideoSource(WIDTH, HEIGHT);
     const track = LocalVideoTrack.createVideoTrack('agent-video', source);
     let tick = 0, speaking = false, timer = null;
-    // Track C's browser frame while a cart runs (exact size or nothing), the cached face otherwise.
-    const faces = createFaceFrames();
+    // Track C's browser frame while a cart runs (exact size or nothing), the cached companion otherwise.
+    // The brand screen renders in the background; the abstract companion shows until it is ready. Nothing is awaited on the call path.
+    const screen = createScreen();
     const fakeCart = process.env.AGENT_FAKE_CART === '1' ? createFakeCart() : null;
     if (fakeCart) console.log('[agent] video: fake cart provider on (simulated proof only)');
     const picker = createVideoPicker({
       getCartFrame: fakeCart ? fakeCart.getCartFrame : getCartFrame,
-      drawOwnPicture: () => faces.frame(tick++, speaking),
+      drawOwnPicture: () => screen.frame(tick++, speaking),
       expectedLength: WIDTH * HEIGHT * 4,
     });
     // A failed frame must never take the call down: the timer callback has no caller to catch for it.
@@ -86,16 +90,31 @@ const agent = defineAgent({
     const model = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live';
     // Barge-in is off by default: caller noise must not cancel a reply (AGENT_ALLOW_BARGE_IN=1 turns it back on).
     // Two halves: Gemini's own activity handling, and LiveKit's speech interruption (see turnHandlingConfig).
-    const realtimeInputConfig = bargeInConfig(process.env);
+    const realtimeInputConfig = buildRealtimeInputConfig(process.env);
     const turnHandling = turnHandlingConfig(process.env);
-    console.log(realtimeInputConfig ? '[agent] barge-in off' : '[agent] barge-in on');
+    console.log(bargeInConfig(process.env) ? '[agent] barge-in off' : '[agent] barge-in on');
+    console.log(`[agent] end of speech wait_ms=${realtimeInputConfig.automaticActivityDetection.silenceDurationMs}`);
+    // Shopping list kept between calls (one small file per patient, outside the repo).
+    // Who is calling: with AGENT_OPEN_ACCESS unset (default) this is always the demo patient and makes no Chert lookup.
+    let identity = { kind: 'demo', patientId: 'demo', phone: process.env.PATIENT_PHONE, textAllow: null, textFirst: false };
+    try {
+      identity = await resolveCaller({ outbound: Boolean(call), identity: linkedIdentity, roomMetadata: ctx.room?.metadata, jobMetadata: metadata, getCallerPhone, timeoutMs: 1500 });
+    } catch { /* resolveCaller never throws; the demo identity stays */ }
+    console.log(`[agent] caller kind=${identity.kind}`);
+    const memory = createMemory({ patientId: identity.patientId });
+    // The voice, reply length and language chosen in first-call setup apply from the start of the call.
+    const prefs = await readPreferences(memory);
+    // A caller with no finished setup is set up on an inbound call (AGENT_SKIP_ONBOARDING=1 turns that off).
+    const setupDue = !call && process.env.AGENT_SKIP_ONBOARDING !== '1' && (await setupStatus({ patientId: identity.patientId })).needsSetup;
+    console.log(`[agent] setup due=${setupDue}`);
     const session = new voice.AgentSession({
-      llm: new google.realtime.RealtimeModel({ model, voice: 'Puck', ...(realtimeInputConfig ? { realtimeInputConfig } : {}) }),
+      llm: new google.realtime.RealtimeModel(realtimeOptions({ model, prefs, realtimeInputConfig })),
       ...(turnHandling ? { turnHandling } : {}),
     });
     // Reply watchdog: after the caller has said something, the agent must be heard; otherwise one nudge (see turns.mjs).
     const watchdog = createReplyWatchdog();
     let nudgeTimer = null, closing = false;
+    let heardAt = 0, heardAny = false; // when the caller last spoke (time only), for confirm_limits
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, event => {
       try { speaking = event.newState === 'speaking'; watchdog.agentState(event.newState); } catch { /* never breaks the call */ }
     });
@@ -103,6 +122,7 @@ const agent = defineAgent({
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, event => {
       try {
         const length = typeof event?.transcript === 'string' ? event.transcript.trim().length : 0;
+        if (length > 0) { heardAt = Date.now(); heardAny = true; }
         watchdog.heard({ itemId: event?.itemId ?? null, isFinal: event?.isFinal === true, length });
       } catch { /* never breaks the call */ }
     });
@@ -149,9 +169,6 @@ const agent = defineAgent({
         try { console.error(`[agent] reply nudge failed ${error?.name ?? 'Error'}`); } catch { /* ignore */ }
       }
     };
-
-    // Shopping list kept between calls (one small file per patient, outside the repo).
-    const memory = createMemory({ patientId: 'demo' });
 
     // Time warning: once, a little before the trial's call limit. Armed with the greeting, cleared on shutdown.
     // When it falls due it waits for an idle moment (watchdog.warnReady: up to 20 s, then it is said anyway), and
@@ -239,7 +256,7 @@ const agent = defineAgent({
           try { remembered = await Promise.race([memory.load(), slow]); } catch { remembered = null; } finally { clearTimeout(t); }
           if (remembered && remembered.ok === false) console.log('[agent] shopping list memory unavailable');
         }
-        const { kind, instructions: opening } = chooseGreeting({ outbound: Boolean(call), remembered });
+        const { kind, instructions: opening } = chooseGreeting({ outbound: Boolean(call), remembered, setupDue });
         console.log(`[agent] greeting requested kind=${kind} waited_ms=${Date.now() - requestedAt}`);
         await session.generateReply({ instructions: opening });
       } catch (error) {
@@ -262,7 +279,7 @@ const agent = defineAgent({
       });
       await session.start({
         room: ctx.room,
-        agent: new voice.Agent({ instructions, tools: buildTools({ camera, patientId: 'demo', memory, onToolActivity: delta => watchdog.toolActivity(delta) }) }),
+        agent: new voice.Agent({ instructions: buildInstructions(prefs, { textFirst: identity.textFirst }), tools: buildTools({ camera, patientId: identity.patientId, phone: identity.phone, textAllow: identity.textAllow, textFirst: identity.textFirst, memory, setupDue, callerHeardAfter: t => (heardAny ? heardAt > t : null), onToolActivity: delta => watchdog.toolActivity(delta), playSamples: () => playVoiceSamples(session), onDisplay: display => { try { screen.show(display); } catch { /* video never breaks the call */ } } }) }),
         record: false,
         inputOptions: {
           participantIdentity: linkedIdentity,

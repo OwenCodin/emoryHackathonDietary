@@ -11,12 +11,12 @@ export function pickFrame(cartFrame, drawOwnPicture, expectedLength) {
       return { source: 'cart', pixels: exact ? cartFrame : new Uint8Array(cartFrame), rejected: false };
     }
   } catch { /* fall through to the agent's own picture */ }
-  return { source: 'face', pixels: drawOwnPicture(), rejected: cartFrame !== null && cartFrame !== undefined };
+  return { source: 'companion', pixels: drawOwnPicture(), rejected: cartFrame !== null && cartFrame !== undefined };
 }
 
 // One picker per call: it remembers what it already logged, so nothing is logged on every tick.
 export function createVideoPicker({ getCartFrame, drawOwnPicture, expectedLength, log = message => console.log(message) }) {
-  let current = 'face', loggedFailed = false, loggedIgnored = false;
+  let current = 'companion', loggedFailed = false, loggedIgnored = false;
   const say = message => { try { log(message); } catch { /* logging must never break the video */ } };
   return {
     next() {

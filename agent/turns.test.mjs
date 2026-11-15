@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { bargeInConfig, callWarnMs, createReplyWatchdog, turnHandlingConfig } from './turns.mjs';
+import { bargeInConfig, callWarnMs, createReplyWatchdog, endSilenceMs, realtimeInputConfig, turnHandlingConfig } from './turns.mjs';
 import { replyNudge } from './prompt.mjs';
 
 const clock = () => { const c = { t: 1000, now: () => c.t, tick: ms => { c.t += ms; } }; return c; };
@@ -8,6 +8,25 @@ const make = () => { const c = clock(); return { c, w: createReplyWatchdog({ now
 // One caller utterance: Gemini's transcript pieces for a fresh item (isFinal false, growing), as user_input_transcribed gives them.
 let nextItem = 0;
 const turnEnded = w => { const itemId = `GI_${++nextItem}`; w.heard({ itemId, isFinal: false, length: 4 }); w.heard({ itemId, isFinal: false, length: 18 }); return itemId; };
+
+describe('end of speech', () => {
+  it('waits one second by default and clamps the setting', () => {
+    for (const v of [undefined, '', '  ', 'abc', 'NaN', 'Infinity']) assert.equal(endSilenceMs(v), 1000);
+    assert.equal(endSilenceMs('800'), 800);
+    assert.equal(endSilenceMs('1200.6'), 1201);
+    assert.equal(endSilenceMs('50'), 300);
+    assert.equal(endSilenceMs('99999'), 3000);
+  });
+  it('keeps server turn detection on, ends turns less eagerly, and keeps barge-in off by default', () => {
+    assert.deepEqual(realtimeInputConfig({}), {
+      automaticActivityDetection: { endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', silenceDurationMs: 1000 },
+      activityHandling: 'NO_INTERRUPTION',
+    });
+    const on = realtimeInputConfig({ AGENT_ALLOW_BARGE_IN: '1', AGENT_END_SILENCE_MS: '700' });
+    assert.deepEqual(on, { automaticActivityDetection: { endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', silenceDurationMs: 700 } });
+    assert.equal(on.automaticActivityDetection.disabled, undefined);
+  });
+});
 
 describe('bargeInConfig', () => {
   it('is off by default and for anything but "1"', () => {

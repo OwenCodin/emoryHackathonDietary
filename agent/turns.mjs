@@ -1,6 +1,6 @@
 // Turn handling for noisy calls: barge-in switch, the reply watchdog and the time-warning delay.
 // Everything here is pure (no timers, no I/O) so it can be tested offline with an injected clock.
-import { ActivityHandling } from '@google/genai';
+import { ActivityHandling, EndSensitivity } from '@google/genai';
 
 export const NUDGE_WAIT_MS = 6000;
 export const MAX_NUDGES = 3;
@@ -23,6 +23,29 @@ const MAX_ITEMS = 32;
 export function bargeInConfig(env = process.env) {
   if (env?.AGENT_ALLOW_BARGE_IN === '1') return undefined;
   return { activityHandling: ActivityHandling.NO_INTERRUPTION };
+}
+
+// How long the caller must be silent before Gemini treats their turn as finished. Gemini Live's default ends a
+// turn quickly (END_SENSITIVITY_HIGH), so the agent answered while the caller was still talking on live calls.
+// AGENT_END_SILENCE_MS sets the wait: whole milliseconds, clamped to 300-3000, anything else means 1000.
+export const END_SILENCE_DEFAULT_MS = 1000;
+export function endSilenceMs(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') return END_SILENCE_DEFAULT_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return END_SILENCE_DEFAULT_MS;
+  return Math.min(3000, Math.max(300, Math.round(n)));
+}
+
+// The whole realtimeInputConfig for the Gemini session: server-side turn detection stays on (never disabled),
+// it just waits longer for the caller to stop, and barge-in handling is added unless it is allowed.
+export function realtimeInputConfig(env = process.env) {
+  return {
+    automaticActivityDetection: {
+      endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+      silenceDurationMs: endSilenceMs(env?.AGENT_END_SILENCE_MS),
+    },
+    ...(bargeInConfig(env) ?? {}),
+  };
 }
 
 // LiveKit side of barge-in off (AgentSessionOptions.turnHandling). The Google plugin emits input_speech_started

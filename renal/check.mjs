@@ -1,10 +1,29 @@
 import { isFiniteNonNegative, normalizeFoodName, readData } from './data.mjs';
 import { lookupFood } from './nutrients.mjs';
 
+// Said when no specific swap is known. It names no food, so list and recipe code must not treat it as one.
+export const GENERIC_SWAP = 'an unseasoned fresh alternative';
+
 const NUTRIENTS = [
   ['sodiumMg', 'sodium'],
   ['potassiumMg', 'potassium'],
   ['phosphorusMg', 'phosphorus'],
+];
+// Optional daily limits in grams. Judged only for a profile that has them; everyone else sees exactly the three minerals.
+const MACROS = [
+  ['proteinG', 'protein'],
+  ['carbsG', 'carbohydrates'],
+];
+const MACRO_KEYS = MACROS.map(([key]) => key);
+const isMacro = (key) => MACRO_KEYS.includes(key);
+// Protein and carbohydrate are eaten at every meal, so they are judged against a third (avoid) and a fifth (limit)
+// of the day instead of the minerals' 25% and 10% per item.
+const AVOID_SHARE = (key) => (isMacro(key) ? 1 / 3 : 0.25);
+const LIMIT_SHARE = (key) => (isMacro(key) ? 0.2 : 0.1);
+const unitOf = (key) => (isMacro(key) ? 'g' : 'mg');
+const activeNutrients = (profile) => [
+  ...NUTRIENTS,
+  ...MACROS.filter(([key]) => Number.isFinite(profile.limits[key]) && profile.limits[key] > 0),
 ];
 
 const SWAPS = {
@@ -63,14 +82,14 @@ function profileIsValid(profile) {
   return profile?.limits && NUTRIENTS.every(([key]) => isFiniteNonNegative(profile.limits[key]));
 }
 
-function buildReasons(nutrients, profile, ruleReasons, countsAsFluid) {
+function buildReasons(nutrients, profile, ruleReasons, countsAsFluid, active) {
   const reasons = [...ruleReasons];
-  for (const [key, label] of NUTRIENTS) {
+  for (const [key, label] of active) {
     const amount = nutrients[key];
     if (amount === null || amount === undefined) continue;
     const limit = profile.limits[key];
     const share = Math.round((amount / limit) * 100);
-    reasons.push(`${label} ${Math.round(amount)} mg is ${share}% of the ${limit} mg daily limit`);
+    reasons.push(`${label} ${Math.round(amount)} ${unitOf(key)} is ${share}% of the ${limit} ${unitOf(key)} daily limit`);
   }
   if (countsAsFluid) reasons.push('counts toward the fluid limit');
   return reasons;
@@ -94,6 +113,7 @@ export async function checkFood(input = {}, { ai } = {}) {
   }
 
   try {
+    const active = activeNutrients(profile);
     const name = food.name.trim();
     const normalizedName = normalizeFoodName(name);
     const profileAvoid = (profile.avoid ?? []).map(normalizeFoodName);
@@ -111,7 +131,7 @@ export async function checkFood(input = {}, { ai } = {}) {
         reasons: [reason],
         nutrients: null,
         portion: food.grams == null ? 'not estimated' : `${food.grams} g`,
-        swap: SWAPS[names[names.length - 1]] ?? SWAPS[names[0]] ?? 'an unseasoned fresh alternative',
+        swap: SWAPS[names[names.length - 1]] ?? SWAPS[names[0]] ?? GENERIC_SWAP,
         source: 'rule',
       };
     };
@@ -134,18 +154,18 @@ export async function checkFood(input = {}, { ai } = {}) {
     if (isLabel) {
       const label = food.label;
       if (!label || typeof label !== 'object') return { ok: false, error: 'food label is invalid' };
-      for (const [key] of NUTRIENTS) {
+      for (const [key] of active) {
         if (label[key] !== null && label[key] !== undefined && !isFiniteNonNegative(label[key])) {
           return { ok: false, error: `label ${key} must be a non-negative number or null` };
         }
       }
-      labelHasNumbers = NUTRIENTS.some(([key]) => isFiniteNonNegative(label[key]));
+      labelHasNumbers = active.some(([key]) => isFiniteNonNegative(label[key]));
     }
 
-    const noNutrients = () => Object.fromEntries(NUTRIENTS.map(([key]) => [key, null]));
+    const noNutrients = () => Object.fromEntries(active.map(([key]) => [key, null]));
     if (isLabel && labelHasNumbers) {
       const label = food.label;
-      nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => [key, label[key] ?? null]));
+      nutrients = Object.fromEntries(active.map(([key]) => [key, label[key] ?? null]));
       portion = label.servingSize || 'one labeled serving';
       source = 'label';
     } else {
@@ -202,7 +222,7 @@ export async function checkFood(input = {}, { ai } = {}) {
             : food.grams == null
               ? lookup.servingText
               : `${lookup.servingText} (online serving; your amount was not converted)`;
-          nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => {
+          nutrients = Object.fromEntries(active.map(([key]) => {
             const value = lookup.nutrients?.[key];
             if (typeof value !== 'number') return [key, null];
             const scaled = Math.round(value * webMultiplier);
@@ -218,7 +238,7 @@ export async function checkFood(input = {}, { ai } = {}) {
         const grams = food.grams ?? (knownServing ? lookup.servingGrams : 100);
         per100 = food.grams == null && !knownServing;
         const multiplier = grams / 100;
-        nutrients = Object.fromEntries(NUTRIENTS.map(([key]) => {
+        nutrients = Object.fromEntries(active.map(([key]) => {
           const value = lookup.nutrients?.[key];
           if (typeof value !== 'number') return [key, null];
           const scaled = Math.round(value * multiplier);
@@ -228,7 +248,7 @@ export async function checkFood(input = {}, { ai } = {}) {
         portion = per100
           ? '100 g (no typical serving size known)'
           : food.grams == null
-            ? lookup.portion
+            ? `${lookup.portion}${lookup.servingEstimated ? ' (estimated typical serving)' : ''}`
             : `${food.grams} g${lookup.portion ? ` (${lookup.portion} typical serving)` : ''}`;
         source = lookup.source;
         if (lookup.genericFrom) portion = `${portion} (judged as ${lookup.name})`;
@@ -238,13 +258,15 @@ export async function checkFood(input = {}, { ai } = {}) {
 
     let verdict = 'ok';
     let worst = null;
-    for (const [key, label] of NUTRIENTS) {
+    for (const [key, label] of active) {
       const amount = nutrients[key];
       if (amount === null || amount === undefined) continue;
       const share = amount / profile.limits[key];
-      if (!worst || share > worst.share) worst = { key, label, amount, share };
-      if (share > 0.25) verdict = 'avoid';
-      else if (share >= 0.1 && verdict === 'ok') verdict = 'limit';
+      // Severity is the share relative to its own avoid line; for the minerals this orders exactly as the raw share does.
+      const severity = share / AVOID_SHARE(key);
+      if (!worst || severity > worst.severity) worst = { key, label, amount, share, severity };
+      if (share > AVOID_SHARE(key)) verdict = 'avoid';
+      else if (share >= LIMIT_SHARE(key) && verdict === 'ok') verdict = 'limit';
     }
 
     const ruleNames = canonical && canonical !== normalizedName ? [normalizedName, canonical] : [normalizedName];
@@ -281,9 +303,9 @@ export async function checkFood(input = {}, { ai } = {}) {
       source = 'web';
     }
 
-    const reasons = buildReasons(nutrients, profile, ruleReasons, countsAsFluid);
+    const reasons = buildReasons(nutrients, profile, ruleReasons, countsAsFluid, active);
     if (fromWeb) reasons.push(`nutrition found online${webHost ? ` (${webHost})` : ''}, per ${portion}`);
-    const swap = verdict === 'avoid' ? ((canonical && SWAPS[canonical]) ?? SWAPS[normalizedName] ?? 'an unseasoned fresh alternative') : null;
+    const swap = verdict === 'avoid' ? ((canonical && SWAPS[canonical]) ?? SWAPS[normalizedName] ?? GENERIC_SWAP) : null;
     let say;
     if (!worst) {
       if (verdict === 'limit') {
@@ -298,15 +320,16 @@ export async function checkFood(input = {}, { ai } = {}) {
       }
     } else {
       const amount = numberWords(worst.amount);
+      const unitWord = isMacro(worst.key) ? 'grams' : 'milligrams';
       if (fromWeb) {
-        say = `${spokenVerdict(verdict)}, ${name} has about ${amount} milligrams of ${worst.label}${webMultiplier === 1 ? ' per serving' : ''}`;
+        say = `${spokenVerdict(verdict)}, ${name} has about ${amount} ${unitWord} of ${worst.label}${webMultiplier === 1 ? ' per serving' : ''}`;
         if (swap) say += `; try ${swap} instead`;
         else if (phosphateAdditiveOnline) say += ', and it has a phosphate additive';
         else if (nutrients.phosphorusMg === null) say += ', and I could not find its phosphorus';
         else if (verdict === 'limit') say += ', so a smaller portion may fit better';
         say += `. ${WEB_PROVENANCE}`;
       } else {
-      say = `${spokenVerdict(verdict)}, ${name} has about ${amount} milligrams of ${worst.label}${per100 ? ' in 100 grams' : ''}.`;
+      say = `${spokenVerdict(verdict)}, ${name} has about ${amount} ${unitWord} of ${worst.label}${per100 ? ' in 100 grams' : ''}.`;
       if (swap) say += ` Try ${swap} instead.`;
       else if (ruleEscalated && alwaysLimit) say += ` ${sentenceCase(alwaysLimit.reason)}.`;
       else if (verdict === 'limit') say += ' A smaller portion may fit better.';

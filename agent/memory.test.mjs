@@ -204,3 +204,74 @@ describe('pantry', () => {
     assert.deepEqual(matchPantry(['Brown rice', 'egg'], 'eg'), []);
   });
 });
+
+describe('preferences', () => {
+  it('saves, loads, merges and does not expire', async () => {
+    const c = clock(1000000);
+    const dir = fresh();
+    const m = createMemory({ dir, now: c.now });
+    assert.deepEqual((await m.loadPreferences()).prefs, { voice: 'Puck', replyStyle: 'brief', language: 'en', name: null });
+    assert.equal((await m.savePreferences({ voice: 'Sulafat', replyStyle: 'detailed', language: 'es', name: 'Ana' })).ok, true);
+    await m.savePreferences({ voice: 'Kore' });
+    c.t += MAX_AGE_MS * 5;
+    assert.deepEqual((await m.loadPreferences()).prefs, { voice: 'Kore', replyStyle: 'detailed', language: 'es', name: 'Ana' });
+    assert.equal((await stat(m.prefsFile)).mode & 0o777, 0o600);
+  });
+  it('a tampered file loads as defaults', async () => {
+    const dir = fresh();
+    const m = createMemory({ dir });
+    await m.savePreferences({ voice: 'Kore' });
+    await writeFile(m.prefsFile, JSON.stringify({ voice: 'Evil', replyStyle: 'loud', language: 'fr', name: 'x'.repeat(200) }));
+    assert.deepEqual((await m.loadPreferences()).prefs, { voice: 'Puck', replyStyle: 'brief', language: 'en', name: null });
+  });
+  it('reset deletes only the preferences file', async () => {
+    const dir = fresh();
+    const m = createMemory({ dir });
+    await m.add(['rice']);
+    await m.savePreferences({ voice: 'Kore' });
+    assert.deepEqual(await m.resetPreferences(), { ok: true, removed: true });
+    assert.deepEqual(await m.resetPreferences(), { ok: true, removed: false });
+    assert.deepEqual((await m.load()).state.needed, ['rice']);
+    assert.equal((await m.loadPreferences()).prefs.voice, 'Puck');
+  });
+  it('preference writes leave the shopping state untouched', async () => {
+    const dir = fresh();
+    const m = createMemory({ dir });
+    await m.add(['rice']);
+    const before = await readFile(m.file, 'utf8');
+    await m.savePreferences({ voice: 'Kore' });
+    assert.equal(await readFile(m.file, 'utf8'), before);
+  });
+});
+
+describe('removing from the list', () => {
+  it('remove matches like the pantry, from needed and approved, and reports what was not found', async () => {
+    const m = createMemory({ dir: fresh() });
+    await m.add(['white bread', 'mayonnaise', 'lettuce']);
+    await m.mark('lettuce', 'approved');
+    const r = await m.remove(['mayo', 'lettuce', 'caviar']);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.removed.sort(), ['lettuce', 'mayonnaise']);
+    assert.deepEqual(r.notFound, ['caviar']);
+    assert.deepEqual(r.state.needed, ['white bread']);
+    assert.deepEqual(r.state.approved, []);
+  });
+  it('clearList empties needed and approved but keeps pantry and rejected', async () => {
+    const m = createMemory({ dir: fresh() });
+    await m.add(['white bread', 'ham']);
+    await m.mark('ham', 'rejected');
+    await m.mark('white bread', 'approved');
+    await m.addPantry(['rice']);
+    const r = await m.clearList();
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.state.needed, []);
+    assert.deepEqual(r.state.approved, []);
+    assert.deepEqual(r.state.rejected, ['ham']);
+    assert.deepEqual(r.state.pantry, ['rice']);
+  });
+  it('remove and clearList never throw when the folder is refused', async () => {
+    const m = createMemory({ dir: join(AGENT_DIR, 'inside-repo') });
+    assert.equal((await m.remove(['x'])).ok, false);
+    assert.equal((await m.clearList()).ok, false);
+  });
+});

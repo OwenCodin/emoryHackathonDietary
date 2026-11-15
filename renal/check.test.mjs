@@ -90,6 +90,30 @@ test('a USDA food without a serving size is judged per 100 g without crashing', 
   assert.equal(result.source, 'usda');
 });
 
+test('USDA household serving records are preferred to the per-100 g fallback', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  const cereal = hit('Cereals, ready-to-eat, corn flakes', 5, 100, 500, 30);
+  cereal.foodPortions = [{
+    amount: 1,
+    modifier: 'cup',
+    portionDescription: '1 cup',
+    gramWeight: 28,
+  }];
+  globalThis.fetch = usdaFetch([cereal]);
+  const result = await checkFood({ food: { name: 'corn flakes' }, profile });
+  assert.equal(result.nutrients.sodiumMg, 140);
+  assert.equal(result.portion, '1 cup (28 g)');
+  assert.doesNotMatch(result.portion, /estimated/);
+});
+
+test('cereal with no USDA household serving uses a clearly marked typical portion', async () => {
+  process.env.USDA_API_KEY = 'test-key';
+  globalThis.fetch = usdaFetch([hit('Cereals, corn cereal', 6, 100, 500, 30)]);
+  const result = await checkFood({ food: { name: 'corn cereal' }, profile });
+  assert.equal(result.nutrients.sodiumMg, 150);
+  assert.match(result.portion, /30 g.*estimated typical serving/);
+});
+
 test('a non-finite USDA nutrient becomes unknown instead of being spoken', async () => {
   process.env.USDA_API_KEY = 'test-key';
   globalThis.fetch = usdaFetch([hit('Breadfruit, raw', 2, null, null, null)]);
@@ -372,4 +396,69 @@ test('acceptance F: star fruit juice stays avoid without any lookup', async () =
   const result = await checkFood({ food: { name: 'star fruit juice' }, profile }, { ai });
   assert.equal(result.verdict, 'avoid');
   assert.equal(result.source, 'rule');
+});
+
+const withMacros = (extra) => ({ ...profile, limits: { ...profile.limits, ...extra } });
+
+test('protein and carbs: a profile without the limits never sees them', async () => {
+  const banana = await checkFood({ food: { name: 'banana' }, profile });
+  assert.deepEqual(Object.keys(banana.nutrients), ['sodiumMg', 'potassiumMg', 'phosphorusMg']);
+  assert.deepEqual(banana, {
+    ok: true,
+    food: 'banana',
+    verdict: 'limit',
+    say: 'Limit, banana has about four hundred twenty two milligrams of potassium. A smaller portion may fit better.',
+    reasons: ['sodium 1 mg is 0% of the 2000 mg daily limit', 'potassium 422 mg is 21% of the 2000 mg daily limit', 'phosphorus 26 mg is 3% of the 1000 mg daily limit'],
+    nutrients: { sodiumMg: 1, potassiumMg: 422, phosphorusMg: 26 },
+    portion: '1 medium (118 g)',
+    swap: null,
+    source: 'usda',
+  });
+  // A label that prints protein is ignored when the profile has no protein limit.
+  const label = { product: 'Bar', servingSize: '1 bar', sodiumMg: 100, potassiumMg: 100, phosphorusMg: 100, proteinG: 40, carbsG: 90, ingredients: null };
+  const r = await checkFood({ food: { name: 'Bar', label }, profile });
+  assert.deepEqual(Object.keys(r.nutrients), ['sodiumMg', 'potassiumMg', 'phosphorusMg']);
+  assert.equal(r.verdict, 'limit');
+});
+
+test('protein limit: judged in grams and can decide the verdict', async () => {
+  const r = await checkFood({ food: { name: 'chicken breast', grams: 120 }, profile: withMacros({ proteinG: 60 }) });
+  assert.equal(r.verdict, 'avoid');
+  assert.equal(r.nutrients.proteinG, 37);
+  assert.ok(!('carbsG' in r.nutrients));
+  assert.ok(r.reasons.includes('protein 37 g is 62% of the 60 g daily limit'));
+  assert.match(r.say, /^Avoid, chicken breast has about thirty seven grams of protein\./);
+  // The same food for the demo profile is not decided by protein.
+  const demo = await checkFood({ food: { name: 'chicken breast', grams: 120 }, profile });
+  assert.notEqual(demo.verdict, 'avoid');
+});
+
+test('carbs limit: a normal portion of rice reaches limit, not avoid', async () => {
+  const r = await checkFood({ food: { name: 'white rice', grams: 158 }, profile: withMacros({ carbsG: 200 }) });
+  assert.equal(r.verdict, 'limit');
+  assert.equal(r.nutrients.carbsG, 45);
+  assert.ok(r.reasons.includes('carbohydrates 45 g is 23% of the 200 g daily limit'));
+  assert.match(r.say, /grams of carbohydrates/);
+});
+
+test('protein and carbs from a label; missing on the label means not judged', async () => {
+  const p = withMacros({ proteinG: 60 });
+  const label = (extra) => ({ product: 'Bar', servingSize: '1 bar', sodiumMg: 10, potassiumMg: 10, phosphorusMg: 10, ingredients: null, ...extra });
+  const r = await checkFood({ food: { name: 'Bar', label: label({ proteinG: 12 }) }, profile: p });
+  assert.equal(r.verdict, 'limit');
+  assert.equal(r.nutrients.proteinG, 12);
+  const none = await checkFood({ food: { name: 'Bar', label: label({}) }, profile: p });
+  assert.equal(none.verdict, 'ok');
+  assert.equal(none.nutrients.proteinG, null);
+  const bad = await checkFood({ food: { name: 'Bar', label: label({ proteinG: -3 }) }, profile: p });
+  assert.equal(bad.ok, false);
+});
+
+test('protein and carbs: a lookup without them is treated as null', async () => {
+  process.env.USDA_API_KEY = 'k';
+  globalThis.fetch = usdaFetch([hit('Quince jam', 7, 20, 10, 5)]);
+  const r = await checkFood({ food: { name: 'quince jam', grams: 100 }, profile: withMacros({ proteinG: 60, carbsG: 200 }) });
+  assert.equal(r.ok, true);
+  assert.equal(r.nutrients.proteinG, null);
+  assert.equal(r.nutrients.carbsG, null);
 });

@@ -57,11 +57,19 @@ test('generic fallback: unknown multi-word names do not match a seed', async () 
 });
 
 test('generic fallback never reduces risky or compound names', async () => {
-  for (const name of ['pina colada', 'coconut water', 'chocolate milk', 'smoked salmon', 'oat milk', 'banana milk', 'star fruit juice', 'canned tomato soup']) {
+  for (const name of ['pina colada', 'chocolate milk', 'smoked salmon', 'oat milk', 'banana milk', 'star fruit juice', 'canned tomato soup']) {
     const result = await lookupFood({ name });
     assert.equal(result.found, false, name);
     assert.equal(result.genericFrom, undefined, name);
   }
+});
+
+test('coconut water is matched to its own curated seed, not plain water', async () => {
+  const result = await lookupFood({ name: 'coconut water' });
+  assert.equal(result.found, true);
+  assert.equal(result.name, 'coconut water');
+  assert.equal(result.genericFrom, undefined);
+  assert.equal(result.nutrients.potassiumMg, 165);
 });
 
 test('generic fallback: a single unknown word has no generic step', async () => {

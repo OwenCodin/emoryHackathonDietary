@@ -21,10 +21,11 @@ RenaLine is a renal dietitian you can FaceTime. (The repo is still called `emory
 package.json         one package for the whole repo
 .env.example         names of every variable below, no values
 .env.local           real values, never committed
-shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15
+shared/video.mjs     export const WIDTH = 1280, HEIGHT = 720, FPS = 15, and the safe area SAFE
 agent/               Track A  the call: voice, camera in, video out, tools
 renal/               Track B  the renal brain: profile, image reading, verdicts, meals
 actions/             Track C  reaching out and shopping: cart, outbound call, texts, demo video
+kroger-relay/        Track C  small public Vercel relay for the Kroger sign-in callback (not part of the agent; deployed by a person)
 ```
 
 Root `package.json`:
@@ -76,26 +77,34 @@ Every key in `.env.example` is listed here. Required means the feature it serves
 | `AGENT_DEBUG_FRAME_DIR` | A | Optional | A folder outside this repo where each camera picture sent to `describeImage` is also saved. Empty saves nothing. The pictures show what the caller shows, so keep them out of git. |
 | `AGENT_FAKE_CART` | A | Optional | `1` shows a built-in magenta test frame as the cart, for the simulated proof only. Leave empty for real calls. |
 | `AGENT_ALLOW_BARGE_IN` | A | Optional | `1` lets the caller interrupt the agent mid-reply. Empty keeps replies uninterrupted. |
-| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only). Empty uses a folder in the system temp directory. |
+| `AGENT_END_SILENCE_MS` | A | Optional | How long the caller must be silent before the agent treats their turn as finished, in milliseconds (300 to 3000). Empty means 1000. Raise it if the agent answers while the caller is still talking. |
+| `AGENT_STATE_DIR` | A | Optional | A folder outside this repo for the per-patient shopping list and pantry (food names only) and the caller's chosen voice, reply length, language and preferred name. Empty uses a folder in the system temp directory. |
 | `AGENT_CALL_WARN_SECONDS` | A | Optional | Seconds after the greeting before the agent warns the call will end soon. Empty means 240. |
+| `AGENT_SKIP_ONBOARDING` | A | Optional | `1` stops first-call setup from starting by itself ("update my setup" still works). Empty means a caller with no finished setup is set up on their first call. |
+| `VIDEO_SAFE_SCALE` | A, C | Optional | Share of the frame's width and height used by everything shown on the call, centred, because FaceTime shows the agent's video zoomed and cuts off the edges. Backgrounds still fill the whole frame. 0.5 to 1; empty or invalid means 0.8; 1 is the old full-frame layout. Read once at start. |
 | `USDA_API_KEY` | B | Optional | FoodData Central key from api.data.gov. `DEMO_KEY` works but allows 10 requests an hour; a personal key allows 3600 an hour. |
-| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json`. Empty uses `renal/data`. Tests use a temp folder. |
+| `RENAL_STATE_DIR` | B | Optional | Folder where renal keeps its writable `diary.json` and `cache.json` (empty uses `renal/data`) and the patient's saved `profiles.json` (empty uses a `renal-state` folder in the system temp directory; never inside the repo). Tests use a temp folder. |
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | C | Required for texts and outbound calls | Project API key (`ftk_...`, from the Chert Developer page), project id and line id. |
 | `PATIENT_PHONE` | A, C | Required for texts and outbound calls | The patient's phone in international form, for example `+1XXXXXXXXXX`. If it is empty, `text_cart_link` and `text_recipe` fail with `no_phone`. |
 | `GROCERY_STORE_URL` | C | Required for the cart | HTTPS URL of a supported grocery retailer. |
 | `INSTACART_API_KEY` | C | Optional | Instacart shopping-list fallback when the store blocks automation. |
+| `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | C | Optional | Kroger public API app credentials (developer.kroger.com, Production, with Cart, Locations, Products and Profile). When both are set the cart uses the Kroger API instead of the browser. |
+| `KROGER_LOCATION_ID` | C | Optional | Kroger store used for product search and prices. Empty means `01100695` (Kroger - Ponce). |
+| `KROGER_REDIRECT_URI` | C | Optional | Used only by the localhost sign-in, when the two relay variables below are empty; must match the redirect URI registered on the Kroger app. Empty means `http://localhost:8765/callback`. |
+| `KROGER_RELAY_URL`, `KROGER_RELAY_SECRET` | C | Optional | The sign-in relay's production domain (https, no trailing slash) and the shared secret (the relay's `RELAY_SECRET`, 32 characters or more). When both are set, Kroger sign-in goes through the relay (a texted link, or `actions/kroger-login.mjs`), and the Kroger app's redirect URI must be `<relay>/api/kroger/callback`. See `kroger-relay/README.md`. |
+| `KROGER_TOKEN_DIR` | C | Optional | A folder outside this repo for the saved Kroger sign-in. Empty means `~/.config/renal-dietitian`. |
 
 ### Rules for every function that crosses a track boundary
 
 1. `async`, takes one plain object, returns one plain object. The one exception is `getCartFrame`, which is synchronous because it is called 15 times a second.
 2. Never throws. On failure it returns `{ ok: false, error: 'short reason' }`. On success the object has `ok: true`.
-3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
+3. Returns within its time budget, because a person is waiting on a live call. `describeImage` about 5.4 s and `suggestMeals` about 5.1 s in total, including the fallback model; `dishIngredients` about 8.5 s, `dishRecipe` about 7.5 s when given the ingredients, and `previewCart` about 6 s. `checkFood` is quick from the built-in list but can take about 8 s in the worst case (USDA about 2.4 s, then the online lookup 5.5 s). The agent guards every tool at 12 s. `startCart` and `callPatient` return as soon as the work has started. A USDA failure no longer fails `checkFood`: it falls through to the online lookup and then to an honest `unknown`.
 4. Works with no network where it can (cached or seeded data), so the demo survives bad wifi.
 
 ### Types
 
 ```js
-// Profile: the patient's daily limits, set by their care team.
+// Profile: the patient's daily limits, from their care team (built-in demo) or as the patient read them out in first-call setup (setBy 'patient, as told by their care team', plus setOn and condition).
 { id: 'demo', name: 'Sam', limits: { sodiumMg: 2000, potassiumMg: 2000, phosphorusMg: 1000, fluidMl: 1000 },
   avoid: ['star fruit', 'salt substitute'], setBy: 'care team' }
 
@@ -139,11 +148,16 @@ Track A imports everything below and exports nothing. B and C do not import each
 
 | Function | Returns |
 |---|---|
-| `getProfile({ patientId })` | `{ ok, profile }` |
+| `getProfile({ patientId })` | `{ ok, profile }`. The patient's saved profile when first-call setup saved all four limits (`setBy: 'patient, as told by their care team'`, `setOn`, `condition`, `source: 'patient'`), otherwise the built-in one from `renal/data/patients.json` (`source: 'builtin'`). A saved profile without limits gives `{ ok: false, error, limitsNeeded: true }`, never a default. |
+| `getSavedProfile({ patientId })` | `{ ok, saved }`, where `saved` is `null` or `{ id, name, condition, limits, avoid, setBy, setOn, setupDone }` and `limits` may be `null`. Used to decide whether a caller needs setup. |
+| `saveProfile({ patientId, profile: { name, condition, limits, avoid, setupDone } })` | `{ ok, saved }` or `{ ok: false, error, field? }`. Replaces the saved profile after strict checks: `limits` is `null` or all four whole numbers within `LIMIT_BOUNDS` (sanity bounds, not medical advice), `condition` is one of `CONDITIONS` or `null`, and `avoid` holds at most 10 short names. Stored in `profiles.json` outside the repo, mode 600. |
+| `resetProfile({ patientId })` | `{ ok, removed }`. Deletes the saved profile, so the built-in profile and first-call setup come back (for demos). |
 | `describeImage({ jpeg }, { ai }?)` where `jpeg` is a `Buffer` | a `Seen` |
 | `checkFood({ food, profile }, { ai }?)` | a `Verdict` |
-| `suggestMeals({ foods, profile, count }, { ai }?)` where `foods` is `string[]` | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why }] }` |
+| `suggestMeals({ foods, profile, count, fromScratch? }, { ai }?)` where `foods` is `string[]` (ignored when `fromScratch` is true) | `{ ok, meals: [{ title, uses: string[], missing: CartItem[], minutes, steps: string[], why, totals? }] }`. With `fromScratch: true` every non-staple ingredient is in `missing`, and each meal has `totals: { sodiumMg, potassiumMg, phosphorusMg }` (one typical portion of each ingredient, each total at most one third of the daily limit). |
 | `logFood({ patientId, verdict })` | `{ ok }` |
+| `dishIngredients({ dish, profile }, { ai }?)` | `{ ok, dish, source: 'model' \| 'builtin' \| 'none', ingredients: [{ name, quantity, verdict, swap, nutrients, portion, say, source, checked }], omitted? }`. The model gives names and quantities only; every ingredient is re-checked with `checkFood` and its verdict, swap and numbers come from there. At most 8 ingredients, no water, oil, pepper, herbs or spices. A built-in table covers a few common dishes when the model is absent or slow. About 8.5 s worst case. |
+| `dishRecipe({ dish, profile, ingredients? }, { ai }?)` | `{ ok, dish, source: 'model' \| 'builtin', ingredients: [{ name, quantity, verdict, swappedFrom? }], leftOut: string[], steps: string[], minutes?, totals? }`. Ingredients come from `ingredients` (`[{ name, quantity }]`, at most 8, re-checked) or from `dishIngredients`. An `avoid` ingredient is replaced by its `checkFood` swap when the swap re-checks ok or limit, otherwise it is left out and named in `leftOut`. The model writes only the steps (at most 10, 300 characters each, no salt) and minutes for the final list; built-in steps cover the `dishIngredients` table dishes. `totals` (per serving, one typical portion of each ingredient) is present only when every ingredient has `checkFood` numbers. No steps gives `{ ok: false, error }`. About 7.5 s worst case with `ingredients`. |
 | `getToday({ patientId })` | `{ ok, totals, remaining, items }` where `totals` and `remaining` have `sodiumMg`, `potassiumMg`, `phosphorusMg` |
 
 The optional second argument `{ ai }` is an injected Gemini client. It is a test seam only; the agent never passes it.
@@ -156,8 +170,11 @@ The optional second argument `{ ai }` is an injected Gemini client. It is a test
 | `getCartStatus()` | `{ ok, state: 'idle' \| 'running' \| 'waiting_for_patient' \| 'done' \| 'failed', step, added: [{ name, price }], missing: string[], total, cartUrl }` |
 | `getCartFrame()` (synchronous) | A `Uint8Array` of exactly `WIDTH * HEIGHT * 4` RGBA bytes showing the browser, or `null` when no cart is running. |
 | `stopCart()` | `{ ok }` |
+| `previewCart({ items })` where `items` is `CartItem[]` (at most 12) | `{ ok, shown, found, notFound, total }`, or `{ ok: false, error: 'not_configured' \| 'busy' \| 'render_failed' \| ... }`. Read-only: app-token product search and product pictures only, no sign-in, no user token, no cart call. The card is titled "Your list · not in your Kroger cart yet", held 20 s, and removed by `startCart` or `stopCart`. An empty list shows nothing (and hides a showing preview). |
 | `callPatient({ phone, reason })` | `{ ok, callId }` once Chert has accepted the request |
 | `sendText({ phone, text })` | `{ ok }`. Refuses any recipient other than `PATIENT_PHONE`. |
+| `startKrogerSignIn()` | `{ ok: true, link }`, where `link` is `${KROGER_RELAY_URL}/k/<43-character state>`; otherwise `{ ok: false, error: 'not_configured' \| 'no_relay' }`. Starts polling the relay in the background for up to 4 minutes and saves the Kroger sign-in when the patient finishes. Nothing but the link is returned, and no code, state, secret or token is logged. |
+| `getKrogerStatus()` | `{ ok: true, configured, relay, connected, pending }`, all booleans: both Kroger keys set; both relay variables set and valid; a stored sign-in exists (no refresh call, so an expired sign-in reads as connected until the cart reports it); a relay sign-in is being polled. |
 
 The agent log prints each tool result as `[agent] tool <name> ok=true|false [error=<code>]`.
 
@@ -176,6 +193,7 @@ Seen in live testing on 14 November 2026:
 - A real call runs with `npm start` in one terminal and `npx @trychert/facetime@0.1.0-beta.20 dev --agent renal-dietitian --minutes 30` in another. One `chert dev` session holds the team's single line at a time.
 - The caller's camera now reaches the agent. With `AGENT_DEBUG_FRAME_DIR` set, the saved frames show what the caller shows.
 - iMessage through Chert on the trial line: the agent can only reply. A send is refused with HTTP 403 `shared_reply_window_closed` until the patient's phone has joined the project and has texted the line a message with words in it within the last 24 hours. After that a send returned `{"state":"sent"}`.
+- Kroger's public API only adds to a cart. With a real signed-in token, `GET /v1/carts` returned 403 "required scope not found"; `PUT /v1/cart/add` with quantity 0 or -1 returned 400 ("Quantity is required", "Quantity must be at least 1"); there is no remove route; and the sign-in page accepts only the `cart.basic:write` cart scope (`cart.basic:rw` and `:read` give `invalid_scope`). The agent can neither remove nor read items in the real Kroger cart, so removing happens on the list before anything is sent.
 - The shared USDA `DEMO_KEY` allows 10 requests an hour and ran out during testing.
 - `gemini-3.8-flash` was overloaded all day (503s, timeouts). Vision and meals fall back to `gemini-3.5-flash-lite` after 2.5 s. Google Search grounding needs billing on the Gemini key; without it every grounded request returned 429 "exceeded your current quota".
 
@@ -184,6 +202,7 @@ The Live voice model defaults to `gemini-3.8-live` when `GEMINI_LIVE_MODEL` is e
 Not verified yet:
 
 - The grocery cart on a live call.
+- The Kroger sign-in relay deployed on Vercel, the switch of the Kroger app's redirect URI, and the texted sign-in link tapped on a real phone. Only the handlers and a local end-to-end test with a fake Kroger token endpoint have run.
 - The outbound mealtime call, and whether the trial allows outbound calls.
 - `text_cart_link` and `text_recipe` from a live call. Only a direct API send worked.
 - Pantry memory on a live call (tested with fakes only).
@@ -199,6 +218,7 @@ Not verified yet:
 - The USDA `DEMO_KEY` allows only 10 requests an hour. Use a personal key.
 - The online lookup needs billing enabled on the Gemini key.
 - The agent gives guidance inside limits a care team set. It says so on the call, never changes the limits, and never pays for anything.
+- Optional protein and carbohydrate limits: `profile.limits` may also hold `proteinG` (20 to 200) and `carbsG` (50 to 500), whole grams per day, added in setup only when the caller gives them. `checkFood` judges them only for a profile that has them: avoid above a third of the daily limit, limit from a fifth (the minerals keep 25% and 10%), reasons and `say` in grams. `result.nutrients` includes `proteinG`/`carbsG` only for such a profile; every other profile gets exactly the three minerals as before. Seed foods carry protein and carbs per 100 g. Known gaps: meal and dish totals, `pickBest` and the diary stay on the three minerals, and online (web) lookups carry no protein or carbs, so those are not judged.
 
 ### Checkpoints
 
@@ -317,6 +337,10 @@ The original order is below. Everything in it is built.
 
 These numbers are placeholders in the range commonly given to dialysis patients. Real limits are set per patient by their nephrologist and dietitian and vary a lot. Before the pitch, check them against a published source such as the National Kidney Foundation's patient guidance, and say in the demo that the limits come from the care team.
 
+#### Saved profiles
+
+First-call setup lets a caller read out their own limits. They are stored per patient in `profiles.json`, in `RENAL_STATE_DIR` when it is set, otherwise in a `renal-state` folder in the system temp directory, never in `renal/data` and never inside the repo (a folder inside the repo, a symlink or a folder owned by someone else is refused). The folder is mode 700 and the file mode 600, written atomically one save at a time. `saveProfile` checks everything strictly: `limits` is `null` or all four whole numbers inside `LIMIT_BOUNDS` (sodium 500 to 4000, potassium 1000 to 4700, phosphorus 500 to 1500, fluid 500 to 4000; these catch misheard numbers, they are sanity bounds and not medical advice), `condition` is one of `CONDITIONS`, `avoid` has at most 10 short names. `getProfile` returns the saved profile when it has limits (`source: 'patient'`), `{ ok: false, limitsNeeded: true }` when the saved profile has none (no default is ever applied), `{ ok: false, error: 'profile store unreadable' }` when the file is corrupt (never the built-in limits), and the built-in profile only when nothing is saved. `getToday` now reads limits through `getProfile`. Nothing here logs.
+
 ### `checkFood`
 
 Input is a `Food` and a `Profile`. Work out sodium, potassium and phosphorus for the portion, then compare each with the daily limit.
@@ -404,6 +428,20 @@ One call with `@google/genai`, image plus a fixed instruction, JSON out, through
 ### `suggestMeals`
 
 Given the foods seen and the profile, return up to `count` meals (default 2). Each meal's `missing` list uses the `CartItem` shape, because Track A passes it straight to Track C's `startCart`. Gemini proposes the meals as JSON, then every ingredient goes through `checkFood` and any meal containing an `avoid` is dropped. The model proposes; the rules decide. The model is `RENAL_MEALS_MODEL` with `RENAL_MEALS_FALLBACK_MODEL`, same defaults as vision, about 5.1 s in total.
+
+From-scratch mode (`fromScratch: true`): Gemini gets its own prompt listing only the built-in foods that check `ok` or `limit` for this patient, with their per-portion numbers from `checkFood`. Every non-staple ingredient must be on the built-in list, pass `checkFood` (not `avoid` or `unknown`) with three real numbers, and number at most `FROM_SCRATCH_MAX_INGREDIENTS` (6). The summed totals must each be at most `MEAL_SHARE_OF_DAILY_LIMIT` (one third) of the daily limit, otherwise the meal is dropped. Totals count one typical portion of each ingredient and nothing is estimated. `FALLBACK_MEALS` work in this mode too, with every ingredient moved to `missing`.
+
+The second argument also accepts a `check` option, a test seam that defaults to `checkFood`. It is not part of the shared contract.
+
+Follow-up: the from-the-kitchen mode does not check totals yet, because kitchen foods can be judged from USDA, online or label numbers with different serving bases, or with missing phosphorus.
+
+### `dishIngredients`
+
+`dishIngredients({ dish, profile }, { ai }?)` turns a dish name into its usual ingredients: `{ ok, dish, source: 'model' | 'builtin' | 'none', ingredients: [{ name, quantity, verdict, swap, nutrients, portion, say, source, checked }], omitted? }`. The model gives names and quantities only (a schema allows nothing else, and extra fields are ignored). Every ingredient then goes through `checkFood`, and the verdict, swap, nutrients, portion and say are copied from that result only; a check that fails or runs past 4 s gives `verdict: 'unknown'`, `checked: false`. Water, oils, pepper, herbs, spices and salt are dropped, duplicates are merged, and at most `DISH_MAX_INGREDIENTS` (8) are kept, with `omitted` counting the rest. With no key, a slow model (fast model first, 4.5 s) or an empty answer, `BUILTIN_DISHES` covers ham sandwich, turkey sandwich, omelet and chicken and rice, and those ingredients are re-checked the same way. Any other dish gives `source: 'none'` and no ingredients. The dish is cleaned (80 characters, no links or quotes) and sent as quoted data; no limits and no avoid list are sent to the model. Worst case is about 8.5 s, under the 12 s tool guard. `modelMs`, `checkMs` and `check` are test seams.
+
+### `dishRecipe`
+
+`dishRecipe({ dish, profile, ingredients? }, { ai }?)` builds one full recipe for a dish from `ingredients` (`[{ name, quantity }]`, at most 8, each re-checked with `checkFood`) or, when none are given, from `dishIngredients`. An `avoid` ingredient is replaced by its `checkFood` swap only when that swap re-checks `ok` or `limit`; otherwise it is left out and named in `leftOut`. The model writes the steps and minutes for the final ingredient list only: the dish is sent as quoted data, no limits are sent, an answer that adds salt or a salt substitute is rejected, and the fast model goes first. Every verdict, swap and `totals` number comes from `checkFood`, and `totals` is present only when every ingredient has real numbers. Without a key, or after a failed, slow or salty answer, built-in steps cover ham sandwich, turkey sandwich, omelet and chicken and rice; any other dish gives the fixed error `could not write the recipe steps` and nothing is invented. `modelMs`, `checkMs` and `check` are test seams.
 
 ### Tests
 

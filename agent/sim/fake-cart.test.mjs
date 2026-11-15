@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HEIGHT, WIDTH } from '../../shared/video.mjs';
-import { createFakeCart, followsFaceCartFace, isMagenta } from './fake-cart.mjs';
+import { createFakeCart, followsCompanionCartCompanion, isMagenta } from './fake-cart.mjs';
 
 test('fake cart timeline: null, magenta, null', () => {
   let t = 1000;
@@ -43,10 +43,10 @@ test('isMagenta', () => {
   assert.equal(isMagenta(255, 200, 118), false);
 });
 
-test('followsFaceCartFace', () => {
-  assert.equal(followsFaceCartFace(['face', 'cart', 'face']), true);
-  assert.equal(followsFaceCartFace(['face', 'cart', 'face', 'cart', 'face']), true);
-  for (const bad of [[], ['face'], ['face', 'cart'], ['cart', 'face'], ['face', 'face'], ['cart', 'face', 'cart'], null, 'x']) {
-    assert.equal(followsFaceCartFace(bad), false);
+test('followsCompanionCartCompanion', () => {
+  assert.equal(followsCompanionCartCompanion(['companion', 'cart', 'companion']), true);
+  assert.equal(followsCompanionCartCompanion(['companion', 'cart', 'companion', 'cart', 'companion']), true);
+  for (const bad of [[], ['companion'], ['companion', 'cart'], ['cart', 'companion'], ['companion', 'companion'], ['cart', 'companion', 'cart'], null, 'x']) {
+    assert.equal(followsCompanionCartCompanion(bad), false);
   }
 });

@@ -18,18 +18,23 @@ Run from the command line against the real services, not on a call:
 
 - The grounded online lookup, the USDA lookup, the vision fallback and meal suggestion.
 - One iMessage was sent successfully through Chert's shared-messages API.
+
+Built and tested with fakes only, not yet proven on a live call: per-caller identity behind `AGENT_OPEN_ACCESS=1` (own profile, memory, diary, texting and a text-first setup step for any phone that has joined the project).
 - Along the way the shared USDA key and Gemini limits were hit (see "Limits and deadlines").
 
 Built and tested with fakes, not yet proven on a live call:
 
 - Pantry memory and `text_recipe`.
 - `text_cart_link` from a call. The texting path was proven only by a direct API send.
-- The grocery cart, and the outbound mealtime call. They have not been seen working on a live call since the merge.
+- The grocery cart on a call. From the command line the Kroger API cart added three items to a real Kroger cart, confirmed on kroger.com (14 November); it has not been seen on a live call. The browser cart is blocked by kroger.com, walmart.com and Instacart.
+- The outbound mealtime call. It has not been seen working on a live call since the merge.
 - The online lookup as part of a call. It ran from the command line with billing on, but no caller has heard an online answer yet.
+
+- First-call setup (name, condition, limits read out and confirmed, foods to avoid, voice and reply preferences). Simulated only.
 
 Parked: receiving photos by iMessage.
 
-`npm test` passes 350 tests with no keys and no network.
+`npm test` passes 557 tests with no keys and no network.
 
 ## Setup from a fresh clone
 
@@ -53,7 +58,9 @@ Then fill `.env.local` by key name. Put no values in this README, in chat, or in
 | `USDA_API_KEY` | A personal key from api.data.gov. `DEMO_KEY` runs out quickly. | Optional, but use a personal key |
 | `CHERT_API_KEY`, `CHERT_PROJECT_ID`, `CHERT_LINE_ID` | The Chert Developer page: the project key, the project and the line. | Required for texts and outbound calls |
 | `PATIENT_PHONE` | The patient's phone in international form. | Required for texts and outbound calls |
-| `GROCERY_STORE_URL`, `INSTACART_API_KEY` | Only for the cart (Track C). | Optional |
+| `GROCERY_STORE_URL`, `INSTACART_API_KEY` | Only for the browser cart (Track C). | Optional |
+| `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` | A Production app on developer.kroger.com with Cart, Locations, Products and Profile, and the redirect URI `http://localhost:8765/callback` (once the relay below is deployed, the redirect URI becomes `<relay>/api/kroger/callback`; see `kroger-relay/README.md`). When both are set the cart uses the Kroger API. Then sign in once: `node --env-file=.env.local actions/kroger-login.mjs`, or let the agent text the patient a link during setup. | Optional, needed for the Kroger cart |
+| `KROGER_RELAY_URL`, `KROGER_RELAY_SECRET` | The production domain of the small Vercel relay in `kroger-relay/` (https, no trailing slash) and the shared secret it was given (32 characters or more). With both set the agent can text a Kroger sign-in link during setup. A person deploys the relay by following `kroger-relay/README.md`. | Optional, needed for sign-in by texted link |
 
 The optional model, agent and state keys (`GEMINI_LIVE_MODEL`, `RENAL_*`, `AGENT_*`, `PLAYGROUND`) are listed with their defaults in the "Environment variables" table of the Shared contract in any track README, for example [renal/README.md](renal/README.md).
 
@@ -74,6 +81,8 @@ Rules:
 ## Test without spending FaceTime minutes
 
 `npm test` runs everything on fakes with no keys and no network.
+
+First-call setup, with no keys and no call: `node agent/sim/onboarding-run.mjs` drives the setup tools in throwaway folders and prints the stored profile, the stored voice and an estimate of the spoken length. `node --env-file-if-exists=.env.local agent/sim/reset-setup.mjs` forgets the saved profile and preferences so setup runs again in a demo (set `AGENT_SKIP_ONBOARDING=1` to skip setup while testing other features).
 
 To call `renal/` directly with real keys, run these from the repo root. They use a throwaway state folder so nothing in `renal/data` changes, and they spend USDA and Gemini quota.
 
@@ -114,6 +123,7 @@ On the Chert trial line the agent can only reply to the patient. Follow these ru
 - After both, a send returned `{"state":"sent"}`.
 - `PATIENT_PHONE` must be set in `.env.local`, or `text_cart_link` and `text_recipe` fail with `no_phone`.
 - Photo-only iMessages did not show up in the project's message list, so receiving photos is parked.
+- With `AGENT_OPEN_ACCESS=1` the agent texts the verified caller of the current call only (the number comes from Chert's call record, never from what the caller says); `PATIENT_PHONE` and outbound calls are unchanged. Chert still requires that phone to have joined the project and texted the line in the last 24 hours. Setup asks for that text, and `check_text_received` checks it by the last four digits only, which is weak evidence; Chert's window is the real gate. A refusal is spoken as "send any message to this number, then ask me again".
 - Something on Chert's side auto-replies "Hi there! How can I help you today?" to inbound texts on the project. How to turn it off is an open question for Chert staff.
 
 ## Limits and deadlines
@@ -129,7 +139,11 @@ On the Chert trial line the agent can only reply to the patient. Follow these ru
 - Diet colas reuse regular cola numbers. "Soda", "pop" and "soft drink" are judged as cola.
 - The online lookup can return different results for the same product on different tries.
 - The demo patient profile ("Sam", fixed limits) is hard-coded data.
-- The grocery cart (Track C) and the outbound mealtime call have not been seen working on a live call since the merge. They need `GROCERY_STORE_URL` and `INSTACART_API_KEY`.
+- Open access (`AGENT_OPEN_ACCESS=1`): each caller signs in to their own Kroger account (the demo patient's sign-in stays at `<KROGER_TOKEN_DIR or ~/.config/renal-dietitian>/kroger-tokens.json`; every other caller's is kept in `callers/<id>/` under that folder, folder mode 700 and file mode 600, where the id is the same pseudonymous hash as the profile); a guest may sign in for the call but the guest folder is never reused, a known leftover to delete by hand; `actions/kroger-login.mjs` signs in the demo patient only; the mealtime outbound call still uses `PATIENT_PHONE`; one Chert line answers one call at a time; a caller whose FaceTime handle is an email (or whose lookup fails) gets a one-call guest identity with no texting, and their setup is not kept for next time (each guest call writes a small profile/memory file under a new random id); the per-caller id is an unsalted hash of the phone, so the local state folder is pseudonymous, not anonymous; the call-start lookup can add up to 1.5 s before the session starts.
+- Optional protein and carbohydrate limits (grams) can be set in first-call setup and are judged by the food check and shown on the verdict card. The protein and carbs values for the 65 seed foods were entered from USDA reference values and need a spot-check. Meal and dish totals and online lookups do not use them yet.
+- The Kroger sign-in relay (`kroger-relay/`) and the texted sign-in link have not been deployed or run live; only unit tests and a local end-to-end test with a fake Kroger token endpoint have run.
+- The grocery cart (Track C) has not been seen working on a live call. The Kroger API cart works from the command line; it needs `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET` and a one-time sign-in. Its quantity is a count of packages, so "3 apples" can become three multi-packs.
+- The outbound mealtime call has not been seen working on a live call since the merge.
 - Pantry memory and `text_recipe` are tested with fakes. The texting path was proven only by a direct API send, not yet from a live call.
 - Store-shelf looks now return plain food names without brands (open decision).
 

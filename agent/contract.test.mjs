@@ -14,14 +14,14 @@ globalThis.fetch = async () => {
   throw new Error('network used by a stub');
 };
 
-let video, renal, actions, tools, face;
+let video, renal, actions, tools, companion;
 
 before(async () => {
   video = await import('../shared/video.mjs');
   renal = await import('../renal/index.mjs');
   actions = await import('../actions/index.mjs');
   tools = await import('./tools.mjs');
-  face = await import('./face.mjs');
+  companion = await import('./companion.mjs');
 });
 after(async () => {
   globalThis.fetch = originalFetch;
@@ -112,6 +112,30 @@ describe('renal contract', () => {
     }
   });
 
+  it('dishRecipe returns a recipe', async () => {
+    const saved = { google: process.env.GOOGLE_API_KEY, usda: process.env.USDA_API_KEY };
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.USDA_API_KEY;
+    try {
+      const r = await renal.dishRecipe({ dish: 'omelet', profile });
+      assert.equal(r.ok, true);
+      assert.equal(r.source, 'builtin');
+      assert.ok(Array.isArray(r.steps) && r.steps.length > 0 && r.steps.length <= 10 && r.steps.every(isStr));
+      assert.ok(r.ingredients.length > 0);
+      for (const i of r.ingredients) {
+        assert.ok(isStr(i.name) && isStr(i.quantity));
+        assert.ok(['ok', 'limit', 'avoid', 'unknown'].includes(i.verdict));
+      }
+      assert.ok(Array.isArray(r.leftOut));
+      assert.ok(r.totals === undefined || isNutrients(r.totals));
+    } finally {
+      if (saved.google === undefined) delete process.env.GOOGLE_API_KEY;
+      else process.env.GOOGLE_API_KEY = saved.google;
+      if (saved.usda === undefined) delete process.env.USDA_API_KEY;
+      else process.env.USDA_API_KEY = saved.usda;
+    }
+  });
+
   it('logFood and getToday return their shapes', async () => {
     const verdict = await renal.checkFood({ food: { name: 'banana' }, profile });
     assert.deepEqual(await renal.logFood({ patientId: 'demo', verdict }), { ok: true });
@@ -126,7 +150,7 @@ describe('renal contract', () => {
     delete process.env.GOOGLE_API_KEY;
     delete process.env.USDA_API_KEY;
     try {
-      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'logFood', 'getToday']) {
+      for (const name of ['getProfile', 'describeImage', 'checkFood', 'suggestMeals', 'dishIngredients', 'dishRecipe', 'logFood', 'getToday']) {
         const p = renal[name]();
         assert.ok(p instanceof Promise, `${name} returns a Promise`);
         const r = await p;
@@ -188,12 +212,47 @@ describe('actions contract', () => {
     }
   });
 
-  it('every async function returns a Promise with an ok result', async () => {
-    for (const name of ['startCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText']) {
-      const p = actions[name]();
-      assert.ok(p instanceof Promise, `${name} returns a Promise`);
-      assert.equal(typeof (await p).ok, 'boolean', `${name}() returns an ok result`);
+  // The main checkout's .env.local may hold real Kroger keys: scrub every KROGER_* var and use a throwaway token folder.
+  async function withScrubbedKroger(fn) {
+    const saved = {};
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('KROGER_')) {
+        saved[key] = process.env[key];
+        delete process.env[key];
+      }
     }
+    const tokenDir = await mkdtemp(join(tmpdir(), 'agent-contract-kroger-'));
+    process.env.KROGER_TOKEN_DIR = tokenDir;
+    try {
+      return await fn();
+    } finally {
+      delete process.env.KROGER_TOKEN_DIR;
+      Object.assign(process.env, saved);
+      await rm(tokenDir, { recursive: true, force: true });
+    }
+  }
+
+  it('Kroger sign-in actions report not configured without keys', async () => {
+    await withScrubbedKroger(async () => {
+      assert.deepEqual(await actions.startKrogerSignIn(), { ok: false, error: 'not_configured' });
+      assert.deepEqual(await actions.getKrogerStatus(), {
+        ok: true,
+        configured: false,
+        relay: false,
+        connected: false,
+        pending: false,
+      });
+    });
+  });
+
+  it('every async function returns a Promise with an ok result', async () => {
+    await withScrubbedKroger(async () => {
+      for (const name of ['startCart', 'previewCart', 'getCartStatus', 'stopCart', 'callPatient', 'sendText', 'startKrogerSignIn', 'getKrogerStatus']) {
+        const p = actions[name]();
+        assert.ok(p instanceof Promise, `${name} returns a Promise`);
+        assert.equal(typeof (await p).ok, 'boolean', `${name}() returns an ok result`);
+      }
+    });
   });
 });
 
@@ -211,10 +270,10 @@ describe('agent/tools.mjs', () => {
   });
 });
 
-describe('agent/face.mjs', () => {
+describe('agent/companion.mjs', () => {
   it('draws WIDTH x HEIGHT RGBA frames', () => {
     for (const [tick, speaking] of [[0, false], [1, true]]) {
-      const px = face.drawFace(tick, speaking);
+      const px = companion.drawCompanion(tick, speaking);
       assert.ok(px instanceof Uint8Array);
       assert.equal(px.length, video.WIDTH * video.HEIGHT * 4);
     }
